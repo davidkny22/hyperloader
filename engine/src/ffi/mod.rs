@@ -11,6 +11,9 @@ pub(crate) fn package_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+#[cfg(test)]
+mod tests;
+
 #[pyfunction(name = "_rng_block")]
 fn rng_block(
     root_seed: u64,
