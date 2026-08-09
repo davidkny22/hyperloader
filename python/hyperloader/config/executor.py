@@ -16,3 +16,5 @@ class ExecutorConfig:
 
     def __post_init__(self) -> None:
         _require_nonnegative_int("executor.process_ceiling", self.process_ceiling)
+        if self.on_worker_death not in {"close", "restart"}:
+            raise ValueError("executor.on_worker_death must be close or restart")

@@ -16,6 +16,10 @@ class KeyErrorMessage(str):
         return self
 
 
+class WorkerDied(RuntimeError):
+    """Signal one surfaced death after native reclamation and restart."""
+
+
 def reraise_worker_exception(payload: bytes, worker: int) -> None:
     """Reconstruct torch's exception type and DataLoader traceback shape."""
     module_name, qualname, _original_message, formatted = pickle.loads(payload)

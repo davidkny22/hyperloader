@@ -8,6 +8,7 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
+from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .pool import POLL_SECONDS
 from .sizing import delivery_length, frontier_depth
@@ -59,6 +60,8 @@ class ProcessIterator(Iterator[Any]):
             self._position = stop
             return self._loader._collate_batch(batch)
         except StopIteration:
+            raise
+        except WorkerDied:
             raise
         except BaseException:
             self._loader.close()

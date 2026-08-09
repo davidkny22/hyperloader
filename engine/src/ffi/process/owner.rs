@@ -19,8 +19,9 @@ pub(super) struct PendingSlots {
 #[pyclass(name = "_ProcessResources")]
 pub(crate) struct ProcessResources {
     token: RegionToken,
+    registry: RegionRegistry,
     pub(super) allocator: ArenaAllocator,
-    pub(super) transports: Vec<CommandTransport>,
+    pub(super) transports: Vec<Option<CommandTransport>>,
     queue_capacity: usize,
     payload_capacity: usize,
     exception_capacity: usize,
@@ -59,7 +60,7 @@ impl ProcessResources {
         let token = RegionToken::random().map_err(runtime_error)?;
         let mut transports = Vec::with_capacity(worker_count as usize);
         for worker in 0..worker_count {
-            transports.push(
+            transports.push(Some(
                 CommandTransport::create(
                     registry.clone(),
                     token,
@@ -68,7 +69,7 @@ impl ProcessResources {
                     queue_capacity,
                 )
                 .map_err(runtime_error)?,
-            );
+            ));
         }
         let standard_capacity = payload_capacity.max(exception_capacity);
         let overflow_capacity = standard_capacity
@@ -94,7 +95,7 @@ impl ProcessResources {
             },
         ];
         let allocator = ArenaAllocator::new_at_sequence(
-            registry,
+            registry.clone(),
             token,
             &specs,
             GrowthPolicy::Safe,
@@ -103,6 +104,7 @@ impl ProcessResources {
         .map_err(runtime_error)?;
         Ok(Self {
             token,
+            registry,
             allocator,
             transports,
             queue_capacity,
@@ -158,7 +160,7 @@ impl ProcessResources {
             slot: primary,
             exception_slot: exception,
         };
-        match self.transports[worker as usize].try_send_dispatch(message) {
+        match self.transport(worker)?.try_send_dispatch(message) {
             Ok(()) => {
                 self.pending
                     .insert((worker, position), PendingSlots { primary, exception });
@@ -194,6 +196,32 @@ impl ProcessResources {
     /// Reclaim reservations only after the operating-system worker is confirmed dead.
     fn reclaim_dead_worker(&mut self, worker: u32) -> PyResult<Vec<u64>> {
         self.transport(worker)?;
+        self.reclaim_dead_slots(worker)
+    }
+
+    /// Reclaim a proven-dead writer and replace its command region.
+    fn restart_worker(&mut self, worker: u32) -> PyResult<Vec<u64>> {
+        let positions = self.reclaim_dead_worker(worker)?;
+        let index = worker as usize;
+        let old = self.transports[index]
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("worker transport is unavailable"))?;
+        drop(old);
+        let transport = CommandTransport::create(
+            self.registry.clone(),
+            self.token,
+            worker as u16,
+            self.queue_capacity,
+            self.queue_capacity,
+        )
+        .map_err(runtime_error)?;
+        self.transports[index] = Some(transport);
+        Ok(positions)
+    }
+}
+
+impl ProcessResources {
+    fn reclaim_dead_slots(&mut self, worker: u32) -> PyResult<Vec<u64>> {
         let positions: Vec<u64> = self
             .pending
             .keys()
@@ -211,12 +239,11 @@ impl ProcessResources {
         self.pending.retain(|(owner, _), _| *owner != worker);
         Ok(positions)
     }
-}
 
-impl ProcessResources {
-    fn transport(&self, worker: u32) -> PyResult<&CommandTransport> {
+    pub(super) fn transport(&self, worker: u32) -> PyResult<&CommandTransport> {
         self.transports
             .get(worker as usize)
+            .and_then(Option::as_ref)
             .ok_or_else(|| PyValueError::new_err(format!("worker {worker} is out of range")))
     }
 

@@ -29,6 +29,10 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nonnegative integer"):
             ExecutorConfig(process_ceiling=True)
 
+    def test_unknown_worker_death_policy_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "on_worker_death"):
+            ExecutorConfig(on_worker_death="ignore")  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

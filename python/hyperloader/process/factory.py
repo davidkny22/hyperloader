@@ -25,4 +25,5 @@ def prepare_process_pool(loader: Any) -> None:
         multiprocessing_context=loader.multiprocessing_context,
         timeout=loader.timeout,
         queue_capacity=queue_capacity(depth, loader.num_workers),
+        on_worker_death=loader.config.executor.on_worker_death,
     )

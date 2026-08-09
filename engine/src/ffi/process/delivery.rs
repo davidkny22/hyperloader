@@ -11,7 +11,7 @@ pub(super) fn try_receive(
     py: Python<'_>,
     worker: u32,
 ) -> PyResult<Option<(u64, u8, Py<PyBytes>)>> {
-    let completion = match resources.transports[worker as usize].try_recv_completion() {
+    let completion = match resources.transport(worker)?.try_recv_completion() {
         Ok(message) => message,
         Err(TransportError::CompletionEmpty) => return Ok(None),
         Err(error) => return Err(runtime_error(error)),

@@ -13,8 +13,8 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
+from .exceptions import WorkerDied, reraise_worker_exception
 from .worker import BLACK_BOX_STAGE, worker_main
-from .exceptions import reraise_worker_exception
 
 POLL_SECONDS = 0.005
 SHUTDOWN_SECONDS = 5.0
@@ -37,11 +37,15 @@ class ProcessPool:
         timeout: float = 0,
         registry_path: str | Path | None = None,
         queue_capacity: int = 2,
+        on_worker_death: str = "close",
     ) -> None:
         self._context = resolve_context(multiprocessing_context)
         self._timeout = timeout
         self._closed = False
         self._next_worker = 0
+        self._on_worker_death = on_worker_death
+        self._root_seed = root_seed
+        self._worker_total = worker_count
         self._resources: Any = None
         self._controls: list[Connection] = []
         self._workers: list[mp.Process] = []
@@ -49,25 +53,12 @@ class ProcessPool:
         self._probe_status = 0
         self._probe_payload: bytes | None = None
         self._immediate: deque[tuple[int, int, int, bytes]] = deque()
-        dataset_payload = pickle.dumps((dataset, worker_init_fn), protocol=5)
+        self._pending: dict[tuple[int, int], tuple[int, int]] = {}
+        self._dataset_payload = pickle.dumps((dataset, worker_init_fn), protocol=5)
         try:
             for worker_id in range(worker_count):
-                owner, child = self._context.Pipe(duplex=True)
                 probe = self._probe_key if worker_id == 0 else None
-                process = self._context.Process(
-                    target=worker_main,
-                    args=(
-                        child,
-                        dataset_payload,
-                        worker_id,
-                        worker_count,
-                        root_seed,
-                        probe,
-                    ),
-                    daemon=True,
-                )
-                process.start()
-                child.close()
+                owner, process = self._launch_worker(worker_id, probe)
                 self._controls.append(owner)
                 self._workers.append(process)
             status, probe_payload = self._receive_probe()
@@ -113,16 +104,22 @@ class ProcessPool:
             )
             self._probe_payload = None
             return True
-        return self._resources.try_submit(
+        accepted = self._resources.try_submit(
             epoch, position, index, BLACK_BOX_STAGE, worker
         )
+        if accepted:
+            self._pending[(worker, position)] = (epoch, index)
+        return accepted
 
     def try_receive(self, worker: int) -> tuple[int, int, bytes] | None:
         """Attempt one completion without imposing consumer delivery order."""
         if self._immediate and self._immediate[0][0] == worker:
             _, position, status, payload = self._immediate.popleft()
             return position, status, payload
-        return self._resources.try_receive(worker)
+        completion = self._resources.try_receive(worker)
+        if completion is not None:
+            self._pending.pop((worker, completion[0]), None)
+        return completion
 
     def decode(self, status: int, payload: bytes, worker: int) -> Any:
         """Reconstruct a successful sample or re-raise its worker exception."""
@@ -194,6 +191,7 @@ class ProcessPool:
             control.close()
         self._controls.clear()
         self._workers.clear()
+        self._pending.clear()
         self._resources = None
 
     def _receive_probe(self) -> tuple[int, bytes]:
@@ -205,13 +203,59 @@ class ProcessPool:
                 return status, payload
             self._check_worker(0, None)
 
+    def _launch_worker(
+        self, worker: int, probe: tuple[int, int, int] | None
+    ) -> tuple[Connection, mp.Process]:
+        owner, child = self._context.Pipe(duplex=True)
+        process = self._context.Process(
+            target=worker_main,
+            args=(
+                child,
+                self._dataset_payload,
+                worker,
+                self._worker_total,
+                self._root_seed,
+                probe,
+            ),
+            daemon=True,
+        )
+        process.start()
+        child.close()
+        return owner, process
+
+    def _restart_worker(self, worker: int) -> list[int]:
+        positions = sorted(self._resources.restart_worker(worker))
+        self._workers[worker].join(0)
+        self._controls[worker].close()
+        owner, process = self._launch_worker(worker, None)
+        self._controls[worker] = owner
+        self._workers[worker] = process
+        owner.send(("attach", self._resources.descriptor(worker)))
+        for position in positions:
+            epoch, index = self._pending[(worker, position)]
+            if not self._resources.try_submit(
+                epoch, position, index, BLACK_BOX_STAGE, worker
+            ):
+                raise RuntimeError("replacement worker transport rejected recovered work")
+        return positions
+
     def _check_worker(self, worker: int, deadline: float | None) -> None:
         process = self._workers[worker]
         if not process.is_alive():
+            exitcode = process.exitcode
+            positions: list[int] = []
             if self._resources is not None:
-                self._resources.reclaim_dead_worker(worker)
+                if self._on_worker_death == "restart":
+                    positions = self._restart_worker(worker)
+                    raise WorkerDied(
+                        f"hyperloader worker {worker} exited with code {exitcode}; "
+                        f"restarted after reclaiming positions {positions}"
+                    )
+                positions = self._resources.reclaim_dead_worker(worker)
+            self.abort()
             raise RuntimeError(
-                f"hyperloader worker {worker} exited with code {process.exitcode}"
+                f"hyperloader worker {worker} exited with code {exitcode}; "
+                f"closed after reclaiming positions {positions}"
             )
         if deadline is not None and time.monotonic() >= deadline:
             self.abort()
