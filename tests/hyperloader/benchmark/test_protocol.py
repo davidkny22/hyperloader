@@ -165,6 +165,28 @@ class BenchmarkProtocolTest(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError, "uninterrupted"):
             validate_observations(records)
 
+    def test_fixed_configuration_accepts_only_exact_zero_tuning(self) -> None:
+        records = observations(10)
+        fixed = TuningBudget(0, 0.0, ())
+        records = [
+            replace(
+                record,
+                first=replace(record.first, tuning=fixed),
+                second=replace(record.second, tuning=fixed),
+            )
+            for record in records
+        ]
+        validate_observations(records)
+
+        partial = replace(fixed, trials=1)
+        records[0] = replace(
+            records[0],
+            first=replace(records[0].first, tuning=partial),
+            second=replace(records[0].second, tuning=partial),
+        )
+        with self.assertRaisesRegex(ProtocolError, "exact zero or fully positive"):
+            validate_observations(records)
+
 
 if __name__ == "__main__":
     unittest.main()

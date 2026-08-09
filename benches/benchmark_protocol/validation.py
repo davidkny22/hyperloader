@@ -73,8 +73,18 @@ def _validate_run(run: SystemRun) -> None:
         raise ProtocolError("throughput must be positive")
     if run.config.batch_size <= 0 or run.config.workers < 0:
         raise ProtocolError("batch size and worker count are invalid")
-    if run.tuning.trials <= 0 or run.tuning.wall_seconds <= 0:
-        raise ProtocolError("tuning budget must be positive and counted")
+    zero_tuning = (
+        run.tuning.trials == 0
+        and run.tuning.wall_seconds == 0
+        and not run.tuning.knobs
+    )
+    positive_tuning = (
+        run.tuning.trials > 0
+        and run.tuning.wall_seconds > 0
+        and bool(run.tuning.knobs)
+    )
+    if not zero_tuning and not positive_tuning:
+        raise ProtocolError("tuning budget must be exact zero or fully positive")
     if not run.environment.benchmark_mode or run.environment.concurrent_load:
         raise ProtocolError("benchmark mode requires an exclusive measurement window")
     if not run.environment.cpu_governor or not run.environment.gpu_clock:
