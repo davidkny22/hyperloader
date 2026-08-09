@@ -19,6 +19,10 @@ dist/
 __pycache__/
 *.egg-info/
 .venv/
+.torch-matrix/
+.gate-install/
 *.pyc
 *.pyd
 *.pdb
+.coverage
+htmlcov/
