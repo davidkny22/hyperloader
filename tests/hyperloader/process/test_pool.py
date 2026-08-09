@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
@@ -85,9 +86,10 @@ class DelayedDataset:
 def record_worker_init(_worker_id: int) -> None:
     """Record the once-per-process initialization view."""
     info = get_worker_info()
-    path = Path(os.environ["HYPERLOADER_INIT_LOG"])
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(f"{os.getpid()}:{info.seed}\n")
+    directory = Path(os.environ["HYPERLOADER_INIT_LOG"])
+    (directory / f"worker-{info.id}.log").write_text(
+        f"{os.getpid()}:{info.seed}\n", encoding="utf-8"
+    )
 
 
 def random_signature(value: dict[str, object]) -> tuple[object, ...]:
@@ -127,9 +129,8 @@ class ProcessPoolTest(unittest.TestCase):
 
     def test_worker_init_runs_once_with_no_sample_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            log_path = Path(directory) / "worker-init.log"
             previous = os.environ.get("HYPERLOADER_INIT_LOG")
-            os.environ["HYPERLOADER_INIT_LOG"] = str(log_path)
+            os.environ["HYPERLOADER_INIT_LOG"] = directory
             pool = ProcessPool(
                 RandomDataset(),
                 2,
@@ -150,7 +151,10 @@ class ProcessPoolTest(unittest.TestCase):
                 else:
                     os.environ["HYPERLOADER_INIT_LOG"] = previous
 
-            records = log_path.read_text(encoding="utf-8").splitlines()
+            records = [
+                path.read_text(encoding="utf-8").strip()
+                for path in sorted(Path(directory).glob("worker-*.log"))
+            ]
             self.assertEqual(len(records), 2)
             self.assertEqual({int(row.split(":")[0]) for row in records}, expected_pids)
             self.assertTrue(all(row.endswith(":None") for row in records))
@@ -196,6 +200,7 @@ class ProcessPoolTest(unittest.TestCase):
 
         self.assertEqual(delivered, [0, 1, 2, 3])
         self.assertLess(executed.index(2), executed.index(1))
+        self.assertEqual(executed.count(0), 1)
 
     def test_abandoned_iterator_replays_epoch_with_a_clean_frontier(self) -> None:
         loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
@@ -211,6 +216,48 @@ class ProcessPoolTest(unittest.TestCase):
         self.assertEqual(int(first_sample["index"].item()), 0)
         self.assertEqual([int(batch["index"].item()) for batch in replayed], [0, 1, 2, 3])
         self.assertEqual(first_sample["torch"], replayed[0]["torch"])
+
+    def test_construction_prepares_workers_and_retains_shuffled_probe(self) -> None:
+        loader = DataLoader(list(range(8)), batch_size=2, shuffle=True, num_workers=2, seed=43)
+        try:
+            self.assertEqual(len(loader._process_pool.worker_pids), 2)
+            first = [int(value) for batch in loader for value in batch]
+            second = [int(value) for batch in loader for value in batch]
+        finally:
+            loader.close()
+
+        expected_first = [
+            _hyperloader._permutation_index(43, 0, 8, position)
+            for position in range(8)
+        ]
+        expected_second = [
+            _hyperloader._permutation_index(43, 1, 8, position)
+            for position in range(8)
+        ]
+        self.assertEqual(first, expected_first)
+        self.assertEqual(second, expected_second)
+
+    def test_severed_process_dispatch_breaks_the_public_path(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=1, seed=47)
+        try:
+            with mock.patch.object(
+                ProcessPool, "try_submit", side_effect=RuntimeError("severed dispatch")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "severed dispatch"):
+                    iter(loader)
+        finally:
+            loader.close()
+
+    def test_drop_last_excludes_tail_from_reusable_frontier(self) -> None:
+        loader = DataLoader(list(range(5)), batch_size=2, drop_last=True, num_workers=2, seed=53)
+        try:
+            first = [[int(value) for value in batch] for batch in loader]
+            second = [[int(value) for value in batch] for batch in loader]
+        finally:
+            loader.close()
+
+        self.assertEqual(first, [[0, 1], [2, 3]])
+        self.assertEqual(second, first)
 
 
 if __name__ == "__main__":

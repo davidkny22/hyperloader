@@ -8,8 +8,9 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
-from ..config import AUTO
-from .pool import POLL_SECONDS, ProcessPool
+from .factory import prepare_process_pool
+from .pool import POLL_SECONDS
+from .sizing import delivery_length, frontier_depth
 
 
 class ProcessIterator(Iterator[Any]):
@@ -19,26 +20,14 @@ class ProcessIterator(Iterator[Any]):
         self._loader = loader
         self._epoch = loader._epoch
         self._position = 0
-        self._length = len(loader.dataset)
+        self._length = delivery_length(loader)
         self._complete = False
         self._valid = True
         self._ready: dict[int, tuple[int, bytes, int]] = {}
         self._schedule: Any = None
         if self._length:
             depth = frontier_depth(loader)
-            if loader._process_pool is None:
-                loader._process_pool = ProcessPool(
-                    loader.dataset,
-                    loader.num_workers,
-                    loader.root_seed,
-                    self._epoch,
-                    0,
-                    0,
-                    worker_init_fn=loader.worker_init_fn,
-                    multiprocessing_context=loader.multiprocessing_context,
-                    timeout=loader.timeout,
-                    queue_capacity=queue_capacity(depth, loader.num_workers),
-                )
+            prepare_process_pool(loader)
             self._schedule = _hyperloader._StaticSchedule(
                 0,
                 self._length,
@@ -95,7 +84,10 @@ class ProcessIterator(Iterator[Any]):
         pool = self._loader._process_pool
         while (dispatch := self._schedule.next_dispatch()) is not None:
             position, worker = dispatch
-            if not pool.try_submit(self._epoch, position, position, worker):
+            index = self._loader._plan.index(
+                self._loader.root_seed, self._epoch, position
+            )
+            if not pool.try_submit(self._epoch, position, index, worker):
                 return
             self._schedule.mark_dispatched(position, worker)
 
@@ -125,17 +117,3 @@ class ProcessIterator(Iterator[Any]):
     def invalidate(self) -> None:
         """Prevent a replaced iterator from consuming a new pool's completions."""
         self._valid = False
-
-
-def frontier_depth(loader: Any) -> int:
-    """Resolve the fixed frontier while preserving the two-batch liveness floor."""
-    batch_size = loader.batch_size if loader.batch_size is not None else 1
-    minimum = 2 * batch_size
-    configured = loader.config.scheduler.frontier_depth
-    return minimum if configured is AUTO else max(minimum, configured)
-
-
-def queue_capacity(depth: int, worker_count: int) -> int:
-    """Cover the frontier with power-of-two capacity on each worker transport."""
-    per_worker = (depth + worker_count - 1) // worker_count
-    return max(2, 1 << (per_worker - 1).bit_length())

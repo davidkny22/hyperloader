@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
+from .planner import build_black_box_plan
+from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
 
 
@@ -154,6 +156,18 @@ class DataLoader:
         self._epoch = 0
         self._process_pool: Any = None
         self._active_iterator_ref: Any = None
+        self._plan = build_black_box_plan(dataset, shuffle)
+        if (
+            self._plan is not None
+            and num_workers is not AUTO
+            and num_workers > 0
+            and sampler is None
+            and batch_sampler is None
+            and collate_fn is None
+            and mode == "native"
+            and not thread_safe
+        ):
+            prepare_process_pool(self)
 
     def __iter__(self) -> Iterator[Any]:
         """Create an iterator over the persistent black-box process path."""
@@ -161,8 +175,12 @@ class DataLoader:
 
         if self.num_workers is AUTO or self.num_workers == 0:
             raise RuntimeError("the requested hyperloader execution tier is not initialized")
-        if self.shuffle or self.sampler is not None or self.batch_sampler is not None:
-            raise RuntimeError("sampler planning is not initialized")
+        if self.mode != "native" or self.thread_safe:
+            raise RuntimeError("the requested hyperloader execution mode is not initialized")
+        if self._plan is None:
+            raise RuntimeError("iterable planning is not initialized")
+        if self.sampler is not None or self.batch_sampler is not None:
+            raise RuntimeError("user sampler planning is not initialized")
         if self.collate_fn is not None:
             raise RuntimeError("user collation planning is not initialized")
         active = (
