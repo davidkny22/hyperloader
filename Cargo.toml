@@ -1,0 +1,14 @@
+[package]
+name = "hyperloader-engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Native execution engine for hyperloader."
+
+[lib]
+name = "_hyperloader"
+crate-type = ["cdylib"]
+path = "engine/src/lib.rs"
+
+[dependencies]
+pyo3 = { version = "0.27", features = ["extension-module"] }

@@ -1,0 +1,24 @@
+# operational scaffold (AGENTS.md law 2: the public repo carries the product only)
+task.md
+AGENTS.md
+STATUS.md
+TASKLIST.md
+SIDEQUESTS.md
+BUILD-LOG.md
+VALIDATION-LOG.md
+CONSTRAINTS.md
+MESSAGES.md
+recaps/
+prompts/
+docs/
+results/
+
+# build artifacts
+target/
+dist/
+__pycache__/
+*.egg-info/
+.venv/
+*.pyc
+*.pyd
+*.pdb

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "hyperloader"
+version = "0.1.0"
+description = "A deterministic, high-performance PyTorch data loader."
+requires-python = ">=3.10"
+license = "MIT"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Typing :: Typed",
+]
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "hyperloader._hyperloader"
+python-source = "python"
