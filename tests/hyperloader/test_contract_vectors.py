@@ -10,14 +10,14 @@ from pathlib import Path
 
 from hyperloader import DataLoader, _hyperloader
 
-from contract_vector_harness import (
+from .contract_vector_harness import (
     assert_installed_under,
     load_document,
     permutation_digest,
     reference,
 )
-from placement_reference import rank_placements
-from rng_reference import (
+from .placement_reference import rank_placements
+from .rng_reference import (
     block,
     feistel_permute,
     materialized_permutation,

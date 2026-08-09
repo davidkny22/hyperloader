@@ -4,7 +4,7 @@ import itertools
 import unittest
 
 from hyperloader import _hyperloader
-from rng_reference import (
+from .rng_reference import (
     block,
     feistel_permute,
     materialized_permutation,

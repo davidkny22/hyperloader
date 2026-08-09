@@ -1,6 +1,6 @@
 """Independent Python reference for native distributed placement."""
 
-from rng_reference import FEISTEL_THRESHOLD, feistel_permute, materialized_permutation
+from .rng_reference import FEISTEL_THRESHOLD, feistel_permute, materialized_permutation
 
 
 def rank_placements(

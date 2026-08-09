@@ -6,7 +6,7 @@ import unittest
 from collections import Counter
 
 from hyperloader import _hyperloader
-from placement_reference import rank_placements
+from .placement_reference import rank_placements
 
 
 class PlacementTest(unittest.TestCase):

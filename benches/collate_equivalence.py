@@ -48,7 +48,6 @@ def main() -> None:
             [
                 str(arguments.install_root.resolve()),
                 str(torch_root.resolve()),
-                str((root / "tests").resolve()),
             ]
         )
         environment["HYPERLOADER_EXPECTED_INSTALL_ROOT"] = str(
@@ -66,10 +65,10 @@ def main() -> None:
         command.extend(
             [
                 "--branch",
-                "--include=*/tests/test_collate_equivalence.py",
+                "--include=*/tests/hyperloader/test_collate_equivalence.py",
                 "-m",
                 "unittest",
-                "test_collate_equivalence",
+                "tests.hyperloader.test_collate_equivalence",
                 "-v",
             ]
         )
@@ -100,7 +99,6 @@ def main() -> None:
         [
             str(arguments.install_root.resolve()),
             str(arguments.torch_root[0].resolve()),
-            str((root / "tests").resolve()),
         ]
     )
     mutation_environment["HYPERLOADER_EXPECTED_INSTALL_ROOT"] = str(
@@ -108,7 +106,13 @@ def main() -> None:
     )
     mutation_environment["HYPERLOADER_COLLATE_MUTATION"] = "flip-int"
     mutation = _run(
-        [sys.executable, "-m", "unittest", "test_collate_equivalence", "-v"],
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "tests.hyperloader.test_collate_equivalence",
+            "-v",
+        ],
         root,
         mutation_environment,
     )

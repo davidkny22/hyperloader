@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from types import ModuleType
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 
 
 def _load_analyzer() -> ModuleType:

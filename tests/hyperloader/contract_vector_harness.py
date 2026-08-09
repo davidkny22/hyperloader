@@ -12,7 +12,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 VECTOR_DIR = ROOT / "oracles" / "contract-vectors"
 VECTOR_PATH = VECTOR_DIR / "vectors.json"
 

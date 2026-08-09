@@ -44,7 +44,7 @@ def main() -> None:
     evidence.mkdir(parents=True, exist_ok=False)
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join(
-        [str(arguments.install_root.resolve()), str((root / "tests").resolve())]
+        [str(arguments.install_root.resolve())]
     )
     environment["HYPERLOADER_EXPECTED_INSTALL_ROOT"] = str(
         arguments.install_root.resolve()
@@ -53,8 +53,8 @@ def main() -> None:
 
     include = ",".join(
         [
-            "*/tests/contract_vector_harness.py",
-            "*/tests/test_contract_vectors.py",
+            "*/tests/hyperloader/contract_vector_harness.py",
+            "*/tests/hyperloader/test_contract_vectors.py",
         ]
     )
     verification = _run(
@@ -67,7 +67,7 @@ def main() -> None:
             f"--include={include}",
             "-m",
             "unittest",
-            "test_contract_vectors",
+            "tests.hyperloader.test_contract_vectors",
             "-v",
         ],
         root,
@@ -104,7 +104,7 @@ def main() -> None:
             sys.executable,
             "-m",
             "unittest",
-            "test_contract_vectors",
+            "tests.hyperloader.test_contract_vectors",
             "-v",
         ],
         root,

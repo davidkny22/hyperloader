@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from types import ModuleType
 
-VECTOR_DIR = Path(__file__).parents[1] / "oracles" / "contract-vectors"
+VECTOR_DIR = Path(__file__).parents[2] / "oracles" / "contract-vectors"
 
 
 def _load(name: str, path: Path) -> ModuleType:
