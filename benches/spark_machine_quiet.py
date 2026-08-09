@@ -57,25 +57,49 @@ def gui_processes(records: list[ProcessRecord]) -> list[ProcessRecord]:
     ]
 
 
+def stop_display_manager() -> dict[str, str]:
+    """Stop active GDM supervision so selected GUI processes cannot respawn."""
+    observed = subprocess.run(
+        ["systemctl", "is-active", "gdm.service"],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if observed == "active":
+        subprocess.run(
+            ["sudo", "-n", "systemctl", "stop", "gdm.service"], check=True
+        )
+    final = subprocess.run(
+        ["systemctl", "is-active", "gdm.service"],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return {"initial": observed, "final": final}
+
+
 def quiet_machine(evidence: Path) -> None:
     """Terminate selected GUI processes, escalate survivors, and record them."""
     selected = gui_processes(process_inventory())
-    if selected:
+    display_manager = stop_display_manager()
+    time.sleep(2.0)
+    survivors = gui_processes(process_inventory())
+    if survivors:
         subprocess.run(
-            ["sudo", "-n", "kill", "-TERM", *(str(item.pid) for item in selected)],
+            ["sudo", "-n", "kill", "-TERM", *(str(item.pid) for item in survivors)],
             check=True,
         )
         time.sleep(2.0)
         live_pids = {record.pid for record in process_inventory()}
-        survivors = [record for record in selected if record.pid in live_pids]
-        if survivors:
+        term_survivors = [record for record in survivors if record.pid in live_pids]
+        if term_survivors:
             subprocess.run(
                 [
                     "sudo",
                     "-n",
                     "kill",
                     "-KILL",
-                    *(str(item.pid) for item in survivors),
+                    *(str(item.pid) for item in term_survivors),
                 ],
                 check=True,
             )
@@ -83,7 +107,9 @@ def quiet_machine(evidence: Path) -> None:
     remaining = gui_processes(process_inventory())
     document = {
         "captured_at": datetime.now(timezone.utc).isoformat(),
-        "killed": [asdict(record) for record in selected],
+        "display_manager": display_manager,
+        "selected": [asdict(record) for record in selected],
+        "directly_signaled": [asdict(record) for record in survivors],
         "remaining": [asdict(record) for record in remaining],
     }
     evidence.write_text(
