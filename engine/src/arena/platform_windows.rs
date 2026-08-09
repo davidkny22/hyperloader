@@ -24,6 +24,10 @@ pub(super) struct Mapping {
     length: usize,
 }
 
+// SAFETY: a mapping handle and its process-local view may move between threads. Mutable access
+// to the mapped bytes still requires exclusive access to `Mapping`.
+unsafe impl Send for Mapping {}
+
 impl Mapping {
     pub(super) fn create(name: &RegionName, length: usize) -> Result<Self, RegionError> {
         let os_name = os_name(name);

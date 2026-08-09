@@ -1,8 +1,13 @@
 //! Shared-memory regions, slots, and delivery-view lifetimes live in this module.
 
+mod allocator;
 mod named;
 mod reaper;
 
+pub use allocator::{
+    ArenaAllocator, ArenaError, ArenaSizing, ArenaStats, DeliveryView, GrowthPolicy, SlabSpec,
+    SlotRef, SlotState,
+};
 pub use named::{NamedRegion, RegionError, RegionName, RegionToken};
 pub use reaper::{
     ProcessIdentity, ProcessObservation, ProcessObserver, RegionRegistry, RegistryEntry,
