@@ -7,6 +7,7 @@ import multiprocessing as mp
 import pickle
 import sys
 import time
+from collections import deque
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ class ProcessPool:
         multiprocessing_context: Any = None,
         timeout: float = 0,
         registry_path: str | Path | None = None,
+        queue_capacity: int = 2,
     ) -> None:
         self._context = resolve_context(multiprocessing_context)
         self._timeout = timeout
@@ -45,6 +47,7 @@ class ProcessPool:
         self._workers: list[mp.Process] = []
         self._probe_key = (probe_epoch, probe_position, probe_index)
         self._probe_payload: bytes | None = None
+        self._immediate: deque[tuple[int, int, int, bytes]] = deque()
         dataset_payload = pickle.dumps((dataset, worker_init_fn), protocol=5)
         try:
             for worker_id in range(worker_count):
@@ -73,7 +76,7 @@ class ProcessPool:
             exception_capacity = max(65_536, payload_capacity * 2)
             self._resources = _hyperloader._ProcessResources(
                 worker_count,
-                2,
+                queue_capacity,
                 payload_capacity,
                 exception_capacity,
                 None if registry_path is None else Path(registry_path),
@@ -90,33 +93,69 @@ class ProcessPool:
         """Return stable process identifiers for liveness tests and diagnosis."""
         return tuple(process.pid for process in self._workers if process.pid is not None)
 
-    def execute(self, epoch: int, position: int, index: int) -> Any:
-        """Execute one black-box sample and reconstruct its result or exception."""
+    @property
+    def worker_count(self) -> int:
+        """Return the fixed number of persistent process workers."""
+        return len(self._workers)
+
+    def try_submit(
+        self, epoch: int, position: int, index: int, worker: int
+    ) -> bool:
+        """Attempt one targeted black-box dispatch without waiting for capacity."""
         if self._closed:
             raise RuntimeError("process pool is closed")
         key = (epoch, position, index)
         if self._probe_payload is not None and key == self._probe_key:
-            payload, self._probe_payload = self._probe_payload, None
+            if worker != 0:
+                raise RuntimeError("construction probe must retain worker zero routing")
+            self._immediate.append((worker, position, 0, self._probe_payload))
+            self._probe_payload = None
+            return True
+        return self._resources.try_submit(
+            epoch, position, index, BLACK_BOX_STAGE, worker
+        )
+
+    def try_receive(self, worker: int) -> tuple[int, int, bytes] | None:
+        """Attempt one completion without imposing consumer delivery order."""
+        if self._immediate and self._immediate[0][0] == worker:
+            _, position, status, payload = self._immediate.popleft()
+            return position, status, payload
+        return self._resources.try_receive(worker)
+
+    def decode(self, status: int, payload: bytes, worker: int) -> Any:
+        """Reconstruct a successful sample or re-raise its worker exception."""
+        if status == 0:
             return pickle.loads(payload)
+        reraise_worker_exception(payload, worker)
+
+    def execute(self, epoch: int, position: int, index: int) -> Any:
+        """Execute one black-box sample and reconstruct its result or exception."""
+        if self._closed:
+            raise RuntimeError("process pool is closed")
         worker = self._next_worker
         self._next_worker = (self._next_worker + 1) % len(self._workers)
         deadline = None if self._timeout == 0 else time.monotonic() + self._timeout
-        while not self._resources.try_submit(
-            epoch, position, index, BLACK_BOX_STAGE, worker
-        ):
+        while not self.try_submit(epoch, position, index, worker):
             self._check_worker(worker, deadline)
             time.sleep(POLL_SECONDS)
         while True:
-            completion = self._resources.try_receive(worker)
+            completion = self.try_receive(worker)
             if completion is not None:
                 received_position, status, payload = completion
                 if received_position != position:
                     raise RuntimeError("process completion position does not match dispatch")
-                if status == 0:
-                    return pickle.loads(payload)
-                reraise_worker_exception(payload, worker)
+                return self.decode(status, payload, worker)
             self._check_worker(worker, deadline)
             time.sleep(POLL_SECONDS)
+
+    def deadline(self) -> float | None:
+        """Create the current request's timeout deadline."""
+        return None if self._timeout == 0 else time.monotonic() + self._timeout
+
+    def check_workers(self, deadline: float | None) -> None:
+        """Validate every process and the consumer timeout deadline."""
+        for worker in range(len(self._workers)):
+            self._check_worker(worker, deadline)
 
     def close(self) -> None:
         """Stop workers, reclaim native resources, and make closure idempotent."""

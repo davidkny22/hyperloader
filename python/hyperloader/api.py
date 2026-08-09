@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Iterator
 from typing import Any
 
@@ -152,6 +153,7 @@ class DataLoader:
         self.root_seed = resolve_root_seed(resolved_seed, generator)
         self._epoch = 0
         self._process_pool: Any = None
+        self._active_iterator_ref: Any = None
 
     def __iter__(self) -> Iterator[Any]:
         """Create an iterator over the persistent black-box process path."""
@@ -163,10 +165,27 @@ class DataLoader:
             raise RuntimeError("sampler planning is not initialized")
         if self.collate_fn is not None:
             raise RuntimeError("user collation planning is not initialized")
-        return ProcessIterator(self)
+        active = (
+            None
+            if self._active_iterator_ref is None
+            else self._active_iterator_ref()
+        )
+        if active is not None and not active.complete:
+            self.close()
+        iterator = ProcessIterator(self)
+        self._active_iterator_ref = weakref.ref(iterator)
+        return iterator
 
     def close(self) -> None:
         """Release persistent process resources owned by this loader."""
+        active = (
+            None
+            if getattr(self, "_active_iterator_ref", None) is None
+            else self._active_iterator_ref()
+        )
+        if active is not None:
+            active.invalidate()
+        self._active_iterator_ref = None
         if getattr(self, "_process_pool", None) is not None:
             self._process_pool.close()
             self._process_pool = None

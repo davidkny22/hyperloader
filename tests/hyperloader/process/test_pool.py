@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -62,6 +63,23 @@ class PublicDataset:
             "pid": os.getpid(),
             "torch": torch.rand(()).item(),
         }
+
+
+class DelayedDataset:
+    """Record worker execution order while delaying one frontier head."""
+
+    def __init__(self, log_path: str) -> None:
+        self.log_path = log_path
+
+    def __len__(self) -> int:
+        return 4
+
+    def __getitem__(self, index: int) -> int:
+        if index == 1:
+            time.sleep(0.2)
+        with Path(self.log_path).open("a", encoding="utf-8") as stream:
+            stream.write(f"{index}\n")
+        return index
 
 
 def record_worker_init(_worker_id: int) -> None:
@@ -162,6 +180,37 @@ class ProcessPoolTest(unittest.TestCase):
             {int(pid) for batch in first + second for pid in batch["pid"]}, pids
         )
         self.assertFalse(torch.equal(first[0]["torch"], second[0]["torch"]))
+
+    def test_public_loader_reorders_real_out_of_order_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "execution-order.log"
+            loader = DataLoader(
+                DelayedDataset(str(log_path)), batch_size=1, num_workers=2, seed=37
+            )
+            try:
+                delivered = [int(batch.item()) for batch in loader]
+            finally:
+                loader.close()
+
+            executed = [int(value) for value in log_path.read_text().splitlines()]
+
+        self.assertEqual(delivered, [0, 1, 2, 3])
+        self.assertLess(executed.index(2), executed.index(1))
+
+    def test_abandoned_iterator_replays_epoch_with_a_clean_frontier(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
+        first_iterator = iter(loader)
+        first_sample = next(first_iterator)
+        try:
+            replayed = list(loader)
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                next(first_iterator)
+        finally:
+            loader.close()
+
+        self.assertEqual(int(first_sample["index"].item()), 0)
+        self.assertEqual([int(batch["index"].item()) for batch in replayed], [0, 1, 2, 3])
+        self.assertEqual(first_sample["torch"], replayed[0]["torch"])
 
 
 if __name__ == "__main__":
