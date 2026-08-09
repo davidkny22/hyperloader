@@ -1,21 +1,27 @@
-use pyo3::prelude::*;
+//! Native execution engine for hyperloader.
 
-/// Return the package version embedded in the native extension.
-#[pyfunction]
-fn package_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
-}
+pub mod arena;
+pub mod control;
+pub mod error;
+pub mod exec;
+mod ffi;
+pub mod io;
+pub mod rng;
+pub mod sched;
+pub mod state;
+pub mod telemetry;
+
+use pyo3::prelude::*;
 
 /// Initialize the native hyperloader extension.
 #[pymodule]
 fn _hyperloader(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(package_version, module)?)?;
-    Ok(())
+    ffi::register(module)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::package_version;
+    use super::ffi::package_version;
 
     #[test]
     fn package_version_matches_manifest() {
