@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
-from .planner import build_black_box_plan
+from .planner import BlackBoxPlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
 
@@ -28,9 +28,7 @@ def _resolve_delivery(in_order: bool, delivery: str | Auto) -> str:
     if delivery not in {"in-order", "on-completion"}:
         raise ValueError("delivery must be auto, in-order, or on-completion")
     if delivery != expected:
-        raise ValueError(
-            f"delivery={delivery!r} conflicts with in_order={in_order!r}"
-        )
+        raise ValueError(f"delivery={delivery!r} conflicts with in_order={in_order!r}")
     return delivery
 
 
@@ -97,7 +95,11 @@ class DataLoader:
             raise ValueError("mode must be native or torch-compat")
 
         resolved_config = config if config is not None else HyperConfig()
-        if seed is not None and resolved_config.seed is not None and seed != resolved_config.seed:
+        if (
+            seed is not None
+            and resolved_config.seed is not None
+            and seed != resolved_config.seed
+        ):
             raise ValueError("seed conflicts with config.seed")
         resolved_seed = seed if seed is not None else resolved_config.seed
 
@@ -107,13 +109,20 @@ class DataLoader:
             and num_workers is not AUTO
             and process_ceiling != num_workers
         ):
-            raise ValueError("num_workers conflicts with config.executor.process_ceiling")
-        if mode == "torch-compat" and resolved_config.executor.on_worker_death == "restart":
+            raise ValueError(
+                "num_workers conflicts with config.executor.process_ceiling"
+            )
+        if (
+            mode == "torch-compat"
+            and resolved_config.executor.on_worker_death == "restart"
+        ):
             raise ValueError("worker restart is unavailable in torch-compat mode")
 
         resolved_delivery = _resolve_delivery(in_order, delivery)
         configured_memory = resolved_config.memory.delivery_memory
-        requested_memory = "device" if device is not None else "pinned" if pin_memory else None
+        requested_memory = (
+            "device" if device is not None else "pinned" if pin_memory else None
+        )
         if (
             configured_memory != "auto"
             and requested_memory is not None
@@ -125,7 +134,9 @@ class DataLoader:
         resolved_memory = (
             configured_memory
             if configured_memory != "auto"
-            else requested_memory if requested_memory is not None else "auto"
+            else requested_memory
+            if requested_memory is not None
+            else "auto"
         )
 
         self.dataset = dataset
@@ -156,9 +167,9 @@ class DataLoader:
         self._epoch = 0
         self._process_pool: Any = None
         self._active_iterator_ref: Any = None
-        self._plan = build_black_box_plan(dataset, shuffle)
+        self._plan = build_plan(dataset, shuffle)
         if (
-            self._plan is not None
+            isinstance(self._plan, BlackBoxPlan)
             and num_workers is not AUTO
             and num_workers > 0
             and sampler is None
@@ -170,13 +181,18 @@ class DataLoader:
             prepare_process_pool(self)
 
     def __iter__(self) -> Iterator[Any]:
-        """Create an iterator over the persistent black-box process path."""
+        """Create an iterator over the selected native execution plan."""
         from .process.iterator import ProcessIterator
+        from .tensor import TensorIterator
 
         if self.num_workers is AUTO or self.num_workers == 0:
-            raise RuntimeError("the requested hyperloader execution tier is not initialized")
+            raise RuntimeError(
+                "the requested hyperloader execution tier is not initialized"
+            )
         if self.mode != "native" or self.thread_safe:
-            raise RuntimeError("the requested hyperloader execution mode is not initialized")
+            raise RuntimeError(
+                "the requested hyperloader execution mode is not initialized"
+            )
         if self._plan is None:
             raise RuntimeError("iterable planning is not initialized")
         if self.sampler is not None or self.batch_sampler is not None:
@@ -184,13 +200,14 @@ class DataLoader:
         if self.collate_fn is not None:
             raise RuntimeError("user collation planning is not initialized")
         active = (
-            None
-            if self._active_iterator_ref is None
-            else self._active_iterator_ref()
+            None if self._active_iterator_ref is None else self._active_iterator_ref()
         )
         if active is not None and not active.complete:
             self.close()
-        iterator = ProcessIterator(self)
+        if isinstance(self._plan, TensorPlan):
+            iterator = TensorIterator(self)
+        else:
+            iterator = ProcessIterator(self)
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
 

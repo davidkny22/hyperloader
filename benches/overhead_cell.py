@@ -13,18 +13,18 @@ from benchmark_protocol import (
     PairedObservation,
     SystemRun,
     TuningBudget,
-    process_transport_split,
+    tensor_view_split,
 )
 from overhead_environment import ClockSampler
 from overhead_feeders import (
     BATCH_SIZE,
     FRONTIER_DEPTH,
     WORKERS,
-    FixedTextDataset,
     LoaderFeeder,
     ResidentFeeder,
-    payload_sizes,
+    fixed_text_tensor,
     resident_batch_count,
+    tensor_sizes,
 )
 from overhead_workload import GpuWorkload
 
@@ -42,10 +42,10 @@ def run_cell(
         raise ValueError("half duration must be positive")
     batch_bytes = BATCH_SIZE * 512 * 8
     resident_batches = resident_batch_count(llc_bytes, batch_bytes)
-    dataset = FixedTextDataset(resident_batches)
+    dataset = fixed_text_tensor(resident_batches)
     resident = ResidentFeeder(dataset)
     loader = LoaderFeeder(dataset)
-    logical_bytes, serialized_bytes, batch_bytes = payload_sizes(dataset)
+    logical_bytes, batch_bytes = tensor_sizes(dataset)
     original_affinity = os.sched_getaffinity(0)
     sampler = ClockSampler()
     try:
@@ -54,9 +54,13 @@ def run_cell(
         os.sched_setaffinity(0, {19})
         workload = GpuWorkload(regime)
         workload.warm(resident.next_batch())
-        order = ("counterfactual", "loader") if ordinal % 2 == 0 else (
-            "loader",
-            "counterfactual",
+        order = (
+            ("counterfactual", "loader")
+            if ordinal % 2 == 0
+            else (
+                "loader",
+                "counterfactual",
+            )
         )
         feeders = {"counterfactual": resident, "loader": loader}
         start_batches = {name: feeder.batches for name, feeder in feeders.items()}
@@ -112,12 +116,11 @@ def run_cell(
         uninterrupted=True,
     )
     loader_batches = loader.batches - start_batches["loader"]
-    split = process_transport_split(
+    split = tensor_view_split(
         duration_seconds=half_seconds,
         samples=loader_batches * BATCH_SIZE,
         batches=loader_batches,
         logical_sample_bytes=logical_bytes,
-        serialized_sample_bytes=serialized_bytes,
         batch_bytes=batch_bytes,
     )
     return {

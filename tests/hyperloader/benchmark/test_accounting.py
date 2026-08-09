@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from benches.benchmark_protocol import process_transport_split
+from benches.benchmark_protocol import process_transport_split, tensor_view_split
 
 
 class ProcessTransportAccountingTest(unittest.TestCase):
@@ -44,6 +44,21 @@ class ProcessTransportAccountingTest(unittest.TestCase):
                 serialized_sample_bytes=3,
                 batch_bytes=16,
             )
+
+    def test_tensor_view_has_no_loader_host_write(self) -> None:
+        split = tensor_view_split(
+            duration_seconds=2.0,
+            samples=8,
+            batches=2,
+            logical_sample_bytes=4,
+            batch_bytes=16,
+        )
+
+        self.assertEqual(split.model_input_gbps, 16 / 1_000_000_000)
+        self.assertEqual(split.irreducible_host_gbps, 0.0)
+        self.assertEqual(split.explicit_overhead_gbps, 0.0)
+        self.assertEqual(split.explicit_total_host_gbps, 0.0)
+        self.assertEqual(split.serialized_sample_bytes, 0)
 
 
 if __name__ == "__main__":

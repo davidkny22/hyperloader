@@ -51,8 +51,8 @@ class OverheadResultsTest(unittest.TestCase):
         self.assertEqual(summary["model_input_gbps"], 2.0)
         self.assertEqual(summary["irreducible_host_gbps"], 4.0)
         self.assertEqual(summary["explicit_overhead_gbps"], 6.0)
-        self.assertIn("Python serialization", str(summary["overhead_scope"]))
-        self.assertIn("fixed-text", str(summary["stage_plan_pin"]))
+        self.assertIn("zero loader-attributable", str(summary["overhead_scope"]))
+        self.assertIn("contiguous tensor view", str(summary["stage_plan_pin"]))
 
     def test_resident_ring_covers_eight_times_total_llc(self) -> None:
         llc_bytes = 24 * 1024 * 1024
@@ -84,13 +84,12 @@ class OverheadResultsTest(unittest.TestCase):
             )
             rejected = {
                 "raw": {
-                    "clock_samples": [
-                        {"clock_mhz": 2392, "utilization_percent": 0}
-                    ]
+                    "clock_samples": [{"clock_mhz": 2392, "utilization_percent": 0}]
                 }
             }
-            with TemporaryDirectory() as directory, patch.object(
-                overhead_campaign, "run_cell", return_value=rejected
+            with (
+                TemporaryDirectory() as directory,
+                patch.object(overhead_campaign, "run_cell", return_value=rejected),
             ):
                 output = Path(directory)
                 with self.assertRaisesRegex(RuntimeError, "clock samples"):

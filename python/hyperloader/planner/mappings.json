@@ -1,0 +1,7 @@
+[
+  {
+    "dataset_module": "torch",
+    "dataset_type": "Tensor",
+    "plan": "contiguous_tensor"
+  }
+]

@@ -1,6 +1,6 @@
 """Reproducible paired benchmark records and decisions."""
 
-from .accounting import ByteSplit, process_transport_split
+from .accounting import ByteSplit, process_transport_split, tensor_view_split
 from .decision import DecisionResult, evaluate
 from .environment import capture_environment
 from .matrix import WORKLOAD_MATRIX, Workload
@@ -27,5 +27,6 @@ __all__ = [
     "capture_environment",
     "evaluate",
     "process_transport_split",
+    "tensor_view_split",
     "validate_observations",
 ]

@@ -72,3 +72,39 @@ def process_transport_split(
         explicit_overhead_gbps=explicit_overhead / divisor,
         explicit_total_host_gbps=explicit_total / divisor,
     )
+
+
+def tensor_view_split(
+    *,
+    duration_seconds: float,
+    samples: int,
+    batches: int,
+    logical_sample_bytes: int,
+    batch_bytes: int,
+) -> ByteSplit:
+    """Account a contiguous tensor view path with no loader host writes."""
+    values = (
+        duration_seconds,
+        samples,
+        batches,
+        logical_sample_bytes,
+        batch_bytes,
+    )
+    if any(value <= 0 for value in values):
+        raise ValueError("byte split inputs must be positive")
+    if batches * batch_bytes != samples * logical_sample_bytes:
+        raise ValueError("delivered sample and batch bytes must balance")
+    model_input_bytes = batches * batch_bytes
+    divisor = duration_seconds * 1_000_000_000.0
+    return ByteSplit(
+        duration_seconds=duration_seconds,
+        samples=samples,
+        batches=batches,
+        logical_sample_bytes=logical_sample_bytes,
+        serialized_sample_bytes=0,
+        batch_bytes=batch_bytes,
+        model_input_gbps=model_input_bytes / divisor,
+        irreducible_host_gbps=0.0,
+        explicit_overhead_gbps=0.0,
+        explicit_total_host_gbps=0.0,
+    )

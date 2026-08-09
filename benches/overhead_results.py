@@ -31,9 +31,9 @@ def summarize_splits(cells: list[dict[str, Any]]) -> dict[str, float | str]:
         key: statistics.fmean(float(split[key]) for split in splits) for key in keys
     }
     result["overhead_scope"] = (
-        "exact explicit native copies; Python serialization copies are excluded"
+        "contiguous tensor views; zero loader-attributable host writes"
     )
     result["stage_plan_pin"] = (
-        "fixed-text black-box process; native default collation; host synchronous H2D"
+        "fixed-text contiguous tensor view; native sampler; host synchronous H2D"
     )
     return result
