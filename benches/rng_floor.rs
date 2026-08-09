@@ -3,6 +3,7 @@
 use std::env;
 use std::fs;
 use std::hint::black_box;
+use std::process::Command;
 use std::time::Instant;
 
 use _hyperloader::rng::{block, feistel_permute, sample_seed_words};
@@ -83,16 +84,25 @@ fn allowed_cores() -> Result<String, String> {
         .ok_or_else(|| "cannot find Cpus_allowed_list in /proc/self/status".to_owned())
 }
 
-fn cpu_model() -> Result<String, String> {
-    let cpuinfo = read_trimmed("/proc/cpuinfo")?;
-    cpuinfo
+fn cpu_model(core: usize) -> Result<String, String> {
+    let output = Command::new("lscpu")
+        .arg("-e=CPU,MODELNAME")
+        .output()
+        .map_err(|error| format!("cannot execute lscpu: {error}"))?;
+    if !output.status.success() {
+        return Err("lscpu did not return the per-core model table".to_owned());
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|error| format!("lscpu returned invalid UTF-8: {error}"))?
         .lines()
         .find_map(|line| {
-            line.strip_prefix("model name\t: ")
-                .or_else(|| line.strip_prefix("Processor\t: "))
+            let mut fields = line.split_whitespace();
+            let listed_core = fields.next()?.parse::<usize>().ok()?;
+            (listed_core == core).then(|| fields.collect::<Vec<_>>().join(" "))
         })
         .map(|value| value.replace(',', ";"))
-        .ok_or_else(|| "cannot find the CPU model in /proc/cpuinfo".to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("lscpu did not identify core {core}"))
 }
 
 fn frequency_path(core: usize, field: &str) -> String {
@@ -182,7 +192,7 @@ fn main() -> Result<(), String> {
     }
     let governor = read_trimmed(&frequency_path(config.core, "scaling_governor"))?;
     let maximum_frequency = read_trimmed(&frequency_path(config.core, "cpuinfo_max_freq"))?;
-    let model = cpu_model()?;
+    let model = cpu_model(config.core)?;
 
     println!("meta,label,{}", config.label);
     println!("meta,core,{}", config.core);
