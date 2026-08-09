@@ -152,3 +152,9 @@ class DataLoader:
     def __iter__(self) -> Iterator[Any]:
         """Create an iterator after the execution planner is available."""
         raise RuntimeError("the hyperloader execution planner is not initialized")
+
+    def _collate_batch(self, batch: list[Any]) -> Any:
+        """Collate an engine-produced batch through the native contract mirror."""
+        from . import _hyperloader
+
+        return _hyperloader._default_collate(batch)

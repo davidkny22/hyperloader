@@ -1,6 +1,7 @@
 //! Native execution engine for hyperloader.
 
 pub mod arena;
+pub mod collate;
 pub mod control;
 pub mod error;
 pub mod exec;

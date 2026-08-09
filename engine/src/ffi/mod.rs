@@ -3,7 +3,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::rng;
+use crate::{collate, rng};
 
 /// Return the package version embedded in the native extension.
 #[pyfunction]
@@ -93,6 +93,11 @@ fn rank_placements(
         })
 }
 
+#[pyfunction(name = "_default_collate")]
+fn default_collate<'py>(py: Python<'py>, batch: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    collate::default_collate(py, batch)
+}
+
 /// Register the stable native functions exposed by the extension module.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(package_version, module)?)?;
@@ -102,5 +107,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(materialized_permutation, module)?)?;
     module.add_function(wrap_pyfunction!(permutation_index, module)?)?;
     module.add_function(wrap_pyfunction!(rank_placements, module)?)?;
+    module.add_function(wrap_pyfunction!(default_collate, module)?)?;
     Ok(())
 }
