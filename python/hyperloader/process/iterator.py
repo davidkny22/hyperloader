@@ -42,22 +42,27 @@ class ProcessIterator(Iterator[Any]):
     def __next__(self) -> Any:
         if not self._valid:
             raise RuntimeError("process iterator is no longer active")
-        if self._position >= self._length:
-            self._finish_epoch()
-            raise StopIteration
-        batch_size = self._loader.batch_size
-        if batch_size is None:
-            position = self._position
-            self._position += 1
-            return self._next_sample(position)
-        stop = min(self._position + batch_size, self._length)
-        if self._loader.drop_last and stop - self._position < batch_size:
-            self._position = self._length
-            self._finish_epoch()
-            raise StopIteration
-        batch = [self._next_sample(position) for position in range(self._position, stop)]
-        self._position = stop
-        return self._loader._collate_batch(batch)
+        try:
+            if self._position >= self._length:
+                self._finish_epoch()
+                raise StopIteration
+            batch_size = self._loader.batch_size
+            if batch_size is None:
+                position = self._position
+                self._position += 1
+                return self._next_sample(position)
+            stop = min(self._position + batch_size, self._length)
+            batch = [
+                self._next_sample(position)
+                for position in range(self._position, stop)
+            ]
+            self._position = stop
+            return self._loader._collate_batch(batch)
+        except StopIteration:
+            raise
+        except BaseException:
+            self._loader.close()
+            raise
 
     def _next_sample(self, expected_position: int) -> Any:
         pool = self._loader._process_pool
@@ -70,11 +75,7 @@ class ProcessIterator(Iterator[Any]):
                     raise RuntimeError("scheduler committed a noncontiguous position")
                 status, payload, worker = self._ready.pop(position)
                 self._fill_frontier()
-                try:
-                    return pool.decode(status, payload, worker)
-                except BaseException:
-                    self._loader.close()
-                    raise
+                return pool.decode(status, payload, worker)
             progressed = self._poll_completions()
             if not progressed:
                 pool.check_workers(deadline)

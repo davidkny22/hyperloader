@@ -27,13 +27,20 @@ def worker_main(
     dataset, worker_init_fn = pickle.loads(dataset_payload)
     set_worker_info(worker_id, worker_count, None, dataset)
     try:
-        if worker_init_fn is not None:
-            worker_init_fn(worker_id)
+        startup_error = None
+        try:
+            if worker_init_fn is not None:
+                worker_init_fn(worker_id)
+        except BaseException as error:
+            startup_error = encode_exception(error)
         if probe is not None:
-            epoch, position, index = probe
-            status, payload = execute_sample(
-                dataset, worker_id, worker_count, root_seed, epoch, position, index
-            )
+            if startup_error is None:
+                epoch, position, index = probe
+                status, payload = execute_sample(
+                    dataset, worker_id, worker_count, root_seed, epoch, position, index
+                )
+            else:
+                status, payload = startup_error
             control.send(("probe", status, payload))
         command = control.recv()
         if command[0] == "stop":
@@ -42,7 +49,13 @@ def worker_main(
             raise RuntimeError("worker received an invalid control command")
         endpoint = _hyperloader._WorkerEndpoint(*command[1])
         run_commands(
-            control, endpoint, dataset, worker_id, worker_count, root_seed
+            control,
+            endpoint,
+            dataset,
+            worker_id,
+            worker_count,
+            root_seed,
+            startup_error,
         )
     finally:
         clear_worker_info()
@@ -56,6 +69,7 @@ def run_commands(
     worker_id: int,
     worker_count: int,
     root_seed: int,
+    startup_error: tuple[int, bytes] | None,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -68,7 +82,9 @@ def run_commands(
         if dispatch is None:
             time.sleep(0.0005)
             continue
-        if dispatch.stage_plan != BLACK_BOX_STAGE:
+        if startup_error is not None:
+            status, payload = startup_error
+        elif dispatch.stage_plan != BLACK_BOX_STAGE:
             status, payload = encode_exception(
                 RuntimeError(f"unknown stage plan {dispatch.stage_plan}")
             )

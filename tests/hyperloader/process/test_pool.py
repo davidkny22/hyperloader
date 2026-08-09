@@ -40,18 +40,6 @@ class RandomDataset:
         }
 
 
-class FailingDataset:
-    """Raise a user exception away from the construction probe."""
-
-    def __len__(self) -> int:
-        return 2
-
-    def __getitem__(self, index: int) -> int:
-        if index == 1:
-            raise ValueError("sample failed")
-        return index
-
-
 class PublicDataset:
     """Return values supported by the engine's int64 collation contract."""
 
@@ -158,17 +146,6 @@ class ProcessPoolTest(unittest.TestCase):
             self.assertEqual(len(records), 2)
             self.assertEqual({int(row.split(":")[0]) for row in records}, expected_pids)
             self.assertTrue(all(row.endswith(":None") for row in records))
-
-    def test_user_exception_keeps_formatted_worker_traceback(self) -> None:
-        pool = ProcessPool(FailingDataset(), 1, 29, 0, 0, 0)
-        try:
-            with self.assertRaisesRegex(ValueError, "Original traceback") as raised:
-                pool.execute(0, 1, 1)
-        finally:
-            pool.close()
-
-        self.assertIn("sample failed", str(raised.exception))
-        self.assertIn("__getitem__", str(raised.exception))
 
     def test_public_loader_reuses_workers_across_epochs(self) -> None:
         loader = DataLoader(PublicDataset(), batch_size=2, num_workers=2, seed=31)

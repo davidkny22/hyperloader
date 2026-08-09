@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import multiprocessing as mp
 import pickle
 import sys
@@ -15,6 +14,7 @@ from typing import Any
 from hyperloader import _hyperloader
 
 from .worker import BLACK_BOX_STAGE, worker_main
+from .exceptions import reraise_worker_exception
 
 POLL_SECONDS = 0.005
 SHUTDOWN_SECONDS = 5.0
@@ -46,6 +46,7 @@ class ProcessPool:
         self._controls: list[Connection] = []
         self._workers: list[mp.Process] = []
         self._probe_key = (probe_epoch, probe_position, probe_index)
+        self._probe_status = 0
         self._probe_payload: bytes | None = None
         self._immediate: deque[tuple[int, int, int, bytes]] = deque()
         dataset_payload = pickle.dumps((dataset, worker_init_fn), protocol=5)
@@ -70,10 +71,9 @@ class ProcessPool:
                 self._controls.append(owner)
                 self._workers.append(process)
             status, probe_payload = self._receive_probe()
-            if status != 0:
-                reraise_worker_exception(probe_payload, 0)
-            payload_capacity = max(1, len(probe_payload))
-            exception_capacity = max(65_536, payload_capacity * 2)
+            self._probe_status = status
+            payload_capacity = 262_144 if status != 0 else max(1, len(probe_payload))
+            exception_capacity = max(65_536, len(probe_payload), payload_capacity * 2)
             self._resources = _hyperloader._ProcessResources(
                 worker_count,
                 queue_capacity,
@@ -108,7 +108,9 @@ class ProcessPool:
         if self._probe_payload is not None and key == self._probe_key:
             if worker != 0:
                 raise RuntimeError("construction probe must retain worker zero routing")
-            self._immediate.append((worker, position, 0, self._probe_payload))
+            self._immediate.append(
+                (worker, position, self._probe_status, self._probe_payload)
+            )
             self._probe_payload = None
             return True
         return self._resources.try_submit(
@@ -172,6 +174,22 @@ class ProcessPool:
             if process.is_alive():
                 process.terminate()
                 process.join(SHUTDOWN_SECONDS)
+        self._release_handles()
+
+    def abort(self) -> None:
+        """Terminate a timed-out pool immediately, then release native handles."""
+        if self._closed:
+            return
+        self._closed = True
+        for process in self._workers:
+            if process.is_alive():
+                process.terminate()
+        for process in self._workers:
+            process.join(SHUTDOWN_SECONDS)
+        self._release_handles()
+
+    def _release_handles(self) -> None:
+        """Close controls and drop native owners after every shutdown mode."""
         for control in self._controls:
             control.close()
         self._controls.clear()
@@ -179,14 +197,13 @@ class ProcessPool:
         self._resources = None
 
     def _receive_probe(self) -> tuple[int, bytes]:
-        deadline = None if self._timeout == 0 else time.monotonic() + self._timeout
         while True:
             if self._controls[0].poll(POLL_SECONDS):
                 kind, status, payload = self._controls[0].recv()
                 if kind != "probe":
                     raise RuntimeError("worker returned an invalid probe response")
                 return status, payload
-            self._check_worker(0, deadline)
+            self._check_worker(0, None)
 
     def _check_worker(self, worker: int, deadline: float | None) -> None:
         process = self._workers[worker]
@@ -197,6 +214,7 @@ class ProcessPool:
                 f"hyperloader worker {worker} exited with code {process.exitcode}"
             )
         if deadline is not None and time.monotonic() >= deadline:
+            self.abort()
             raise RuntimeError(f"DataLoader timed out after {self._timeout} seconds")
 
     def __del__(self) -> None:
@@ -210,23 +228,3 @@ def resolve_context(requested: Any) -> Any:
     if sys.platform in {"win32", "darwin"}:
         return mp.get_context("spawn")
     return mp.get_context("forkserver")
-
-
-def reraise_worker_exception(payload: bytes, worker: int) -> None:
-    """Reconstruct torch-shaped exception context without retaining worker frames."""
-    module_name, qualname, original_message, formatted = pickle.loads(payload)
-    message = (
-        f"Caught {qualname} in hyperloader worker process {worker}.\n"
-        f"Original traceback:\n{formatted}"
-    )
-    try:
-        exception_type: Any = importlib.import_module(module_name)
-        for component in qualname.split("."):
-            exception_type = getattr(exception_type, component)
-        if not isinstance(exception_type, type) or not issubclass(
-            exception_type, BaseException
-        ):
-            raise TypeError
-        raise exception_type(message)
-    except (AttributeError, ImportError, TypeError):
-        raise RuntimeError(f"{message}\nOriginal message: {original_message}") from None
