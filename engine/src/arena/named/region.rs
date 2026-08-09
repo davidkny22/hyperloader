@@ -151,6 +151,16 @@ impl NamedRegion {
         &mut self.mapping.as_mut_slice()[range]
     }
 
+    /// Return the payload address for crate-owned synchronization protocols.
+    ///
+    /// # Safety
+    ///
+    /// The caller must keep this mapping alive, remain within `payload_size`, honor the
+    /// alignment of every referenced type, and synchronize every shared access.
+    pub(crate) fn payload_ptr(&self) -> *mut u8 {
+        self.mapping.as_slice().as_ptr().wrapping_add(HEADER_LEN) as *mut u8
+    }
+
     /// Remove the POSIX namespace entry. Windows removes it when all handles close.
     pub fn unlink(&self) -> Result<(), RegionError> {
         platform::unlink(&self.name)
