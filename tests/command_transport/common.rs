@@ -35,6 +35,7 @@ pub(super) fn registry(label: &str) -> RegionRegistry {
 pub(super) fn dispatch(position: u64, worker: u32) -> DispatchMessage {
     DispatchMessage {
         position,
+        epoch: 2,
         stage_plan: 5,
         index: position.saturating_add(1000),
         worker,

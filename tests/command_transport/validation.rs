@@ -17,6 +17,7 @@ fn message_validation_rejects_inconsistent_fields() {
     assert!(matches!(
         transport.try_send_dispatch(DispatchMessage {
             position: 0,
+            epoch: 0,
             stage_plan: 0,
             index: 0,
             worker: 0,

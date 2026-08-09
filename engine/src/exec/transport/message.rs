@@ -17,6 +17,8 @@ const SIDE_PRESENT: u8 = 1;
 pub struct DispatchMessage {
     /// Sampler-stream position owned by this command.
     pub position: u64,
+    /// Loader epoch used by per-sample RNG derivation.
+    pub epoch: u64,
     /// Stable identifier for the stage plan to execute.
     pub stage_plan: u32,
     /// Dataset or sampler index consumed by the black-box stage.
@@ -74,17 +76,19 @@ pub(super) fn encode_dispatch(
     put_slot(&mut frame, 32, message.slot);
     validate_slot(message.exception_slot).map_err(TransportError::InvalidMessage)?;
     put_slot(&mut frame, 72, message.exception_slot);
+    put_u64(&mut frame, 112, message.epoch);
     Ok(frame)
 }
 
 pub(super) fn decode_dispatch(frame: &[u8; FRAME_SIZE]) -> Result<DispatchMessage, &'static str> {
     validate_header(frame, DISPATCH_KIND)?;
-    if frame[6] != 0 || frame[7] != 0 || frame[112..].iter().any(|byte| *byte != 0) {
+    if frame[6] != 0 || frame[7] != 0 || frame[120..].iter().any(|byte| *byte != 0) {
         return Err("dispatch reserved fields");
     }
     let slot = get_slot(frame, 32)?;
     Ok(DispatchMessage {
         position: get_u64(frame, 8),
+        epoch: get_u64(frame, 112),
         worker: get_u32(frame, 16),
         stage_plan: get_u32(frame, 20),
         index: get_u64(frame, 24),

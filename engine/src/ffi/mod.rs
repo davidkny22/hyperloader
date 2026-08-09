@@ -5,6 +5,8 @@ use pyo3::prelude::*;
 
 use crate::{collate, rng};
 
+mod process;
+
 /// Return the package version embedded in the native extension.
 #[pyfunction]
 pub(crate) fn package_version() -> &'static str {
@@ -111,5 +113,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(permutation_index, module)?)?;
     module.add_function(wrap_pyfunction!(rank_placements, module)?)?;
     module.add_function(wrap_pyfunction!(default_collate, module)?)?;
+    process::register(module)?;
     Ok(())
 }

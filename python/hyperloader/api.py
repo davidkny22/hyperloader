@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
+from .process.seed import resolve_root_seed
 
 
 def _require_nonnegative_workers(num_workers: int | Auto) -> None:
@@ -148,13 +149,33 @@ class DataLoader:
         self.device = device
         self.config = resolved_config
         self.delivery_memory = resolved_memory
+        self.root_seed = resolve_root_seed(resolved_seed, generator)
+        self._epoch = 0
+        self._process_pool: Any = None
 
     def __iter__(self) -> Iterator[Any]:
-        """Create an iterator after the execution planner is available."""
-        raise RuntimeError("the hyperloader execution planner is not initialized")
+        """Create an iterator over the persistent black-box process path."""
+        from .process.iterator import ProcessIterator
+
+        if self.num_workers is AUTO or self.num_workers == 0:
+            raise RuntimeError("the requested hyperloader execution tier is not initialized")
+        if self.shuffle or self.sampler is not None or self.batch_sampler is not None:
+            raise RuntimeError("sampler planning is not initialized")
+        if self.collate_fn is not None:
+            raise RuntimeError("user collation planning is not initialized")
+        return ProcessIterator(self)
+
+    def close(self) -> None:
+        """Release persistent process resources owned by this loader."""
+        if getattr(self, "_process_pool", None) is not None:
+            self._process_pool.close()
+            self._process_pool = None
 
     def _collate_batch(self, batch: list[Any]) -> Any:
         """Collate an engine-produced batch through the native contract mirror."""
         from . import _hyperloader
 
         return _hyperloader._default_collate(batch)
+
+    def __del__(self) -> None:
+        self.close()

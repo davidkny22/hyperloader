@@ -55,7 +55,7 @@ class DataLoaderValidationTest(unittest.TestCase):
         self.assertEqual(loader.mode, "native")
 
     def test_execution_before_planner_wiring_fails_clearly(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "planner is not initialized"):
+        with self.assertRaisesRegex(RuntimeError, "execution tier is not initialized"):
             iter(DataLoader([]))
 
 

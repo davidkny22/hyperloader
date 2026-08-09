@@ -6,6 +6,7 @@ use crate::exec::{CompletionMessage, CompletionStatus, DispatchMessage};
 fn dispatch_decoder_rejects_corrupted_header_and_reserved_bytes() {
     let message = DispatchMessage {
         position: 8,
+        epoch: 4,
         stage_plan: 3,
         index: 19,
         worker: 2,
