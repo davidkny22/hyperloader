@@ -4,7 +4,7 @@ import itertools
 import unittest
 
 from hyperloader import _hyperloader
-from rng_reference import block, philox4x32_10, sample_seed_words
+from rng_reference import block, feistel_permute, philox4x32_10, sample_seed_words
 
 
 class RngContractTest(unittest.TestCase):
@@ -43,6 +43,24 @@ class RngContractTest(unittest.TestCase):
         blocks = {_hyperloader._rng_block(11, 3, 29, 2, stream) for stream in (0, 1, 4, 5, 6)}
 
         self.assertEqual(len(blocks), 5)
+
+    def test_large_permutations_match_reference(self) -> None:
+        domains = (1 << 17, (1 << 17) + 1, 300_000, 1 << 20, 1_000_000_007)
+        seeds = ((0, 0), (1, 7), ((1 << 64) - 1, (1 << 32) - 1))
+
+        for domain, seed_epoch in itertools.product(domains, seeds):
+            positions = (0, 1, domain // 2, domain - 2, domain - 1)
+            for position in positions:
+                arguments = (*seed_epoch, domain, position)
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(
+                        _hyperloader._feistel_permute(*arguments),
+                        feistel_permute(*arguments),
+                    )
+
+    def test_feistel_rejects_small_domain(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least 131072"):
+            _hyperloader._feistel_permute(0, 0, (1 << 17) - 1, 0)
 
 
 if __name__ == "__main__":

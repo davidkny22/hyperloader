@@ -6,6 +6,7 @@ PHILOX_M0 = 0xD2511F53
 PHILOX_M1 = 0xCD9E8D57
 PHILOX_W0 = 0x9E3779B9
 PHILOX_W1 = 0xBB67AE85
+FEISTEL_THRESHOLD = 1 << 17
 
 
 def splitmix64(value: int) -> int:
@@ -62,3 +63,27 @@ def sample_seed_words(root_seed: int, epoch: int, coord: int) -> tuple[int, int,
     torch_seed = globals_block[0] | (globals_block[1] << 32)
     random_seed = globals_block[2] | (globals_block[3] << 32)
     return torch_seed, random_seed, numpy_block
+
+
+def feistel_permute(root_seed: int, epoch: int, domain: int, position: int) -> int:
+    """Cycle-walk the specified eight-round unbalanced Feistel permutation."""
+    if domain < FEISTEL_THRESHOLD or not 0 <= position < domain:
+        raise ValueError("invalid Feistel domain or position")
+    bits = (domain - 1).bit_length()
+    lower_width = bits // 2
+    perm_key = splitmix64(key64(root_seed, epoch) ^ ((2 << 1) | 1))
+    key = (perm_key & MASK32, perm_key >> 32)
+    candidate = position
+    while True:
+        high_width = bits - lower_width
+        low_width = lower_width
+        high = candidate >> lower_width
+        low = candidate & ((1 << lower_width) - 1)
+        for round_index in range(8):
+            mask = (1 << high_width) - 1
+            function = philox4x32_10((low, round_index, 3, 0), key)[0] & mask
+            high, low = low, (high + function) & mask
+            high_width, low_width = low_width, high_width
+        candidate = (high << lower_width) | low
+        if candidate < domain:
+            return candidate

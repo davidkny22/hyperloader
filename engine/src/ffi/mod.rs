@@ -1,5 +1,6 @@
 //! Python extension registration is centralized in this module.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::rng;
@@ -32,10 +33,20 @@ fn sample_seed_words(root_seed: u64, epoch: u64, coord: u64) -> (u64, u64, (u32,
     )
 }
 
+#[pyfunction(name = "_feistel_permute")]
+fn feistel_permute(root_seed: u64, epoch: u64, domain: u64, position: u64) -> PyResult<u64> {
+    rng::feistel_permute(root_seed, epoch, domain, position).ok_or_else(|| {
+        PyValueError::new_err(
+            "the Feistel permutation requires a domain of at least 131072 and a position inside it",
+        )
+    })
+}
+
 /// Register the stable native functions exposed by the extension module.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(package_version, module)?)?;
     module.add_function(wrap_pyfunction!(rng_block, module)?)?;
     module.add_function(wrap_pyfunction!(sample_seed_words, module)?)?;
+    module.add_function(wrap_pyfunction!(feistel_permute, module)?)?;
     Ok(())
 }

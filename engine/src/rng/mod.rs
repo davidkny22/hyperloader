@@ -4,6 +4,11 @@ const PHILOX_M0: u32 = 0xD251_1F53;
 const PHILOX_M1: u32 = 0xCD9E_8D57;
 const PHILOX_W0: u32 = 0x9E37_79B9;
 const PHILOX_W1: u32 = 0xBB67_AE85;
+const PERM_TAG: u64 = 2;
+const PERM_ROUND_TAG: u32 = 3;
+
+/// The first domain size that uses the stateless Feistel permutation.
+pub const FEISTEL_THRESHOLD: u64 = 1 << 17;
 
 /// The stream used for sample-level global RNG installation.
 pub const SAMPLE_STREAM: u32 = 0;
@@ -82,9 +87,65 @@ pub const fn sample_seed_words(root_seed: u64, epoch: u64, coord: u64) -> (u64, 
     (torch_seed, random_seed, numpy)
 }
 
+const fn low_mask(width: u32) -> u32 {
+    if width == 32 {
+        u32::MAX
+    } else {
+        (1_u32 << width) - 1
+    }
+}
+
+const fn permutation_key(root_seed: u64, epoch: u64) -> [u32; 2] {
+    let folded = splitmix64(key64(root_seed, epoch) ^ ((PERM_TAG << 1) | 1));
+    [folded as u32, (folded >> 32) as u32]
+}
+
+const fn feistel_cipher(value: u64, bits: u32, key: [u32; 2]) -> u64 {
+    let lower_width = bits / 2;
+    let mut high_width = bits - lower_width;
+    let mut low_width = lower_width;
+    let mut high = (value >> lower_width) as u32;
+    let mut low = value as u32 & low_mask(lower_width);
+    let mut round = 0_u32;
+
+    while round < 8 {
+        let function =
+            philox4x32_10([low, round, PERM_ROUND_TAG, 0], key)[0] & low_mask(high_width);
+        let next_high = low;
+        let next_low = high.wrapping_add(function) & low_mask(high_width);
+        high = next_high;
+        low = next_low;
+        let next_high_width = low_width;
+        low_width = high_width;
+        high_width = next_high_width;
+        round += 1;
+    }
+
+    ((high as u64) << lower_width) | low as u64
+}
+
+/// Permute one position in a large domain using cycle-walked unbalanced Feistel.
+pub fn feistel_permute(root_seed: u64, epoch: u64, domain: u64, position: u64) -> Option<u64> {
+    if domain < FEISTEL_THRESHOLD || position >= domain {
+        return None;
+    }
+    let bits = 64 - (domain - 1).leading_zeros();
+    let key = permutation_key(root_seed, epoch);
+    let mut candidate = position;
+    loop {
+        candidate = feistel_cipher(candidate, bits, key);
+        if candidate < domain {
+            return Some(candidate);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SAMPLE_STREAM, block, key64, philox4x32_10, sample_seed_words, splitmix64};
+    use super::{
+        FEISTEL_THRESHOLD, SAMPLE_STREAM, block, feistel_permute, key64, philox4x32_10,
+        sample_seed_words, splitmix64,
+    };
 
     #[test]
     fn random123_zero_vector_matches() {
@@ -110,5 +171,25 @@ mod tests {
         assert_eq!(random_seed, globals[2] as u64 | ((globals[3] as u64) << 32));
         assert_eq!(numpy, block(11, 3, 29, 1, SAMPLE_STREAM));
         assert_ne!(numpy, block(11, 3, 29, 2, SAMPLE_STREAM));
+    }
+
+    #[test]
+    fn feistel_threshold_domain_is_bijective() {
+        let mut seen = vec![false; FEISTEL_THRESHOLD as usize];
+        for position in 0..FEISTEL_THRESHOLD {
+            let output = feistel_permute(17, 4, FEISTEL_THRESHOLD, position).unwrap();
+            assert!(!seen[output as usize]);
+            seen[output as usize] = true;
+        }
+        assert!(seen.into_iter().all(|value| value));
+    }
+
+    #[test]
+    fn feistel_rejects_small_domains_and_invalid_positions() {
+        assert_eq!(feistel_permute(0, 0, FEISTEL_THRESHOLD - 1, 0), None);
+        assert_eq!(
+            feistel_permute(0, 0, FEISTEL_THRESHOLD, FEISTEL_THRESHOLD),
+            None
+        );
     }
 }
