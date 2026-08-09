@@ -87,3 +87,35 @@ def feistel_permute(root_seed: int, epoch: int, domain: int, position: int) -> i
         candidate = (high << lower_width) | low
         if candidate < domain:
             return candidate
+
+
+def materialized_permutation(root_seed: int, epoch: int, domain: int) -> tuple[list[int], int]:
+    """Build the exact-uniform backward Fisher-Yates permutation and draw count."""
+    if not 0 <= domain < FEISTEL_THRESHOLD:
+        raise ValueError("invalid materialized domain")
+    perm_key = splitmix64(key64(root_seed, epoch) ^ ((2 << 1) | 1))
+    key = (perm_key & MASK32, perm_key >> 32)
+    permutation = list(range(domain))
+    draw_ordinal = 0
+    for upper in range(domain, 1, -1):
+        limit = (1 << 32) - ((1 << 32) % upper)
+        while True:
+            word = philox4x32_10((draw_ordinal, 8, 3, 0), key)[0]
+            draw_ordinal += 1
+            if word < limit:
+                selected = word % upper
+                break
+        permutation[upper - 1], permutation[selected] = (
+            permutation[selected],
+            permutation[upper - 1],
+        )
+    return permutation, draw_ordinal
+
+
+def permutation_index(root_seed: int, epoch: int, domain: int, position: int) -> int:
+    """Evaluate the contract permutation on either side of the threshold."""
+    if not 0 <= position < domain:
+        raise ValueError("invalid permutation position")
+    if domain < FEISTEL_THRESHOLD:
+        return materialized_permutation(root_seed, epoch, domain)[0][position]
+    return feistel_permute(root_seed, epoch, domain, position)

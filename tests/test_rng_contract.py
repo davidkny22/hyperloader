@@ -4,7 +4,14 @@ import itertools
 import unittest
 
 from hyperloader import _hyperloader
-from rng_reference import block, feistel_permute, philox4x32_10, sample_seed_words
+from rng_reference import (
+    block,
+    feistel_permute,
+    materialized_permutation,
+    permutation_index,
+    philox4x32_10,
+    sample_seed_words,
+)
 
 
 class RngContractTest(unittest.TestCase):
@@ -61,6 +68,42 @@ class RngContractTest(unittest.TestCase):
     def test_feistel_rejects_small_domain(self) -> None:
         with self.assertRaisesRegex(ValueError, "at least 131072"):
             _hyperloader._feistel_permute(0, 0, (1 << 17) - 1, 0)
+
+    def test_materialized_permutations_match_reference(self) -> None:
+        domains = (0, 1, 2, 3, 31, 65_536, (1 << 17) - 1)
+        seeds = ((0, 0), (1, 7), ((1 << 64) - 1, (1 << 32) - 1))
+
+        for domain, seed_epoch in itertools.product(domains, seeds):
+            with self.subTest(domain=domain, seed_epoch=seed_epoch):
+                expected, _ = materialized_permutation(*seed_epoch, domain)
+                self.assertEqual(
+                    _hyperloader._materialized_permutation(*seed_epoch, domain),
+                    expected,
+                )
+
+    def test_unified_index_matches_reference_across_threshold(self) -> None:
+        for domain in (1, 2, 3, 65_536, (1 << 17) - 1, 1 << 17, (1 << 17) + 1, 300_000):
+            for position in {0, domain // 2, domain - 1}:
+                arguments = (19, 2, domain, position)
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(
+                        _hyperloader._permutation_index(*arguments),
+                        permutation_index(*arguments),
+                    )
+
+    def test_rejection_attempt_advances_draw_ordinal(self) -> None:
+        domain = (1 << 17) - 1
+        found_rejection = False
+        for root_seed in range(16):
+            _, draws = materialized_permutation(root_seed, 0, domain)
+            if draws > domain - 1:
+                found_rejection = True
+                self.assertEqual(
+                    _hyperloader._materialized_permutation(root_seed, 0, domain),
+                    materialized_permutation(root_seed, 0, domain)[0],
+                )
+                break
+        self.assertTrue(found_rejection, "the test seed set must exercise rejection")
 
 
 if __name__ == "__main__":

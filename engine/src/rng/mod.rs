@@ -140,11 +140,61 @@ pub fn feistel_permute(root_seed: u64, epoch: u64, domain: u64, position: u64) -
     }
 }
 
+fn materialized_permutation_with_draws(
+    root_seed: u64,
+    epoch: u64,
+    domain: u32,
+) -> Option<(Vec<u32>, u32)> {
+    if domain as u64 >= FEISTEL_THRESHOLD {
+        return None;
+    }
+    let key = permutation_key(root_seed, epoch);
+    let mut permutation: Vec<u32> = (0..domain).collect();
+    let mut draw_ordinal = 0_u32;
+    let mut upper = domain;
+    while upper > 1 {
+        let modulus = upper as u64;
+        let limit = (1_u64 << 32) - ((1_u64 << 32) % modulus);
+        let selected = loop {
+            let word = philox4x32_10([draw_ordinal, 8, PERM_ROUND_TAG, 0], key)[0];
+            draw_ordinal = draw_ordinal
+                .checked_add(1)
+                .expect("small-domain permutation draw ordinal cannot overflow");
+            if (word as u64) < limit {
+                break (word as u64 % modulus) as usize;
+            }
+        };
+        permutation.swap((upper - 1) as usize, selected);
+        upper -= 1;
+    }
+    Some((permutation, draw_ordinal))
+}
+
+/// Materialize the exact-uniform Fisher-Yates permutation for a small domain.
+pub fn materialized_permutation(root_seed: u64, epoch: u64, domain: u32) -> Option<Vec<u32>> {
+    materialized_permutation_with_draws(root_seed, epoch, domain)
+        .map(|(permutation, _)| permutation)
+}
+
+/// Return the permutation index for either side of the frozen regime threshold.
+pub fn permutation_index(root_seed: u64, epoch: u64, domain: u64, position: u64) -> Option<u64> {
+    if position >= domain {
+        return None;
+    }
+    if domain < FEISTEL_THRESHOLD {
+        let domain = u32::try_from(domain).ok()?;
+        return materialized_permutation(root_seed, epoch, domain)
+            .map(|permutation| permutation[position as usize] as u64);
+    }
+    feistel_permute(root_seed, epoch, domain, position)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        FEISTEL_THRESHOLD, SAMPLE_STREAM, block, feistel_permute, key64, philox4x32_10,
-        sample_seed_words, splitmix64,
+        FEISTEL_THRESHOLD, SAMPLE_STREAM, block, feistel_permute, key64,
+        materialized_permutation_with_draws, permutation_index, philox4x32_10, sample_seed_words,
+        splitmix64,
     };
 
     #[test]
@@ -191,5 +241,23 @@ mod tests {
             feistel_permute(0, 0, FEISTEL_THRESHOLD, FEISTEL_THRESHOLD),
             None
         );
+    }
+
+    #[test]
+    fn materialized_regime_is_bijective_at_its_largest_domain() {
+        let domain = (FEISTEL_THRESHOLD - 1) as u32;
+        let (permutation, draws) = materialized_permutation_with_draws(0, 0, domain).unwrap();
+        let mut sorted = permutation;
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..domain).collect::<Vec<_>>());
+        assert!(draws >= domain - 1);
+    }
+
+    #[test]
+    fn unified_permutation_switches_at_the_frozen_threshold() {
+        assert_eq!(permutation_index(3, 5, 1, 0), Some(0));
+        assert!(permutation_index(3, 5, FEISTEL_THRESHOLD - 1, 0).is_some());
+        assert!(permutation_index(3, 5, FEISTEL_THRESHOLD, 0).is_some());
+        assert_eq!(permutation_index(3, 5, 3, 3), None);
     }
 }

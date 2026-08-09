@@ -42,11 +42,26 @@ fn feistel_permute(root_seed: u64, epoch: u64, domain: u64, position: u64) -> Py
     })
 }
 
+#[pyfunction(name = "_materialized_permutation")]
+fn materialized_permutation(root_seed: u64, epoch: u64, domain: u32) -> PyResult<Vec<u32>> {
+    rng::materialized_permutation(root_seed, epoch, domain).ok_or_else(|| {
+        PyValueError::new_err("the materialized permutation requires a domain smaller than 131072")
+    })
+}
+
+#[pyfunction(name = "_permutation_index")]
+fn permutation_index(root_seed: u64, epoch: u64, domain: u64, position: u64) -> PyResult<u64> {
+    rng::permutation_index(root_seed, epoch, domain, position)
+        .ok_or_else(|| PyValueError::new_err("the permutation position must be inside its domain"))
+}
+
 /// Register the stable native functions exposed by the extension module.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(package_version, module)?)?;
     module.add_function(wrap_pyfunction!(rng_block, module)?)?;
     module.add_function(wrap_pyfunction!(sample_seed_words, module)?)?;
     module.add_function(wrap_pyfunction!(feistel_permute, module)?)?;
+    module.add_function(wrap_pyfunction!(materialized_permutation, module)?)?;
+    module.add_function(wrap_pyfunction!(permutation_index, module)?)?;
     Ok(())
 }
