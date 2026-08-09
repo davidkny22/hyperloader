@@ -10,6 +10,7 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
+from .parent_watchdog import start_parent_watchdog
 from .rng import clear_worker_info, install_sample_rng, set_worker_info
 
 BLACK_BOX_STAGE = 0
@@ -24,6 +25,7 @@ def worker_main(
     probe: tuple[int, int, int] | None,
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
+    start_parent_watchdog()
     dataset, worker_init_fn = pickle.loads(dataset_payload)
     set_worker_info(worker_id, worker_count, None, dataset)
     try:

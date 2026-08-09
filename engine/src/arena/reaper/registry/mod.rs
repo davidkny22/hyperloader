@@ -1,5 +1,7 @@
 //! Crash-safe region ownership registry and guarded orphan cleanup.
 
+mod cache;
+mod format;
 mod model;
 mod store;
 mod sweep;
