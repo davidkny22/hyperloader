@@ -55,6 +55,44 @@ fn permutation_index(root_seed: u64, epoch: u64, domain: u64, position: u64) -> 
         .ok_or_else(|| PyValueError::new_err("the permutation position must be inside its domain"))
 }
 
+#[pyfunction(name = "_rank_placements")]
+#[pyo3(signature = (root_seed, epoch, dataset_len, batch_size, world_size, rank, drop_last=false, exact_count=false))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The private verification seam mirrors the eight contract inputs directly."
+)]
+fn rank_placements(
+    root_seed: u64,
+    epoch: u64,
+    dataset_len: u64,
+    batch_size: u64,
+    world_size: u64,
+    rank: u64,
+    drop_last: bool,
+    exact_count: bool,
+) -> PyResult<Vec<(u64, u64)>> {
+    let request = rng::PlacementRequest {
+        root_seed,
+        epoch,
+        dataset_len,
+        batch_size,
+        world_size,
+        rank,
+        drop_last,
+        exact_count,
+    };
+    rng::rank_placements(request)
+        .map(|items| {
+            items
+                .into_iter()
+                .map(|item| (item.position, item.index))
+                .collect()
+        })
+        .map_err(|error| {
+            PyValueError::new_err(format!("invalid placement configuration: {error:?}"))
+        })
+}
+
 /// Register the stable native functions exposed by the extension module.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(package_version, module)?)?;
@@ -63,5 +101,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(feistel_permute, module)?)?;
     module.add_function(wrap_pyfunction!(materialized_permutation, module)?)?;
     module.add_function(wrap_pyfunction!(permutation_index, module)?)?;
+    module.add_function(wrap_pyfunction!(rank_placements, module)?)?;
     Ok(())
 }

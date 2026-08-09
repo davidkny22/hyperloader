@@ -1,5 +1,11 @@
 //! Counter-based random streams, permutations, and placement functions live in this module.
 
+mod placement;
+
+pub use placement::{
+    PlacedSample, PlacementError, PlacementRequest, elastic_batch_size, rank_placements,
+};
+
 const PHILOX_M0: u32 = 0xD251_1F53;
 const PHILOX_M1: u32 = 0xCD9E_8D57;
 const PHILOX_W0: u32 = 0x9E37_79B9;
