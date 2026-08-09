@@ -4,4 +4,8 @@ mod named;
 mod reaper;
 
 pub use named::{NamedRegion, RegionError, RegionName, RegionToken};
-pub use reaper::{RegionRegistry, RegistryEntry, RegistryError, RegistryIssue, RegistrySnapshot};
+pub use reaper::{
+    ProcessIdentity, ProcessObservation, ProcessObserver, RegionRegistry, RegistryEntry,
+    RegistryError, RegistryIssue, RegistrySnapshot, SweepAction, SweepOutcome, SweepReport,
+    SystemProcessObserver,
+};

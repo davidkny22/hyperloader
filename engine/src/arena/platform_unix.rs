@@ -19,7 +19,7 @@ impl Mapping {
             libc::shm_open(
                 os_name.as_ptr(),
                 libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
-                libc::S_IRUSR | libc::S_IWUSR,
+                (libc::S_IRUSR | libc::S_IWUSR) as libc::c_uint,
             )
         };
         if descriptor < 0 {

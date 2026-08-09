@@ -207,7 +207,7 @@ pub struct NamedRegion {
 
 impl NamedRegion {
     /// Create and initialize a region, failing if its name already exists.
-    pub fn create(
+    pub(crate) fn create(
         token: RegionToken,
         sequence: u16,
         payload_size: usize,
@@ -282,6 +282,10 @@ impl NamedRegion {
     pub fn unlink(&self) -> Result<(), RegionError> {
         platform::unlink(&self.name)
     }
+}
+
+pub(crate) fn unlink_registered(name: &RegionName) -> Result<(), RegionError> {
+    platform::unlink(name)
 }
 
 fn total_size(payload_size: usize) -> Result<usize, RegionError> {
