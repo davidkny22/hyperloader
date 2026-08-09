@@ -26,6 +26,9 @@ impl Config {
         let mut warmup_iterations = 200_000_u64;
         let mut arguments = env::args().skip(1);
         while let Some(argument) = arguments.next() {
+            if argument == "--bench" {
+                continue;
+            }
             let value = arguments
                 .next()
                 .ok_or_else(|| format!("{argument} requires a value"))?;
