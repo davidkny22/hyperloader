@@ -43,6 +43,21 @@ impl RegionToken {
     pub const fn as_bytes(&self) -> &[u8; TOKEN_BYTES] {
         &self.0
     }
+
+    pub(crate) fn to_hex(self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    pub(crate) fn from_hex(encoded: &str) -> Option<Self> {
+        if encoded.len() != TOKEN_BYTES * 2 || !encoded.is_ascii() {
+            return None;
+        }
+        let mut bytes = [0_u8; TOKEN_BYTES];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16).ok()?;
+        }
+        Some(Self(bytes))
+    }
 }
 
 /// A portable named-region identifier with a fixed grammar.
@@ -77,6 +92,27 @@ impl RegionName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub(crate) fn matches_token(&self, token: RegionToken) -> bool {
+        let Some(sequence_text) = self
+            .0
+            .get(self.0.len().saturating_sub(SEQUENCE_NAME_CHARS)..)
+        else {
+            return false;
+        };
+        let Some(sequence) = decode_base32(sequence_text.as_bytes()) else {
+            return false;
+        };
+        let Ok(expected) = Self::new(token, sequence as u16) else {
+            return false;
+        };
+        expected == *self
+    }
+
+    pub(crate) fn from_registry(value: &str, token: RegionToken) -> Option<Self> {
+        let candidate = Self(value.to_owned());
+        candidate.matches_token(token).then_some(candidate)
+    }
 }
 
 impl Display for RegionName {
@@ -90,6 +126,15 @@ fn encode_base32(mut value: u128, output: &mut [u8]) {
         *character = BASE32[(value & 31) as usize];
         value >>= 5;
     }
+}
+
+fn decode_base32(input: &[u8]) -> Option<u128> {
+    let mut value = 0_u128;
+    for byte in input {
+        let digit = BASE32.iter().position(|candidate| candidate == byte)? as u128;
+        value = value.checked_mul(32)?.checked_add(digit)?;
+    }
+    Some(value)
 }
 
 /// A typed failure from named-region construction, attachment, or validation.
