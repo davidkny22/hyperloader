@@ -24,6 +24,7 @@ impl Slab {
         let slot = self.slots[index];
         SlotRef {
             region_sequence: self.sequence,
+            region_size: self.region.payload_size() as u64,
             slot_index: index as u32,
             offset: (index * self.spec.slot_capacity) as u64,
             capacity: self.spec.slot_capacity as u64,
@@ -146,6 +147,7 @@ pub(super) fn locate_slot(slabs: &[Slab], slot: SlotRef) -> Result<(usize, usize
     let slab = &slabs[slab_index];
     let meta = slab.slots.get(slot_index).ok_or(ArenaError::StaleSlot)?;
     if meta.generation != slot.generation
+        || slot.region_size != slab.region.payload_size() as u64
         || slot.offset != (slot_index * slab.spec.slot_capacity) as u64
         || slot.capacity != slab.spec.slot_capacity as u64
     {

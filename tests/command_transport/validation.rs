@@ -18,8 +18,10 @@ fn message_validation_rejects_inconsistent_fields() {
         transport.try_send_dispatch(DispatchMessage {
             position: 0,
             stage_plan: 0,
+            index: 0,
             worker: 0,
             slot: invalid_slot,
+            exception_slot: slot(1),
         }),
         Err(TransportError::InvalidMessage("slot reference"))
     ));

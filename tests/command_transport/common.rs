@@ -36,8 +36,10 @@ pub(super) fn dispatch(position: u64, worker: u32) -> DispatchMessage {
     DispatchMessage {
         position,
         stage_plan: 5,
+        index: position.saturating_add(1000),
         worker,
         slot: slot(position),
+        exception_slot: slot(position.saturating_add(10_000)),
     }
 }
 
@@ -55,6 +57,7 @@ pub(super) fn ready_completion(position: u64, worker: u32) -> CompletionMessage 
 pub(super) fn slot(seed: u64) -> SlotRef {
     SlotRef {
         region_sequence: (seed % 1024) as u16,
+        region_size: seed.saturating_mul(64).saturating_add(4096),
         slot_index: (seed % 31) as u32,
         offset: seed.saturating_mul(64),
         capacity: 64,

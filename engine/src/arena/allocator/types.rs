@@ -56,6 +56,8 @@ impl ArenaSizing {
 pub struct SlotRef {
     /// Region sequence embedded in the portable name.
     pub region_sequence: u16,
+    /// Complete payload size required for validated region attachment.
+    pub region_size: u64,
     /// Zero-based slot within the slab.
     pub slot_index: u32,
     /// Byte offset within the region payload.

@@ -3,6 +3,7 @@
 mod allocator;
 mod named;
 mod reaper;
+mod writer;
 
 pub use allocator::{
     ArenaAllocator, ArenaError, ArenaSizing, ArenaStats, DeliveryView, GrowthPolicy, SlabSpec,
@@ -14,3 +15,4 @@ pub use reaper::{
     RegistryError, RegistryIssue, RegistrySnapshot, SweepAction, SweepOutcome, SweepReport,
     SystemProcessObserver,
 };
+pub use writer::{ArenaWriter, ArenaWriterError};

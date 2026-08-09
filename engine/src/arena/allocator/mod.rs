@@ -28,6 +28,17 @@ impl ArenaAllocator {
         specs: &[SlabSpec],
         policy: GrowthPolicy,
     ) -> Result<Self, ArenaError> {
+        Self::new_at_sequence(registry, token, specs, policy, 0)
+    }
+
+    /// Create initial slabs beginning at a sequence reserved by the loader's region plan.
+    pub fn new_at_sequence(
+        registry: RegionRegistry,
+        token: RegionToken,
+        specs: &[SlabSpec],
+        policy: GrowthPolicy,
+        first_sequence: u16,
+    ) -> Result<Self, ArenaError> {
         validate_specs(specs)?;
         let max_standard_capacity = specs
             .iter()
@@ -39,7 +50,7 @@ impl ArenaAllocator {
             registry,
             token,
             policy,
-            next_sequence: 0,
+            next_sequence: u32::from(first_sequence),
             max_standard_capacity,
             slabs: Vec::new(),
             stats: ArenaStats::default(),
@@ -107,22 +118,7 @@ impl ArenaAllocator {
         let mut inner = self.lock()?;
         let (slab_index, slot_index) = locate_slot(&inner.slabs, slot)?;
         let slab = &mut inner.slabs[slab_index];
-        let meta = slab.slots[slot_index];
-        let expected_worker = match meta.state {
-            SlotState::Writing { worker } => worker,
-            actual => {
-                return Err(ArenaError::InvalidTransition {
-                    expected: "writing",
-                    actual,
-                });
-            }
-        };
-        if expected_worker != worker {
-            return Err(ArenaError::WrongWriter {
-                expected: expected_worker,
-                actual: worker,
-            });
-        }
+        validate_writer(slab.slots[slot_index].state, worker)?;
         if payload.len() > slab.spec.slot_capacity {
             return Err(ArenaError::SlotOverflow {
                 capacity: slab.spec.slot_capacity,
@@ -137,6 +133,32 @@ impl ArenaAllocator {
         slab.slots[slot_index].state = SlotState::Ready {
             length: payload.len(),
         };
+        Ok(())
+    }
+
+    /// Publish bytes written directly by an attached worker into its reserved slot.
+    pub fn publish(&self, slot: SlotRef, worker: u32, length: usize) -> Result<(), ArenaError> {
+        let mut inner = self.lock()?;
+        let (slab_index, slot_index) = locate_slot(&inner.slabs, slot)?;
+        let slab = &mut inner.slabs[slab_index];
+        validate_writer(slab.slots[slot_index].state, worker)?;
+        if length > slab.spec.slot_capacity {
+            return Err(ArenaError::SlotOverflow {
+                capacity: slab.spec.slot_capacity,
+                actual: length,
+            });
+        }
+        slab.slots[slot_index].state = SlotState::Ready { length };
+        Ok(())
+    }
+
+    /// Recycle a reservation that a worker intentionally left unused.
+    pub fn cancel(&self, slot: SlotRef, worker: u32) -> Result<(), ArenaError> {
+        let mut inner = self.lock()?;
+        let (slab_index, slot_index) = locate_slot(&inner.slabs, slot)?;
+        let meta = &mut inner.slabs[slab_index].slots[slot_index];
+        validate_writer(meta.state, worker)?;
+        recycle(meta);
         Ok(())
     }
 
@@ -221,6 +243,25 @@ impl ArenaAllocator {
     fn lock(&self) -> Result<MutexGuard<'_, ArenaInner>, ArenaError> {
         self.inner.lock().map_err(|_| ArenaError::Synchronization)
     }
+}
+
+fn validate_writer(state: SlotState, worker: u32) -> Result<(), ArenaError> {
+    let expected_worker = match state {
+        SlotState::Writing { worker } => worker,
+        actual => {
+            return Err(ArenaError::InvalidTransition {
+                expected: "writing",
+                actual,
+            });
+        }
+    };
+    if expected_worker != worker {
+        return Err(ArenaError::WrongWriter {
+            expected: expected_worker,
+            actual: worker,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -19,10 +19,14 @@ pub struct DispatchMessage {
     pub position: u64,
     /// Stable identifier for the stage plan to execute.
     pub stage_plan: u32,
+    /// Dataset or sampler index consumed by the black-box stage.
+    pub index: u64,
     /// Worker route selected by the executor.
     pub worker: u32,
     /// Arena slot receiving the produced payload.
     pub slot: SlotRef,
+    /// Arena side slot reserved for an exception payload.
+    pub exception_slot: SlotRef,
 }
 
 /// Completion outcome encoded in the fixed command frame.
@@ -66,21 +70,26 @@ pub(super) fn encode_dispatch(
     validate_slot(message.slot).map_err(TransportError::InvalidMessage)?;
     let mut frame = frame_header(DISPATCH_KIND, 0, 0, message.position, message.worker);
     put_u32(&mut frame, 20, message.stage_plan);
-    put_slot(&mut frame, 24, message.slot);
+    put_u64(&mut frame, 24, message.index);
+    put_slot(&mut frame, 32, message.slot);
+    validate_slot(message.exception_slot).map_err(TransportError::InvalidMessage)?;
+    put_slot(&mut frame, 72, message.exception_slot);
     Ok(frame)
 }
 
 pub(super) fn decode_dispatch(frame: &[u8; FRAME_SIZE]) -> Result<DispatchMessage, &'static str> {
     validate_header(frame, DISPATCH_KIND)?;
-    if frame[6] != 0 || frame[7] != 0 || frame[56..].iter().any(|byte| *byte != 0) {
+    if frame[6] != 0 || frame[7] != 0 || frame[112..].iter().any(|byte| *byte != 0) {
         return Err("dispatch reserved fields");
     }
-    let slot = get_slot(frame, 24)?;
+    let slot = get_slot(frame, 32)?;
     Ok(DispatchMessage {
         position: get_u64(frame, 8),
         worker: get_u32(frame, 16),
         stage_plan: get_u32(frame, 20),
+        index: get_u64(frame, 24),
         slot,
+        exception_slot: get_slot(frame, 72)?,
     })
 }
 
@@ -109,11 +118,11 @@ pub(super) fn encode_completion(
         message.position,
         message.worker,
     );
-    put_slot(&mut frame, 24, message.slot);
-    put_u64(&mut frame, 56, message.produced_length);
+    put_slot(&mut frame, 32, message.slot);
+    put_u64(&mut frame, 72, message.produced_length);
     if let Some(exception) = message.exception {
-        put_slot(&mut frame, 64, exception.slot);
-        put_u64(&mut frame, 96, exception.length);
+        put_slot(&mut frame, 80, exception.slot);
+        put_u64(&mut frame, 120, exception.length);
     }
     Ok(frame)
 }
@@ -122,17 +131,17 @@ pub(super) fn decode_completion(
     frame: &[u8; FRAME_SIZE],
 ) -> Result<CompletionMessage, &'static str> {
     validate_header(frame, COMPLETION_KIND)?;
-    if get_u32(frame, 20) != 0 || frame[104..].iter().any(|byte| *byte != 0) {
+    if frame[20..32].iter().any(|byte| *byte != 0) {
         return Err("completion reserved fields");
     }
-    let slot = get_slot(frame, 24)?;
-    let produced_length = get_u64(frame, 56);
+    let slot = get_slot(frame, 32)?;
+    let produced_length = get_u64(frame, 72);
     if produced_length > slot.capacity {
         return Err("produced length");
     }
     let (status, exception) = match (frame[6], frame[7]) {
         (READY_STATUS, 0) => {
-            if frame[64..104].iter().any(|byte| *byte != 0) {
+            if frame[80..].iter().any(|byte| *byte != 0) {
                 return Err("ready side slab");
             }
             (CompletionStatus::Ready, None)
@@ -142,8 +151,8 @@ pub(super) fn decode_completion(
                 return Err("exception produced length");
             }
             let exception = ExceptionRef {
-                slot: get_slot(frame, 64)?,
-                length: get_u64(frame, 96),
+                slot: get_slot(frame, 80)?,
+                length: get_u64(frame, 120),
             };
             validate_exception(exception)?;
             (CompletionStatus::Exception, Some(exception))
@@ -194,7 +203,13 @@ fn validate_exception(exception: ExceptionRef) -> Result<(), &'static str> {
 }
 
 fn validate_slot(slot: SlotRef) -> Result<(), &'static str> {
-    if slot.capacity == 0 || slot.offset.checked_add(slot.capacity).is_none() {
+    if slot.region_size == 0
+        || slot.capacity == 0
+        || slot
+            .offset
+            .checked_add(slot.capacity)
+            .is_none_or(|end| end > slot.region_size)
+    {
         return Err("slot reference");
     }
     Ok(())
@@ -206,6 +221,7 @@ fn put_slot(frame: &mut [u8; FRAME_SIZE], offset: usize, slot: SlotRef) {
     put_u64(frame, offset + 8, slot.offset);
     put_u64(frame, offset + 16, slot.capacity);
     put_u64(frame, offset + 24, slot.generation);
+    put_u64(frame, offset + 32, slot.region_size);
 }
 
 fn get_slot(frame: &[u8; FRAME_SIZE], offset: usize) -> Result<SlotRef, &'static str> {
@@ -214,6 +230,7 @@ fn get_slot(frame: &[u8; FRAME_SIZE], offset: usize) -> Result<SlotRef, &'static
     }
     let slot = SlotRef {
         region_sequence: get_u16(frame, offset),
+        region_size: get_u64(frame, offset + 32),
         slot_index: get_u32(frame, offset + 4),
         offset: get_u64(frame, offset + 8),
         capacity: get_u64(frame, offset + 16),
