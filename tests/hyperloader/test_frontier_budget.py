@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 import unittest
 from contextlib import nullcontext
@@ -42,29 +43,35 @@ class FrontierBudgetGate(unittest.TestCase):
                 .resolve()
                 .is_relative_to(Path(expected_root).resolve())
             )
-        loader = DataLoader(
-            PathologicalCostDataset(),
-            batch_size=1,
-            num_workers=4,
-            seed=101,
-        )
-        mutation = (
-            mock.patch.object(iterator_module, "frontier_depth", _unbounded_depth)
-            if os.environ.get("HYPERLOADER_FRONTIER_MUTATION") == "ignore-ceiling"
-            else nullcontext()
-        )
-        try:
-            self.assertEqual([int(value.item()) for value in loader], list(range(64)))
-            with mutation:
-                started = time.perf_counter_ns()
-                delivered = []
-                for value in loader:
-                    delivered.append(int(value.item()))
-                    time.sleep(0.004)
-                elapsed_ns = time.perf_counter_ns() - started
-            report = loader._last_frontier_report
-        finally:
-            loader.close()
+        with tempfile.TemporaryDirectory() as directory:
+            loader = DataLoader(
+                PathologicalCostDataset(),
+                batch_size=1,
+                num_workers=4,
+                seed=101,
+                config=HyperConfig(
+                    scheduler=SchedulerConfig(profile_cache=Path(directory))
+                ),
+            )
+            mutation = (
+                mock.patch.object(iterator_module, "frontier_depth", _unbounded_depth)
+                if os.environ.get("HYPERLOADER_FRONTIER_MUTATION") == "ignore-ceiling"
+                else nullcontext()
+            )
+            try:
+                self.assertEqual(
+                    [int(value.item()) for value in loader], list(range(64))
+                )
+                with mutation:
+                    started = time.perf_counter_ns()
+                    delivered = []
+                    for value in loader:
+                        delivered.append(int(value.item()))
+                        time.sleep(0.004)
+                    elapsed_ns = time.perf_counter_ns() - started
+                report = loader._last_frontier_report
+            finally:
+                loader.close()
 
         stall_fraction = report["wait_ns"] / elapsed_ns
         self.assertEqual(delivered, list(range(64)))

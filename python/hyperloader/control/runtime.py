@@ -13,9 +13,9 @@ from .objective import ControllerObjective
 from .priors import spark_prior
 
 
-def resolve_calibration() -> Any:
+def resolve_calibration(machine: Any = None) -> Any:
     """Load the current machine's record or its narrowly matched measured prior."""
-    machine = detect_machine_identity()
+    machine = detect_machine_identity() if machine is None else machine
     path = calibration_cache_path(user_cache_root(), machine)
     try:
         cached = load_calibration(path, machine)
@@ -26,7 +26,7 @@ def resolve_calibration() -> Any:
 
 def build_controller(loader: Any) -> AdaptiveController:
     """Construct a plan-local controller at the spawned worker ceiling."""
-    calibration = resolve_calibration()
+    calibration = resolve_calibration(getattr(loader, "_machine_identity", None))
     loader._calibration = calibration
     configured = loader.config.control.cadence
     cadence_seconds = (

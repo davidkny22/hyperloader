@@ -15,6 +15,7 @@ from .batching import BatchLayout, batch_layout, encode_batch, matches_batch_lay
 from .parent_watchdog import start_parent_watchdog
 from .rng import WorkerRngContext
 from .serialization import ResultEncoder
+from .shape import batch_shape
 
 BLACK_BOX_STAGE = 0
 NO_PROBE_VALUE = object()
@@ -27,6 +28,7 @@ def worker_main(
     worker_count: int,
     root_seed: int,
     completion_stride: int | None,
+    delivery_batch_size: int | None,
     probe: tuple[int, int, int] | None,
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
@@ -67,7 +69,10 @@ def worker_main(
             else:
                 status, payload = startup_error
             layout = batch_layout(probe_value) if status == 0 else None
-            control.send(("probe", status, payload, layout, probe_cost_ns))
+            shape = (
+                batch_shape(probe_value, delivery_batch_size) if status == 0 else None
+            )
+            control.send(("probe", status, payload, layout, shape, probe_cost_ns))
         command = control.recv()
         if command[0] == "stop":
             return

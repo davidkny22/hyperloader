@@ -33,6 +33,7 @@ class WorkerSet:
         worker_count: int,
         root_seed: int,
         completion_stride: int | None,
+        delivery_batch_size: int | None,
     ) -> None:
         self._context = context
         self._dataset = dataset
@@ -40,6 +41,7 @@ class WorkerSet:
         self._worker_count = worker_count
         self._root_seed = root_seed
         self._completion_stride = completion_stride
+        self._delivery_batch_size = delivery_batch_size
         self.controls: list[Connection] = []
         self.processes: list[mp.Process] = []
 
@@ -98,9 +100,7 @@ class WorkerSet:
         self, worker: int, probe: tuple[int, int, int] | None
     ) -> tuple[Connection, mp.Process]:
         owner, child = self._context.Pipe(duplex=True)
-        dataset_payload = encode_multiprocessing(
-            (self._dataset, self._worker_init_fn)
-        )
+        dataset_payload = encode_multiprocessing((self._dataset, self._worker_init_fn))
         process = self._context.Process(
             target=worker_main,
             args=(
@@ -110,6 +110,7 @@ class WorkerSet:
                 self._worker_count,
                 self._root_seed,
                 self._completion_stride,
+                self._delivery_batch_size,
                 probe,
             ),
             daemon=True,

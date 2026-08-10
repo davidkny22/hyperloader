@@ -97,6 +97,9 @@ class ThreadIterator(Iterator[Any]):
         if self._complete:
             return
         self._loader._epoch_state.complete(self._epoch)
+        from hyperloader.profile import save_cost_profile
+
+        save_cost_profile(self._loader)
         if self._delivery_telemetry is not None:
             self._delivery_telemetry.finish_epoch(self._epoch)
         self._complete = True

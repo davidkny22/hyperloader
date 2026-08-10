@@ -265,6 +265,9 @@ class ProcessIterator(Iterator[Any]):
     def _finish_epoch(self) -> None:
         if not self._complete:
             self._loader._epoch_state.complete(self._epoch)
+            from hyperloader.profile import save_cost_profile
+
+            save_cost_profile(self._loader)
             if self._schedule is not None:
                 self._loader._last_frontier_report = self._schedule.report()
             if self._delivery_telemetry is not None:

@@ -46,6 +46,7 @@ def prepare_process_pool(loader: Any) -> None:
         frontier_budget=frontier_budget(loader),
         on_worker_death=loader.config.executor.on_worker_death,
         batch_size=batch_size,
+        delivery_batch_size=loader.batch_size,
     )
     if loader._controller is None:
         from hyperloader.control import build_controller

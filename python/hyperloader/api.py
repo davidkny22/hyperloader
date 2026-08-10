@@ -10,10 +10,11 @@ from typing import Any
 from .config import AUTO, Auto, HyperConfig
 from .constructor import validate_constructor
 from .epoch import EpochState
+from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
 from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
-from .profile import build_cost_profile
+from .profile import build_cost_profile, save_cost_profile
 from .telemetry import build_telemetry, telemetry_snapshot
 from .stages import Pipeline
 
@@ -124,6 +125,11 @@ class DataLoader:
             if isinstance(self._plan, StagePlan)
             else thread_safe
         )
+        self._dataset_fingerprint = build_dataset_fingerprint(
+            dataset, resolved_config.determinism.fingerprint
+        )
+        self._fingerprint = build_contract_fingerprint(self)
+        self._machine_identity: Any = None
         self._cost_profile = build_cost_profile(self)
         self._calibration: Any = None
         self._controller: Any = None
@@ -143,6 +149,7 @@ class DataLoader:
             and not self._sample_thread_safe
         ):
             prepare_process_pool(self)
+            self._fingerprint = build_contract_fingerprint(self)
 
     def __iter__(self) -> Iterator[Any]:
         """Create an iterator over the selected native execution plan."""
@@ -199,6 +206,7 @@ class DataLoader:
 
     def close(self) -> None:
         """Release persistent process resources owned by this loader."""
+        save_cost_profile(self)
         active = (
             None
             if getattr(self, "_active_iterator_ref", None) is None

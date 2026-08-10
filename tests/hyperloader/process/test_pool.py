@@ -16,7 +16,8 @@ import numpy as np
 import torch
 from torch.utils.data import get_worker_info
 
-from hyperloader import DataLoader, _hyperloader
+from hyperloader import DataLoader, HyperConfig, _hyperloader
+from hyperloader.config import SchedulerConfig
 from hyperloader.process import ProcessPool
 from hyperloader.process.random_surface import PhiloxRandom
 from hyperloader.process.sizing import frontier_depth
@@ -358,19 +359,28 @@ class ProcessPoolTest(unittest.TestCase):
         self.assertFalse(torch.equal(first[0]["torch"], second[0]["torch"]))
 
     def test_public_completions_populate_the_adaptive_cost_profile(self) -> None:
-        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=31)
-        try:
-            list(loader)
-            statistics = loader._cost_profile.statistics()
-            self.assertIsNotNone(statistics)
-            mean_ns, p999_ns, populated = statistics
-            expected = max(2, math.ceil(2 * (p999_ns / mean_ns) * 1.5))
-            self.assertEqual(frontier_depth(loader), expected)
-            report = loader._last_frontier_report
-            self.assertLessEqual(report["max_occupied"], report["ceiling"])
-            self.assertEqual(report["binding"], "cold-variance")
-        finally:
-            loader.close()
+        with tempfile.TemporaryDirectory() as directory:
+            loader = DataLoader(
+                PublicDataset(),
+                batch_size=1,
+                num_workers=2,
+                seed=31,
+                config=HyperConfig(
+                    scheduler=SchedulerConfig(profile_cache=Path(directory))
+                ),
+            )
+            try:
+                list(loader)
+                statistics = loader._cost_profile.statistics()
+                self.assertIsNotNone(statistics)
+                mean_ns, p999_ns, populated = statistics
+                expected = max(2, math.ceil(2 * (p999_ns / mean_ns) * 1.5))
+                self.assertEqual(frontier_depth(loader), expected)
+                report = loader._last_frontier_report
+                self.assertLessEqual(report["max_occupied"], report["ceiling"])
+                self.assertEqual(report["binding"], "cold-variance")
+            finally:
+                loader.close()
 
         self.assertEqual(populated, 4)
 

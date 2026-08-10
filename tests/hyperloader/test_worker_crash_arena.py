@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from hyperloader import DataLoader, HyperConfig
-from hyperloader.config import ExecutorConfig
+from hyperloader.config import ExecutorConfig, SchedulerConfig
 from hyperloader.process import ProcessPool
 
 
@@ -70,7 +70,8 @@ class WorkerCrashArenaGate(unittest.TestCase):
         with TemporaryDirectory() as directory:
             sentinel = str(Path(directory) / "worker-crashed.txt")
             config = HyperConfig(
-                executor=ExecutorConfig(process_ceiling=2, on_worker_death="restart")
+                executor=ExecutorConfig(process_ceiling=2, on_worker_death="restart"),
+                scheduler=SchedulerConfig(profile_cache="off"),
             )
             loader = DataLoader(
                 CrashOnceDataset(sentinel),
@@ -120,6 +121,7 @@ class WorkerCrashArenaGate(unittest.TestCase):
                 batch_size=1,
                 num_workers=2,
                 seed=61,
+                config=HyperConfig(scheduler=SchedulerConfig(profile_cache="off")),
             )
             iterator = iter(loader)
             try:

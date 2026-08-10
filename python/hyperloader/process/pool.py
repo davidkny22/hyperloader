@@ -42,6 +42,7 @@ class ProcessPool:
         frontier_budget: int | None = None,
         on_worker_death: str = "close",
         batch_size: int | None = None,
+        delivery_batch_size: int | None = None,
     ) -> None:
         context = resolve_context(multiprocessing_context)
         self._timeout = timeout
@@ -50,6 +51,7 @@ class ProcessPool:
         self._on_worker_death = on_worker_death
         self._batch_size = batch_size
         self._batch_layout: BatchLayout | None = None
+        self._batch_shape: dict[str, object] = {"source": "probe-pending"}
         self._resources: Any = None
         self._worker_set = WorkerSet(
             context,
@@ -58,6 +60,7 @@ class ProcessPool:
             worker_count,
             root_seed,
             batch_size,
+            delivery_batch_size,
         )
         self._completion_signals = [0] * worker_count
         self._probe_key = (probe_epoch, probe_position, probe_index)
@@ -69,8 +72,13 @@ class ProcessPool:
         self._decoder = ResultDecoder()
         try:
             self._worker_set.launch_all(self._probe_key)
-            status, probe_payload, layout, probe_cost_ns = self._receive_probe()
+            status, probe_payload, layout, shape, probe_cost_ns = self._receive_probe()
             self._batch_layout = layout
+            self._batch_shape = (
+                {"source": "probe-pending"}
+                if shape is None
+                else {**shape, "source": "probe"}
+            )
             if layout is None:
                 self._batch_size = None
             self._probe_status = status
@@ -144,6 +152,11 @@ class ProcessPool:
         return self._bytes_sample
 
     @property
+    def batch_shape_fingerprint(self) -> dict[str, object]:
+        """Return the probe result without retaining the sampled value."""
+        return self._batch_shape
+
+    @property
     def frontier_ceiling(self) -> int:
         """Return the probe-frozen frontier ceiling in per-rank samples."""
         return self._frontier_ceiling
@@ -159,7 +172,9 @@ class ProcessPool:
         if self._probe_payload is None:
             return None
         position = self._probe_key[1]
-        return position // self._batch_size if self._batch_size is not None else position
+        return (
+            position // self._batch_size if self._batch_size is not None else position
+        )
 
     def try_submit(
         self,
@@ -312,14 +327,16 @@ class ProcessPool:
         self._pending.clear()
         self._resources = None
 
-    def _receive_probe(self) -> tuple[int, bytes, BatchLayout | None, int]:
+    def _receive_probe(
+        self,
+    ) -> tuple[int, bytes, BatchLayout | None, dict[str, object] | None, int]:
         while True:
             control = self._worker_set.controls[0]
             if control.poll(POLL_SECONDS):
-                kind, status, payload, layout, cost_ns = control.recv()
+                kind, status, payload, layout, shape, cost_ns = control.recv()
                 if kind != "probe":
                     raise RuntimeError("worker returned an invalid probe response")
-                return status, payload, layout, cost_ns
+                return status, payload, layout, shape, cost_ns
             self._check_worker(0, None)
 
     def _restart_worker(self, worker: int) -> list[int]:

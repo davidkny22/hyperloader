@@ -47,6 +47,19 @@ class StructuredArrayPlanTest(unittest.TestCase):
                     [batch.tolist() for batch in loader],
                     [[[0, 1], [2, 3]], [[4, 5], [6, 7]]],
                 )
+                fingerprint = {
+                    element.path: element.value
+                    for element in loader._fingerprint.elements
+                }
+                self.assertEqual(
+                    fingerprint["batch_shape"],
+                    {
+                        "dtype": "torch.int32",
+                        "kind": "tensor",
+                        "shape": [2, 2],
+                        "source": "probe",
+                    },
+                )
             finally:
                 if loader is not None:
                     loader.close()
