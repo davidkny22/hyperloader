@@ -105,14 +105,10 @@ def build_operations() -> ShimOperations:
     def thread_seed_all(position: int) -> int:
         sample = _hyperloader._sample_rng_context(root_seed, epoch, position)
         with _user_code_context(sample):
-            torch_generator = rng()
-            numpy_generator = rng("numpy")
-            random_generator = rng("random")
-        return (
-            torch_generator.initial_seed()
-            ^ int(numpy_generator.bit_generator.state["state"]["key"][0])
-            ^ int(random_generator._key)
-        )
+            rng()
+            rng("numpy")
+            rng("random")
+        return sample[0] ^ sample[1]
 
     def thread_shim_total(position: int) -> int:
         value, cost_ns = thread_pool._evaluate(epoch, position, position)
