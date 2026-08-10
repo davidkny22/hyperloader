@@ -43,12 +43,17 @@ class HealthySkewDataset:
         return index
 
 
-def record_worker_init(worker: int) -> None:
-    """Record each process that executes worker initialization."""
-    directory = Path(os.environ["HYPERLOADER_RECOVERY_INIT_LOG"])
-    (directory / f"worker-{worker}-{os.getpid()}.log").write_text(
-        "initialized\n", encoding="utf-8"
-    )
+class RecordWorkerInit:
+    """Carry a dynamic log directory across an existing forkserver."""
+
+    def __init__(self, directory: str) -> None:
+        self._directory = directory
+
+    def __call__(self, worker: int) -> None:
+        directory = Path(self._directory)
+        (directory / f"worker-{worker}-{os.getpid()}.log").write_text(
+            "initialized\n", encoding="utf-8"
+        )
 
 
 def _reclaim_without_restart(pool: ProcessPool, worker: int) -> list[int]:
@@ -64,8 +69,6 @@ class WorkerCrashArenaGate(unittest.TestCase):
 
         with TemporaryDirectory() as directory:
             sentinel = str(Path(directory) / "worker-crashed.txt")
-            previous_log = os.environ.get("HYPERLOADER_RECOVERY_INIT_LOG")
-            os.environ["HYPERLOADER_RECOVERY_INIT_LOG"] = directory
             config = HyperConfig(
                 executor=ExecutorConfig(process_ceiling=2, on_worker_death="restart")
             )
@@ -75,7 +78,7 @@ class WorkerCrashArenaGate(unittest.TestCase):
                 num_workers=2,
                 seed=59,
                 config=config,
-                worker_init_fn=record_worker_init,
+                worker_init_fn=RecordWorkerInit(directory),
             )
             iterator = iter(loader)
             original_pids = loader._process_pool.worker_pids
@@ -97,10 +100,6 @@ class WorkerCrashArenaGate(unittest.TestCase):
                 delivered = [int(next(iterator).item()) for _ in range(3)]
             finally:
                 loader.close()
-                if previous_log is None:
-                    os.environ.pop("HYPERLOADER_RECOVERY_INIT_LOG", None)
-                else:
-                    os.environ["HYPERLOADER_RECOVERY_INIT_LOG"] = previous_log
 
             init_logs = [path.name for path in Path(directory).glob("worker-*.log")]
 
