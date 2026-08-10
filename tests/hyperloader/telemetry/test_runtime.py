@@ -43,7 +43,7 @@ class TelemetryRuntimeTest(unittest.TestCase):
         recorder = _hyperloader._Telemetry()
         recorder.record_startup(90)
         for latency in (10, 20, 30, 40):
-            recorder.record_delivery(2, 16, latency, 100)
+            recorder.record_delivery(2, 16, latency)
         recorder.record_stall()
         recorder.record_controller(2, 1, "bandwidth-ceiling", True, 0.02, "bandwidth")
 

@@ -271,6 +271,10 @@ class ProcessIterator(Iterator[Any]):
                 self._delivery_telemetry.finish_epoch(self._epoch)
             self._complete = True
 
+    def _flush_telemetry(self) -> None:
+        if self._delivery_telemetry is not None:
+            self._delivery_telemetry.flush()
+
     @property
     def complete(self) -> bool:
         """Report whether exhaustion advanced the loader epoch."""

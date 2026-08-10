@@ -20,8 +20,12 @@ def instrument_registry() -> tuple[dict[str, object], ...]:
 def telemetry_snapshot(
     recorder: Any | None,
     controller: dict[str, int | float | str | bool | None] | None,
+    active_iterator_ref: Any | None = None,
 ) -> dict[str, object]:
     """Return a public snapshot while preserving the disabled fast path."""
+    iterator = None if active_iterator_ref is None else active_iterator_ref()
+    if iterator is not None:
+        iterator._flush_telemetry()
     snapshot = (
         {
             "current": None,

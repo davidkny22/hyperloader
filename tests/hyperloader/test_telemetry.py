@@ -50,6 +50,18 @@ class TelemetryPublicTest(unittest.TestCase):
         self.assertEqual(summary["delivered_batches"], 3)
         self.assertEqual(summary["delivered_bytes"], dataset.numel() * dataset.element_size())
 
+    def test_current_snapshot_flushes_a_partial_delivery_group(self) -> None:
+        loader = DataLoader(torch.arange(32), batch_size=2, num_workers=2)
+        iterator = iter(loader)
+        try:
+            self.assertEqual(next(iterator).tolist(), [0, 1])
+            current = loader.stats()["current"]
+            self.assertEqual(current["delivered_samples"], 2)
+            self.assertEqual(current["delivered_batches"], 1)
+            self.assertEqual(list(iterator)[-1].tolist(), [30, 31])
+        finally:
+            loader.close()
+
     def test_disabled_configuration_allocates_no_native_recorder(self) -> None:
         config = HyperConfig(telemetry=TelemetryConfig(enabled=False))
         with mock.patch(

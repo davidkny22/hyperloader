@@ -3,18 +3,24 @@
 use crate::telemetry::{ControllerRecord, EpochSummary, INSTRUMENTS, Telemetry};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::time::Instant;
 
 #[pyclass(name = "_Telemetry")]
 pub(crate) struct PyTelemetry {
     recorder: Telemetry,
+    constructed_at: Instant,
+    last_delivery_at: Instant,
 }
 
 #[pymethods]
 impl PyTelemetry {
     #[new]
     fn new() -> Self {
+        let now = Instant::now();
         Self {
             recorder: Telemetry::new(),
+            constructed_at: now,
+            last_delivery_at: now,
         }
     }
 
@@ -36,9 +42,44 @@ impl PyTelemetry {
         self.recorder.record_startup(nanoseconds);
     }
 
-    fn record_delivery(&self, samples: u64, bytes: u64, latency_ns: u64, interval_ns: u64) {
+    fn record_startup_now(&mut self) {
+        let now = Instant::now();
         self.recorder
-            .record_delivery(samples, bytes, latency_ns, interval_ns);
+            .record_startup(duration_ns(now.duration_since(self.constructed_at)));
+        self.last_delivery_at = now;
+    }
+
+    fn record_delivery(&mut self, samples: u64, bytes: u64, latency_ns: u64) {
+        self.record_deliveries(samples, 1, bytes, latency_ns);
+    }
+
+    fn record_deliveries(&mut self, samples: u64, batches: u64, bytes: u64, latency_ns: u64) {
+        let delivered_at = Instant::now();
+        self.recorder.record_startup(duration_ns(
+            delivered_at.duration_since(self.constructed_at),
+        ));
+        self.recorder.record_deliveries(
+            samples,
+            batches,
+            bytes,
+            latency_ns,
+            duration_ns(delivered_at.duration_since(self.last_delivery_at)),
+        );
+        self.last_delivery_at = delivered_at;
+    }
+
+    fn record_counts(&mut self, samples: u64, batches: u64, bytes: u64) {
+        let delivered_at = Instant::now();
+        self.recorder.record_startup(duration_ns(
+            delivered_at.duration_since(self.constructed_at),
+        ));
+        self.recorder.record_counts(
+            samples,
+            batches,
+            bytes,
+            duration_ns(delivered_at.duration_since(self.last_delivery_at)),
+        );
+        self.last_delivery_at = delivered_at;
     }
 
     fn record_stall(&self) {
@@ -82,6 +123,10 @@ impl PyTelemetry {
         }
         Ok(result)
     }
+}
+
+fn duration_ns(duration: std::time::Duration) -> u64 {
+    duration.as_nanos().min(u64::MAX as u128) as u64
 }
 
 fn summary_dict<'py>(py: Python<'py>, summary: &EpochSummary) -> PyResult<Bound<'py, PyDict>> {

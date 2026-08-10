@@ -86,12 +86,33 @@ impl Telemetry {
 
     /// Record one successful delivery using atomic hot-path operations.
     pub fn record_delivery(&self, samples: u64, bytes: u64, latency_ns: u64, interval_ns: u64) {
+        self.record_deliveries(samples, 1, bytes, latency_ns, interval_ns);
+    }
+
+    /// Record one event-sampled group of successful deliveries.
+    pub fn record_deliveries(
+        &self,
+        samples: u64,
+        batches: u64,
+        bytes: u64,
+        latency_ns: u64,
+        interval_ns: u64,
+    ) {
         self.delivered_samples.fetch_add(samples, Ordering::Relaxed);
-        self.delivered_batches.fetch_add(1, Ordering::Relaxed);
+        self.delivered_batches.fetch_add(batches, Ordering::Relaxed);
         self.delivered_bytes.fetch_add(bytes, Ordering::Relaxed);
         self.delivery_interval_ns
             .fetch_add(interval_ns, Ordering::Relaxed);
         self.delivery_latency.observe(latency_ns);
+    }
+
+    /// Record exact delivery counters without adding a latency sample.
+    pub fn record_counts(&self, samples: u64, batches: u64, bytes: u64, interval_ns: u64) {
+        self.delivered_samples.fetch_add(samples, Ordering::Relaxed);
+        self.delivered_batches.fetch_add(batches, Ordering::Relaxed);
+        self.delivered_bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.delivery_interval_ns
+            .fetch_add(interval_ns, Ordering::Relaxed);
     }
 
     /// Record one event-driven delivery stall.

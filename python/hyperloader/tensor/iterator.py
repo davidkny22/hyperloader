@@ -6,7 +6,7 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from ..telemetry.delivery import build_delivery_telemetry
+from ..telemetry.delivery import DELIVERY_GROUP
 
 
 class TensorIterator(Iterator[Any]):
@@ -22,22 +22,46 @@ class TensorIterator(Iterator[Any]):
         self._position = 0
         self._complete = False
         self._valid = True
-        self._delivery_telemetry = build_delivery_telemetry(loader)
+        self._telemetry = loader._telemetry
+        self._telemetry_flushed_position = 0
+        self._telemetry_next_sample_position = 0
+        sample = None if length == 0 else loader.dataset[0]
+        self._telemetry_sample_bytes = (
+            0 if sample is None else sample.numel() * sample.element_size()
+        )
 
     def __iter__(self) -> TensorIterator:
         return self
 
     def __next__(self) -> Any:
-        started_ns = time.perf_counter_ns()
-        previous_position = self._position
+        batch_size = self._loader.batch_size or 1
+        sample_delivery = (
+            self._telemetry is not None
+            and self._position >= self._telemetry_next_sample_position
+        )
+        started_ns = time.perf_counter_ns() if sample_delivery else 0
         value = self._next_value()
-        if self._delivery_telemetry is not None:
-            self._delivery_telemetry.record_delivery(
-                self._position - previous_position,
-                value.numel() * value.element_size(),
-                started_ns,
-            )
+        if sample_delivery:
+            self._record_telemetry_sample(started_ns, batch_size)
         return value
+
+    def _record_telemetry_sample(self, started_ns: int, batch_size: int) -> None:
+        samples = self._position - self._telemetry_flushed_position
+        self._telemetry.record_deliveries(
+            samples,
+            self._batch_ordinal(self._position)
+            - self._batch_ordinal(self._telemetry_flushed_position),
+            samples * self._telemetry_sample_bytes,
+            time.perf_counter_ns() - started_ns,
+        )
+        self._telemetry_flushed_position = self._position
+        self._telemetry_next_sample_position = self._position + batch_size * (
+            DELIVERY_GROUP - 1
+        )
+
+    def _batch_ordinal(self, position: int) -> int:
+        batch_size = self._loader.batch_size or 1
+        return (position + batch_size - 1) // batch_size
 
     def _next_value(self) -> Any:
         """Return the next storage-preserving tensor value."""
@@ -73,9 +97,22 @@ class TensorIterator(Iterator[Any]):
     def _finish_epoch(self) -> None:
         if not self._complete:
             self._loader._epoch_state.complete(self._epoch)
-            if self._delivery_telemetry is not None:
-                self._delivery_telemetry.finish_epoch(self._epoch)
+            if self._telemetry is not None:
+                self._flush_telemetry()
+                self._telemetry.finish_epoch(self._epoch)
             self._complete = True
+
+    def _flush_telemetry(self) -> None:
+        if self._telemetry is None or self._position == self._telemetry_flushed_position:
+            return
+        samples = self._position - self._telemetry_flushed_position
+        self._telemetry.record_counts(
+            samples,
+            self._batch_ordinal(self._position)
+            - self._batch_ordinal(self._telemetry_flushed_position),
+            samples * self._telemetry_sample_bytes,
+        )
+        self._telemetry_flushed_position = self._position
 
     @property
     def complete(self) -> bool:

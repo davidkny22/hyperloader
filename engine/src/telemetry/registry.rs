@@ -64,7 +64,7 @@ pub const INSTRUMENTS: &[InstrumentDefinition] = &[
     instrument(
         "delivery_latency",
         "nanoseconds",
-        "Successful next-batch latency.",
+        "Event-sampled successful next-batch latency.",
     ),
     instrument(
         "startup",
