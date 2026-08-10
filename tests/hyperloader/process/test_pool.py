@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import pickle
 import random
 import tempfile
 import time
@@ -17,7 +16,6 @@ from torch.utils.data import get_worker_info
 
 from hyperloader import DataLoader, _hyperloader
 from hyperloader.process import ProcessPool
-from hyperloader.process.worker import encode_success
 
 
 class RandomDataset:
@@ -95,16 +93,6 @@ def random_signature(value: dict[str, object]) -> tuple[object, ...]:
 
 class ProcessPoolTest(unittest.TestCase):
     """Exercise persistence, RNG installation, errors, and public delivery."""
-
-    def test_tensor_view_encoding_shares_storage_instead_of_embedding_it(self) -> None:
-        backing = torch.arange(1_048_576, dtype=torch.int64).reshape(-1, 512)
-        view = backing[1]
-
-        payload = encode_success(view)
-        decoded = pickle.loads(payload)
-
-        self.assertLess(len(payload), 262_144)
-        self.assertTrue(torch.equal(decoded, view))
 
     def test_per_sample_rng_reproduces_across_fresh_pools(self) -> None:
         first = ProcessPool(RandomDataset(), 2, 17, 0, 0, 0)

@@ -6,13 +6,13 @@ import pickle
 import time
 import traceback
 from multiprocessing.connection import Connection
-from multiprocessing.reduction import ForkingPickler
 from typing import Any
 
 from hyperloader import _hyperloader
 
 from .parent_watchdog import start_parent_watchdog
 from .rng import clear_worker_info, install_sample_rng, set_worker_info
+from .serialization import ResultEncoder
 
 BLACK_BOX_STAGE = 0
 
@@ -28,6 +28,7 @@ def worker_main(
     """Run one persistent dataset copy until the owner sends stop."""
     start_parent_watchdog()
     dataset, worker_init_fn = pickle.loads(dataset_payload)
+    encoder = ResultEncoder()
     set_worker_info(worker_id, worker_count, None, dataset)
     try:
         startup_error = None
@@ -40,7 +41,14 @@ def worker_main(
             if startup_error is None:
                 epoch, position, index = probe
                 status, payload = execute_sample(
-                    dataset, worker_id, worker_count, root_seed, epoch, position, index
+                    dataset,
+                    encoder,
+                    worker_id,
+                    worker_count,
+                    root_seed,
+                    epoch,
+                    position,
+                    index,
                 )
             else:
                 status, payload = startup_error
@@ -59,6 +67,7 @@ def worker_main(
             worker_count,
             root_seed,
             startup_error,
+            encoder,
         )
     finally:
         clear_worker_info()
@@ -73,6 +82,7 @@ def run_commands(
     worker_count: int,
     root_seed: int,
     startup_error: tuple[int, bytes] | None,
+    encoder: ResultEncoder,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -94,6 +104,7 @@ def run_commands(
         else:
             status, payload = execute_sample(
                 dataset,
+                encoder,
                 worker_id,
                 worker_count,
                 root_seed,
@@ -106,6 +117,7 @@ def run_commands(
 
 def execute_sample(
     dataset: Any,
+    encoder: ResultEncoder,
     worker_id: int,
     worker_count: int,
     root_seed: int,
@@ -117,14 +129,9 @@ def execute_sample(
     try:
         torch_seed = install_sample_rng(root_seed, epoch, position)
         set_worker_info(worker_id, worker_count, torch_seed, dataset)
-        return 0, encode_success(dataset[index])
+        return 0, encoder.encode(dataset[index])
     except BaseException as error:
         return encode_exception(error)
-
-
-def encode_success(value: Any) -> bytes:
-    """Encode successful values with multiprocessing storage reducers."""
-    return bytes(ForkingPickler.dumps(value, protocol=5))
 
 
 def encode_exception(error: BaseException) -> tuple[int, bytes]:

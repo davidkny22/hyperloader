@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import pickle
 import sys
 import time
 from collections import deque
@@ -14,6 +13,7 @@ from typing import Any
 from hyperloader import _hyperloader
 
 from .exceptions import WorkerDied, reraise_worker_exception
+from .serialization import ResultDecoder, encode_multiprocessing
 from .worker import BLACK_BOX_STAGE, worker_main
 
 POLL_SECONDS = 0.005
@@ -54,7 +54,9 @@ class ProcessPool:
         self._probe_payload: bytes | None = None
         self._immediate: deque[tuple[int, int, int, bytes]] = deque()
         self._pending: dict[tuple[int, int], tuple[int, int]] = {}
-        self._dataset_payload = pickle.dumps((dataset, worker_init_fn), protocol=5)
+        self._dataset = dataset
+        self._worker_init_fn = worker_init_fn
+        self._decoder = ResultDecoder()
         try:
             for worker_id in range(worker_count):
                 probe = self._probe_key if worker_id == 0 else None
@@ -124,7 +126,7 @@ class ProcessPool:
     def decode(self, status: int, payload: bytes, worker: int) -> Any:
         """Reconstruct a successful sample or re-raise its worker exception."""
         if status == 0:
-            return pickle.loads(payload)
+            return self._decoder.decode(payload, worker)
         reraise_worker_exception(payload, worker)
 
     def execute(self, epoch: int, position: int, index: int) -> Any:
@@ -211,7 +213,7 @@ class ProcessPool:
             target=worker_main,
             args=(
                 child,
-                self._dataset_payload,
+                encode_multiprocessing((self._dataset, self._worker_init_fn)),
                 worker,
                 self._worker_total,
                 self._root_seed,
