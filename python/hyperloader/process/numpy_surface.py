@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .sample_rng import CurrentSample, SampleRng
+
 _STATE_NUMPY = 8
 _UINT64_MASK = (1 << 64) - 1
 _GENERATOR_METHODS = (
@@ -74,10 +76,12 @@ def _splitmix64(value: int) -> int:
 class NumpyModuleSurface:
     """Bind NumPy's module aliases to one persistent Philox Generator."""
 
-    def __init__(self) -> None:
+    def __init__(self, current: CurrentSample) -> None:
         import numpy as np
 
         self._np = np
+        self._current = current
+        self._armed: SampleRng | None = None
         self._bit_generator = np.random.Philox(key=0, counter=0)
         self.generator = np.random.Generator(self._bit_generator)
         self._state = self._bit_generator.state
@@ -90,10 +94,10 @@ class NumpyModuleSurface:
         names = (*_GENERATOR_METHODS, *_COMPATIBILITY_METHODS)
         self._prior = {name: getattr(np.random, name) for name in names}
         for name in _GENERATOR_METHODS:
-            setattr(np.random, name, getattr(self.generator, name))
-        np.random.random_sample = self.generator.random
-        np.random.sample = self.generator.random
-        np.random.ranf = self.generator.random
+            setattr(np.random, name, self._bound_generator_method(name))
+        np.random.random_sample = self._bound_generator_method("random")
+        np.random.sample = self._bound_generator_method("random")
+        np.random.ranf = self._bound_generator_method("random")
         np.random.rand = self.rand
         np.random.randn = self.randn
         np.random.randint = self.randint
@@ -115,12 +119,31 @@ class NumpyModuleSurface:
         self._legacy_seed = stream_key & ((1 << 32) - 1)
         self._legacy_dirty = True
 
+    def _ensure_armed(self) -> None:
+        sample = self._current.value
+        if sample is not None and self._armed is not sample:
+            self.rekey(sample.key, sample.coord)
+            self._armed = sample
+
+    def _bound_generator_method(self, name: str) -> Any:
+        method = getattr(self.generator, name)
+
+        def bound(*args: Any, **kwargs: Any) -> Any:
+            self._ensure_armed()
+            return method(*args, **kwargs)
+
+        bound.__name__ = name
+        bound.__self__ = self.generator  # type: ignore[attr-defined]
+        return bound
+
     def rand(self, *dims: int) -> Any:
         """Map the legacy variadic shape helper to Generator.random."""
+        self._ensure_armed()
         return self.generator.random(size=dims or None)
 
     def randn(self, *dims: int) -> Any:
         """Map the legacy variadic shape helper to Generator.standard_normal."""
+        self._ensure_armed()
         return self.generator.standard_normal(size=dims or None)
 
     def randint(
@@ -131,12 +154,14 @@ class NumpyModuleSurface:
         dtype: Any = int,
     ) -> Any:
         """Map legacy exclusive-high integers to Generator.integers."""
+        self._ensure_armed()
         return self.generator.integers(low, high=high, size=size, dtype=dtype)
 
     def random_integers(
         self, low: int, high: int | None = None, size: Any = None
     ) -> Any:
         """Map legacy inclusive-high integers to Generator.integers."""
+        self._ensure_armed()
         if high is None:
             low, high = 1, low
         return self.generator.integers(low, high=high, size=size, endpoint=True)
@@ -157,6 +182,7 @@ class NumpyModuleSurface:
         self._legacy_dirty = False
 
     def _legacy(self) -> Any:
+        self._ensure_armed()
         if self._legacy_state is None:
             self._legacy_state = self._np.random.RandomState()
         if self._legacy_dirty:

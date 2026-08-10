@@ -23,11 +23,13 @@ from hyperloader.process.rng import WorkerRngContext
 
 METRICS = (
     "native_context",
-    "torch_application",
+    "coordinate_update",
+    "torch_rekey",
     "random_rekey",
     "numpy_rekey",
     "worker_info_lazy",
     "full_install",
+    "full_seeded_sample",
 )
 
 
@@ -62,14 +64,20 @@ def build_operations() -> InstallOperations:
     def native_context() -> Any:
         return _hyperloader._sample_rng_context(root_seed, epoch, position)
 
-    def torch_application() -> Any:
-        return torch.default_generator.manual_seed(torch_seed)
+    def coordinate_update() -> Any:
+        return context._current.update(torch_seed, key, position)
+
+    def torch_rekey() -> None:
+        context._current.update(torch_seed, key, position)
+        context._torch._ensure_armed()
 
     def random_rekey() -> None:
-        context._random.rekey(key, position)
+        context._current.update(torch_seed, key, position)
+        context._random.generator._ensure_armed()
 
     def numpy_rekey() -> None:
-        context._numpy.rekey(key, position)
+        context._current.update(torch_seed, key, position)
+        context._numpy._ensure_armed()
 
     def worker_info_lazy() -> Any:
         if context._worker_info is None:
@@ -80,15 +88,24 @@ def build_operations() -> InstallOperations:
     def full_install() -> Any:
         return context.install(root_seed, epoch, position)
 
+    def full_seeded_sample() -> Any:
+        context.install(root_seed, epoch, position)
+        context._torch._ensure_armed()
+        context._random.generator._ensure_armed()
+        context._numpy._ensure_armed()
+        return context._current.value
+
     return InstallOperations(
         context,
         {
             "native_context": native_context,
-            "torch_application": torch_application,
+            "coordinate_update": coordinate_update,
+            "torch_rekey": torch_rekey,
             "random_rekey": random_rekey,
             "numpy_rekey": numpy_rekey,
             "worker_info_lazy": worker_info_lazy,
             "full_install": full_install,
+            "full_seeded_sample": full_seeded_sample,
         },
         saved_random,
         saved_numpy,
@@ -116,13 +133,10 @@ def measure_operations(
                 for _ in range(iterations):
                     operation()
                 elapsed = time.perf_counter_ns() - started
-                checksum = (
-                    torch.default_generator.initial_seed()
-                    ^ int(bound.context._random.generator.getstate()[1])
-                    ^ int(
-                        bound.context._numpy._bit_generator.state["state"]["key"][0]
-                    )
-                )
+                sample = bound.context._current.value
+                checksum = 0 if sample is None else sample.torch_seed ^ sample.key
+                checksum ^= int(bound.context._random.generator._key)
+                checksum ^= int(bound.context._numpy._key[0])
                 rows.append(
                     (metric, trial, iterations, elapsed, elapsed / iterations, checksum)
                 )

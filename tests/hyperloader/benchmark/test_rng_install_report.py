@@ -23,7 +23,7 @@ finally:
     sys.path.remove(BENCHES)
 
 
-def write_report(path: Path, core: int, full_install_ns: float = 5_000.0) -> None:
+def write_report(path: Path, core: int, full_seeded_ns: float = 5_000.0) -> None:
     """Write one complete deterministic fixture report."""
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
@@ -50,7 +50,7 @@ def write_report(path: Path, core: int, full_install_ns: float = 5_000.0) -> Non
             )
         )
         for metric in MODULE.METRICS:
-            value = full_install_ns if metric == "full_install" else 1_000.0
+            value = full_seeded_ns if metric == "full_seeded_sample" else 1_000.0
             for trial in range(10):
                 writer.writerow(
                     ("data", metric, trial, 100, int(value * 100), value, trial + 1)
@@ -70,7 +70,7 @@ class RngInstallReportTest(unittest.TestCase):
             self.assertEqual(
                 MODULE.evaluate(performance, efficiency, 19, 0)["decision"], "PASS"
             )
-            write_report(performance, 19, full_install_ns=7_000.0)
+            write_report(performance, 19, full_seeded_ns=7_000.0)
             self.assertEqual(
                 MODULE.evaluate(performance, efficiency, 19, 0)["decision"], "FAIL"
             )
@@ -83,7 +83,9 @@ class RngInstallReportTest(unittest.TestCase):
                 MODULE.read_report(path, 18)
             lines = path.read_text(encoding="utf-8").splitlines()
             path.write_text(
-                "\n".join(line for line in lines if ",full_install," not in line)
+                "\n".join(
+                    line for line in lines if ",full_seeded_sample," not in line
+                )
                 + "\n",
                 encoding="utf-8",
             )

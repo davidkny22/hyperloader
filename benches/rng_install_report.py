@@ -90,7 +90,7 @@ def evaluate(
     performance_core: int,
     efficiency_core: int,
 ) -> dict[str, Any]:
-    """Validate both cores and decide the complete install on the reference core."""
+    """Validate both cores and decide a sample using every seeded surface."""
     performance_meta, performance_values = read_report(
         performance_path, performance_core
     )
@@ -107,7 +107,7 @@ def evaluate(
             raise ValueError(f"reports disagree on {key}")
     performance = summarize(performance_values)
     efficiency = summarize(efficiency_values)
-    upper = performance["full_install"]["ci95_upper_ns"]
+    upper = performance["full_seeded_sample"]["ci95_upper_ns"]
     return {
         "decision": "PASS" if upper <= INSTALL_LIMIT_NS else "FAIL",
         "efficiency": efficiency,

@@ -7,6 +7,8 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
+from .sample_rng import CurrentSample, SampleRng
+
 _STATE_RANDOM = 7
 _UINT32_BITS = 32
 _UINT32_MASK = (1 << _UINT32_BITS) - 1
@@ -43,7 +45,9 @@ _MODULE_METHODS = (
 class PhiloxRandom(random.Random):
     """Implement the standard Random surface over one engine Philox stream."""
 
-    def __init__(self) -> None:
+    def __init__(self, current: CurrentSample | None = None) -> None:
+        self._current = current
+        self._armed: SampleRng | None = None
         self._key = 0
         self._coord = 0
         self._next_block = 0
@@ -60,14 +64,24 @@ class PhiloxRandom(random.Random):
         self._word_offset = 0
         self.gauss_next = None
 
+    def _ensure_armed(self) -> None:
+        if self._current is None:
+            return
+        sample = self._current.value
+        if sample is not None and self._armed is not sample:
+            self.rekey(sample.key, sample.coord)
+            self._armed = sample
+
     def seed(self, a: Any = None, version: int = 2) -> None:
         """Start an explicitly requested standalone stream."""
         source = random.Random()
         source.seed(a, version=version)
         self.rekey(source.getrandbits(64), 0)
+        self._armed = None if self._current is None else self._current.value
 
     def getstate(self) -> tuple[Any, ...]:
         """Return a round-trippable state for save and restore."""
+        self._ensure_armed()
         return (
             _STATE_MARKER,
             self._key,
@@ -93,6 +107,12 @@ class PhiloxRandom(random.Random):
         self._words = tuple(int(word) & _UINT32_MASK for word in words)
         self._word_offset = int(word_offset)
         self.gauss_next = gauss_next
+        self._armed = None if self._current is None else self._current.value
+
+    def gauss(self, mu: float = 0.0, sigma: float = 1.0) -> float:
+        """Arm before consulting the inherited Gaussian value cache."""
+        self._ensure_armed()
+        return super().gauss(mu, sigma)
 
     def random(self) -> float:
         """Return one 53-bit uniform value from two successive stream words."""
@@ -118,6 +138,7 @@ class PhiloxRandom(random.Random):
         return result
 
     def _next_word(self) -> int:
+        self._ensure_armed()
         if self._word_offset == len(self._words):
             if self._next_block == _DRAW_LIMIT:
                 raise OverflowError("random draw index exhausted the Philox counter domain")
@@ -137,8 +158,8 @@ class PhiloxRandom(random.Random):
 class RandomModuleSurface:
     """Bind and restore the module-level Python random callables."""
 
-    def __init__(self) -> None:
-        self.generator = PhiloxRandom()
+    def __init__(self, current: CurrentSample) -> None:
+        self.generator = PhiloxRandom(current)
         self._prior = {
             name: getattr(random, name) for name in _MODULE_METHODS if hasattr(random, name)
         }
@@ -146,10 +167,6 @@ class RandomModuleSurface:
         random._inst = self.generator
         for name in self._prior:
             setattr(random, name, getattr(self.generator, name))
-
-    def rekey(self, key: int, coord: int) -> None:
-        """Select one sample stream without allocating a new generator."""
-        self.generator.rekey(key, coord)
 
     def clear(self) -> None:
         """Restore the module callables captured before worker binding."""

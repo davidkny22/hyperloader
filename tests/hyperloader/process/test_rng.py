@@ -86,6 +86,49 @@ class WorkerRngContextTest(unittest.TestCase):
         finally:
             context.clear()
 
+    def test_install_only_publishes_current_sample_until_each_first_draw(self) -> None:
+        context = WorkerRngContext(0, 1)
+        context.attach_dataset([0])
+        try:
+            context.install(13, 1, 5)
+            sample = context._current.value
+
+            self.assertIsNotNone(sample)
+            self.assertIsNot(context._random.generator._armed, sample)
+            self.assertIsNot(context._numpy._armed, sample)
+            self.assertIsNot(context._torch._armed, sample)
+
+            random.random()
+            self.assertIs(context._random.generator._armed, sample)
+            self.assertIsNot(context._numpy._armed, sample)
+            self.assertIsNot(context._torch._armed, sample)
+
+            np.random.random()
+            self.assertIs(context._numpy._armed, sample)
+            self.assertIsNot(context._torch._armed, sample)
+
+            torch.rand(())
+            self.assertIs(context._torch._armed, sample)
+        finally:
+            context.clear()
+
+    def test_explicit_torch_generator_does_not_arm_the_default_surface(self) -> None:
+        context = WorkerRngContext(0, 1)
+        context.attach_dataset([0])
+        try:
+            torch_seed, _ = _hyperloader._sample_rng_context(31, 2, 7)
+            context.install(31, 2, 7)
+            sample = context._current.value
+
+            torch.rand((), generator=torch.Generator().manual_seed(99))
+            self.assertIsNot(context._torch._armed, sample)
+
+            expected = torch.rand((), generator=torch.Generator().manual_seed(torch_seed))
+            self.assertEqual(torch.rand(()).item(), expected.item())
+            self.assertIs(context._torch._armed, sample)
+        finally:
+            context.clear()
+
     def test_reinstall_reproduces_mixed_module_draws(self) -> None:
         context = WorkerRngContext(0, 1)
         context.attach_dataset([0])
@@ -158,6 +201,8 @@ class WorkerRngContextTest(unittest.TestCase):
             context._numpy._state["has_uint32"] = 1
             context._numpy._state["uinteger"] = 73
             context.install(37, 6, 17)
+            self.assertEqual(context._numpy._buffer.tolist(), [91, 91, 91, 91])
+            context._numpy._ensure_armed()
             state = context._numpy._bit_generator.state
 
             self.assertEqual(state["state"]["counter"].tolist(), [17, 0, 0, 0])
@@ -187,6 +232,23 @@ class WorkerRngContextTest(unittest.TestCase):
                 (random.random(), random.getrandbits(65), random.gauss(0.0, 1.0)),
                 expected,
             )
+        finally:
+            context.clear()
+
+    def test_python_gaussian_cache_cannot_cross_a_sample_boundary(self) -> None:
+        context = WorkerRngContext(0, 1)
+        context.attach_dataset([0])
+        try:
+            context.install(47, 3, 1)
+            random.gauss(0.0, 1.0)
+            self.assertIsNotNone(context._random.generator.gauss_next)
+
+            _, key = _hyperloader._sample_rng_context(47, 3, 2)
+            reference = PhiloxRandom()
+            reference.rekey(key, 2)
+            context.install(47, 3, 2)
+
+            self.assertEqual(random.gauss(0.0, 1.0), reference.gauss(0.0, 1.0))
         finally:
             context.clear()
 
