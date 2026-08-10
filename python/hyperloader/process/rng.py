@@ -43,6 +43,14 @@ class WorkerRngContext:
         self._worker_info.begin_sample(torch_seed)
         return torch_seed
 
+    @property
+    def current_sample(self) -> tuple[int, int, int]:
+        """Return the installed native identity token for accessor binding."""
+        sample = self._current.value
+        if sample is None:
+            raise RuntimeError("worker RNG context has no installed sample")
+        return sample
+
     def clear(self) -> None:
         """Release the worker-global dataset reference before process exit."""
         if self._worker_info is not None:

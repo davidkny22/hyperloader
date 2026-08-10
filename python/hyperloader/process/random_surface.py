@@ -45,8 +45,11 @@ _MODULE_METHODS = (
 class PhiloxRandom(random.Random):
     """Implement the standard Random surface over one engine Philox stream."""
 
-    def __init__(self, current: CurrentSample | None = None) -> None:
+    def __init__(
+        self, current: CurrentSample | None = None, *, stream_id: int = _STATE_RANDOM
+    ) -> None:
         self._current = current
+        self._stream_id = stream_id
         self._armed: SampleRng | None = None
         self._key = 0
         self._coord = 0
@@ -146,7 +149,7 @@ class PhiloxRandom(random.Random):
                 self._key,
                 self._coord,
                 self._next_block,
-                _STATE_RANDOM,
+                self._stream_id,
             )
             self._next_block += 1
             self._word_offset = 0

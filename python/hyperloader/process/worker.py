@@ -9,6 +9,7 @@ from multiprocessing.connection import Connection
 from typing import Any
 
 from hyperloader import _hyperloader
+from hyperloader.rng import _user_code_context
 
 from .batching import BatchLayout, batch_layout, encode_batch, matches_batch_layout
 from .parent_watchdog import start_parent_watchdog
@@ -238,7 +239,8 @@ def evaluate_sample(
     """Run one black-box sample under its exact RNG and worker view."""
     try:
         rng_context.install(root_seed, epoch, position)
-        return 0, dataset[index]
+        with _user_code_context(rng_context.current_sample):
+            return 0, dataset[index]
     except BaseException as error:
         return encode_exception(error)
 
