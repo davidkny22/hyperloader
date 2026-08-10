@@ -62,6 +62,12 @@ impl PyStaticSchedule {
     fn set_depth(&mut self, depth: usize) -> PyResult<()> {
         self.schedule.set_depth(depth).map_err(value_error)
     }
+
+    fn set_worker_count(&mut self, worker_count: u32) -> PyResult<()> {
+        self.schedule
+            .set_worker_count(worker_count)
+            .map_err(value_error)
+    }
 }
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {

@@ -131,3 +131,19 @@ fn selected_dispatch_reorders_execution_without_reordering_commit() {
     assert_eq!(schedule.try_commit(), None);
     assert_eq!(schedule.next_dispatch().map(|item| item.position), Some(0));
 }
+
+#[test]
+fn live_width_parks_routes_without_changing_the_ceiling() {
+    let mut schedule = StaticSchedule::new(0, 6, 6, 4).expect("valid schedule");
+    schedule.set_worker_count(2).expect("park workers");
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let dispatch = schedule.next_dispatch().expect("dispatch");
+        workers.push(dispatch.worker);
+        schedule.mark_dispatched(dispatch).expect("accepted");
+    }
+    assert_eq!(workers, vec![0, 1, 0, 1]);
+    assert!(schedule.set_worker_count(0).is_err());
+    assert!(schedule.set_worker_count(5).is_err());
+    schedule.set_worker_count(4).expect("unpark workers");
+}

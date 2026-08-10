@@ -49,6 +49,7 @@ class FrontierRuntime:
         self._growth_events = 0
         self._wait_ns = 0
         self._active_ns = 0
+        self._stalled_since_delivery = False
 
     def next_dispatch(self) -> tuple[int, int] | None:
         """Return the next native dispatch candidate."""
@@ -94,6 +95,7 @@ class FrontierRuntime:
     def record_wait(self, wait_ns: int) -> None:
         """Record a delivery stall and grow a saturated frontier within its ceiling."""
         self._wait_ns += wait_ns
+        self._stalled_since_delivery = True
         if self._depth >= self._ceiling or self._schedule.occupied() < self._depth:
             return
         grown = min(self._ceiling, self._depth * self._growth_multiplier)
@@ -106,6 +108,16 @@ class FrontierRuntime:
     def record_active(self, active_ns: int) -> None:
         """Accumulate loader execution time without consumer work."""
         self._active_ns += active_ns
+
+    def set_worker_count(self, worker_count: int) -> None:
+        """Park or unpark scheduler routes within the spawned worker ceiling."""
+        self._schedule.set_worker_count(worker_count)
+
+    def consume_stall_flag(self) -> bool:
+        """Return and clear whether delivery waited since the previous batch."""
+        stalled = self._stalled_since_delivery
+        self._stalled_since_delivery = False
+        return stalled
 
     def report(self) -> dict[str, int | float | str]:
         """Return the focused scheduler evidence consumed by the gate harness."""

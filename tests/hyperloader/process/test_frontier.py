@@ -69,6 +69,18 @@ class FrontierRuntimeTest(unittest.TestCase):
 
         self.assertEqual(order, [0, 1, 2])
 
+    def test_live_width_parks_routes_without_losing_candidates(self) -> None:
+        frontier = FrontierRuntime(6, 6, 6, 4, 2, "cold-variance")
+        frontier.set_worker_count(2)
+
+        workers = []
+        for _ in range(4):
+            position, worker = frontier.next_dispatch()
+            workers.append(worker)
+            frontier.mark_dispatched(position, worker)
+
+        self.assertEqual(workers, [0, 1, 0, 1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,15 @@ from .machine import MachineIdentity
 from .record import CalibrationRecord
 
 
+def user_cache_root() -> Path:
+    """Return the platform user-cache directory for hyperloader records."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "hyperloader"
+
+
 def calibration_cache_path(root: Path, machine: MachineIdentity) -> Path:
     """Return the opaque machine-keyed calibration path."""
     return root / "calibration" / f"{machine.cache_key}.json"

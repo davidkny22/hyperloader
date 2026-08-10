@@ -37,6 +37,7 @@ pub struct StaticSchedule {
     end: u64,
     depth: u64,
     worker_count: u32,
+    worker_ceiling: u32,
     next_commit: u64,
     dispatch_ordinal: u64,
     positions: HashMap<u64, PositionState>,
@@ -65,6 +66,7 @@ impl StaticSchedule {
             end,
             depth,
             worker_count,
+            worker_ceiling: worker_count,
             next_commit: start,
             dispatch_ordinal: 0,
             positions: HashMap::with_capacity(depth as usize),
@@ -164,6 +166,18 @@ impl StaticSchedule {
             return Err(ScheduleError("frontier depth excludes an active position"));
         }
         self.depth = depth;
+        Ok(())
+    }
+
+    /// Change the live routing width without changing the spawned worker ceiling.
+    pub fn set_worker_count(&mut self, worker_count: u32) -> Result<(), ScheduleError> {
+        if worker_count == 0 || worker_count > self.worker_ceiling {
+            return Err(ScheduleError(
+                "live worker count is outside the plan ceiling",
+            ));
+        }
+        self.worker_count = worker_count;
+        self.dispatch_ordinal %= u64::from(worker_count);
         Ok(())
     }
 }

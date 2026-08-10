@@ -45,3 +45,7 @@ def prepare_process_pool(loader: Any) -> None:
         on_worker_death=loader.config.executor.on_worker_death,
         batch_size=batch_size,
     )
+    if loader._controller is None:
+        from hyperloader.control import build_controller
+
+        loader._controller = build_controller(loader)

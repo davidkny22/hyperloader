@@ -55,6 +55,7 @@ class ProcessIterator(Iterator[Any]):
                 binding_cause(loader),
                 self._dispatch_cost,
             )
+            self._schedule.set_worker_count(loader._controller.width)
             self._fill_frontier()
 
     def __iter__(self) -> ProcessIterator:
@@ -82,6 +83,7 @@ class ProcessIterator(Iterator[Any]):
                 sample = self._next_sample(position)
                 self._position += 1
                 self._loader._epoch_state.mark_delivered(self._epoch)
+                self._adapt_controller()
                 return sample
             stop = min(self._position + batch_size, self._length)
             batch = (
@@ -91,6 +93,7 @@ class ProcessIterator(Iterator[Any]):
             )
             self._position = stop
             self._loader._epoch_state.mark_delivered(self._epoch)
+            self._adapt_controller()
             return batch
         except StopIteration:
             raise
@@ -183,6 +186,25 @@ class ProcessIterator(Iterator[Any]):
         if any(estimate is None for estimate in estimates):
             return None
         return sum(estimate for estimate in estimates if estimate is not None)
+
+    def _adapt_controller(self) -> None:
+        """Apply one cadenced controller decision by parking scheduler routes."""
+        if self._position >= self._length:
+            self._schedule.consume_stall_flag()
+            return
+        batch_size = 1 if self._worker_batches else (self._loader.batch_size or 1)
+        decision = self._loader._controller.observe(
+            now_ns=time.perf_counter_ns(),
+            stalled=self._schedule.consume_stall_flag(),
+            occupied=self._schedule.occupied,
+            batch_size=batch_size,
+        )
+        if decision is None:
+            return
+        from hyperloader.control import decision_report
+
+        self._schedule.set_worker_count(decision.width)
+        self._loader._last_controller_report = decision_report(decision)
 
     def _poll_completions(self) -> bool:
         pool = self._loader._process_pool
