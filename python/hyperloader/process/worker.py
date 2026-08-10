@@ -6,6 +6,7 @@ import pickle
 import time
 import traceback
 from multiprocessing.connection import Connection
+from multiprocessing.reduction import ForkingPickler
 from typing import Any
 
 from hyperloader import _hyperloader
@@ -116,9 +117,14 @@ def execute_sample(
     try:
         torch_seed = install_sample_rng(root_seed, epoch, position)
         set_worker_info(worker_id, worker_count, torch_seed, dataset)
-        return 0, pickle.dumps(dataset[index], protocol=5)
+        return 0, encode_success(dataset[index])
     except BaseException as error:
         return encode_exception(error)
+
+
+def encode_success(value: Any) -> bytes:
+    """Encode successful values with multiprocessing storage reducers."""
+    return bytes(ForkingPickler.dumps(value, protocol=5))
 
 
 def encode_exception(error: BaseException) -> tuple[int, bytes]:
