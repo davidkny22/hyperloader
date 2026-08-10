@@ -32,7 +32,12 @@ class MemmapAdapter:
         return self.shape[0]
 
     def __getitem__(self, index: int) -> Any:
-        return self._array()[index]
+        import numpy as np
+
+        value = self._array()[index]
+        if isinstance(value, np.memmap):
+            return value.view(np.ndarray)
+        return value
 
     def _array(self) -> Any:
         if self._mapped is None:
