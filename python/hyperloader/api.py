@@ -9,6 +9,7 @@ from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
 from .constructor import validate_constructor
+from .decoder import select_decoder_pins
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
 from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_plan
@@ -125,6 +126,9 @@ class DataLoader:
             if isinstance(self._plan, StagePlan)
             else thread_safe
         )
+        self._decoder_selections = select_decoder_pins(
+            dataset, resolved_config.determinism.decoder_pins
+        )
         self._dataset_fingerprint = build_dataset_fingerprint(
             dataset, resolved_config.determinism.fingerprint
         )
@@ -229,6 +233,11 @@ class DataLoader:
             self._last_controller_report,
             self._active_iterator_ref,
         )
+
+    @property
+    def decoder_pins(self) -> tuple[dict[str, object], ...]:
+        """Disclose the platform-scoped decoder selections for this loader."""
+        return tuple(selection.to_dict() for selection in self._decoder_selections)
 
     def _collate_batch(self, batch: list[Any]) -> Any:
         """Collate an engine-produced batch through the native contract mirror."""

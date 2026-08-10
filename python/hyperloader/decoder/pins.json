@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "platforms": {
+    "darwin": {
+      "audio": {"backend": "torchcodec.decoders.AudioDecoder", "version": "0.13.0"},
+      "jpeg": {"backend": "torchvision.io.decode_jpeg", "version": "0.26.0"},
+      "png": {"backend": "torchvision.io.decode_png", "version": "0.26.0"}
+    },
+    "linux": {
+      "audio": {"backend": "torchcodec.decoders.AudioDecoder", "version": "0.13.0"},
+      "jpeg": {"backend": "torchvision.io.decode_jpeg", "version": "0.26.0"},
+      "png": {"backend": "torchvision.io.decode_png", "version": "0.26.0"}
+    },
+    "win32": {
+      "audio": {"backend": "torchcodec.decoders.AudioDecoder", "version": "0.13.0"},
+      "jpeg": {"backend": "torchvision.io.decode_jpeg", "version": "0.26.0"},
+      "png": {"backend": "torchvision.io.decode_png", "version": "0.26.0"}
+    }
+  }
+}

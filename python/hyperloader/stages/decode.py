@@ -28,6 +28,8 @@ class Decode(Generic[InputT, OutputT]):
     io: StageIO | str = StageIO.NONE
     thread_safety: ThreadSafety | str = ThreadSafety.ISOLATED
     cost_hint_ns: int | None = None
+    codec: str | None = None
+    substitute: bool = False
 
     def __post_init__(self) -> None:
         if not callable(self.fn):
@@ -35,6 +37,12 @@ class Decode(Generic[InputT, OutputT]):
         validate_type("input_type", self.input_type)
         validate_type("output_type", self.output_type)
         validate_cost_hint(self.cost_hint_ns)
+        if self.codec is not None and self.codec not in {"jpeg", "png", "audio"}:
+            raise ValueError("codec must be jpeg, png, audio, or None")
+        if not isinstance(self.substitute, bool):
+            raise TypeError("substitute must be a boolean")
+        if self.substitute and self.codec is None:
+            raise ValueError("substituted Decode stages require an explicit codec")
         object.__setattr__(self, "io", normalize_io(self.io))
         object.__setattr__(
             self, "thread_safety", normalize_thread_safety(self.thread_safety)

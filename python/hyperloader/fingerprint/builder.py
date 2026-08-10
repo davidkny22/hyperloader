@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 from hyperloader.config import AUTO
 from hyperloader.planner import TensorPlan
-from hyperloader.stages import Decode, Pipeline
+from hyperloader.stages import Pipeline
 
 from .callable import callable_identity, stable_value
 from .model import ContractFingerprint, FingerprintElement
@@ -81,20 +80,7 @@ def _world_size(loader: Any) -> int:
 
 
 def _decoder_pins(loader: Any) -> Any:
-    configured = loader.config.determinism.decoder_pins
-    if configured is not AUTO:
-        return stable_value(configured)
-    pins = []
-    if isinstance(loader.dataset, Pipeline):
-        for index, stage in enumerate(loader.dataset.sample_stages):
-            if isinstance(stage, Decode):
-                pins.append(
-                    {
-                        "name": f"pipeline-decode-{index}",
-                        "version": callable_identity(stage.fn),
-                    }
-                )
-    return {"pins": pins, "platform": sys.platform, "source": "platform-default"}
+    return [selection.to_dict() for selection in loader._decoder_selections]
 
 
 def _collate_identity(loader: Any) -> Any:

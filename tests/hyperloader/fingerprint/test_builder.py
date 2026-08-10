@@ -86,7 +86,6 @@ class ContractFingerprintBuilderTest(unittest.TestCase):
                 scheduler=SchedulerConfig(profile_cache="off"),
                 memory=MemoryConfig(batch_shape={"dtype": "int64", "shape": [2]}),
                 determinism=DeterminismConfig(
-                    decoder_pins=("png", "4.0"),
                     seeded_libs=("torch", "random", "numpy"),
                 ),
                 distributed=DistributedConfig(world_size=2, rank=0),
@@ -99,7 +98,7 @@ class ContractFingerprintBuilderTest(unittest.TestCase):
         self.assertEqual(values["batch_shape"]["source"], "declared")
         self.assertIn("collate_left", values["collate.identity"]["qualname"])
         self.assertEqual(values["seeded_libs"], ["torch", "random", "numpy"])
-        self.assertEqual(values["decoder_pins"], ["png", "4.0"])
+        self.assertEqual(values["decoder_pins"], [])
 
     def test_collate_delivery_and_drop_controls_are_distinct(self) -> None:
         config = HyperConfig(scheduler=SchedulerConfig(profile_cache="off"))

@@ -58,7 +58,6 @@ class ContractInputFingerprintTest(unittest.TestCase):
                     scheduler=off,
                     determinism=DeterminismConfig(
                         exact_count=True,
-                        decoder_pins=("png", "4"),
                         seeded_libs=("torch",),
                     ),
                 ),
