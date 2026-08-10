@@ -37,7 +37,9 @@ def environment() -> EnvironmentMetadata:
     )
 
 
-def observations(count: int, penalties: list[float] | None = None) -> list[PairedObservation]:
+def observations(
+    count: int, penalties: list[float] | None = None
+) -> list[PairedObservation]:
     """Build valid alternating paired observations."""
     metadata = environment()
     config = CommonConfig(
@@ -112,6 +114,16 @@ class BenchmarkProtocolTest(unittest.TestCase):
         self.assertAlmostEqual(passed.half_width_percent, 0.0)
         failed = evaluate(observations(10, [1.2] * 10), threshold_percent=1.0)
         self.assertEqual(failed.status, "fail")
+
+    def test_zero_threshold_requires_a_strict_measured_win(self) -> None:
+        passed = evaluate(observations(10, [-0.5] * 10), threshold_percent=0.0)
+        failed = evaluate(observations(10, [0.0] * 10), threshold_percent=0.0)
+
+        self.assertEqual(passed.status, "pass")
+        self.assertLess(passed.upper_percent, 0.0)
+        self.assertEqual(failed.status, "fail")
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            evaluate(observations(10), threshold_percent=-0.1)
 
     def test_precision_rule_collects_until_cap(self) -> None:
         noisy = [0.0, 1.8] * 5

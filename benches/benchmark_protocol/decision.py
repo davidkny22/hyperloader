@@ -38,8 +38,8 @@ def evaluate(
 ) -> DecisionResult:
     """Apply the pinned replication, precision, cap, and upper-bound rule."""
     validate_observations(observations)
-    if threshold_percent <= 0:
-        raise ValueError("decision threshold must be positive")
+    if threshold_percent < 0:
+        raise ValueError("decision threshold must be nonnegative")
     if bootstrap_draws <= 0:
         raise ValueError("bootstrap draw count must be positive")
     penalties = [observation.penalty_percent() for observation in observations]
