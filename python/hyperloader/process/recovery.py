@@ -41,7 +41,7 @@ def check_worker(pool: Any, worker: int, deadline: float | None) -> None:
                     f"hyperloader worker {worker} exited with code {exitcode}; "
                     f"restarted after reclaiming positions {positions}"
                 )
-            positions = pool._resources.reclaim_dead_worker(worker)
+            positions = sorted(pool._resources.reclaim_dead_worker(worker))
         pool.abort()
         raise RuntimeError(
             f"hyperloader worker {worker} exited with code {exitcode}; "
