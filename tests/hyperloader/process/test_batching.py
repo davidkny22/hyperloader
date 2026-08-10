@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import torch
 
-from hyperloader.process.batching import encode_batch
+from hyperloader.process.batching import encode_batch, supports_worker_batch
 from hyperloader.process.serialization import ResultDecoder, ResultEncoder
 
 
@@ -25,6 +25,13 @@ class WorkerBatchTest(unittest.TestCase):
         self.assertTrue(
             torch.equal(batch, torch.arange(8, dtype=torch.int64).reshape(2, 4))
         )
+
+    def test_probe_accepts_only_exact_contiguous_base_arrays(self) -> None:
+        base = np.arange(8, dtype=np.int64)
+
+        self.assertTrue(supports_worker_batch(base))
+        self.assertFalse(supports_worker_batch(base[::2]))
+        self.assertFalse(supports_worker_batch(torch.arange(8)))
 
     def test_tensor_rows_preserve_default_collation(self) -> None:
         payload = encode_batch(

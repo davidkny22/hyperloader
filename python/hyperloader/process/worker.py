@@ -10,7 +10,7 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
-from .batching import encode_batch
+from .batching import encode_batch, supports_worker_batch
 from .parent_watchdog import start_parent_watchdog
 from .rng import clear_worker_info, install_sample_rng, set_worker_info
 from .serialization import ResultEncoder
@@ -59,7 +59,8 @@ def worker_main(
                     payload = result
             else:
                 status, payload = startup_error
-            control.send(("probe", status, payload))
+            batch_supported = status == 0 and supports_worker_batch(probe_value)
+            control.send(("probe", status, payload, batch_supported))
         command = control.recv()
         if command[0] == "stop":
             return

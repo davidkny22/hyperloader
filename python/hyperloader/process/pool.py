@@ -65,7 +65,9 @@ class ProcessPool:
                 owner, process = self._launch_worker(worker_id, probe)
                 self._controls.append(owner)
                 self._workers.append(process)
-            status, probe_payload = self._receive_probe()
+            status, probe_payload, batch_supported = self._receive_probe()
+            if not batch_supported:
+                self._batch_size = None
             self._probe_status = status
             payload_capacity = max(262_144, len(probe_payload))
             exception_capacity = max(65_536, len(probe_payload))
@@ -213,13 +215,13 @@ class ProcessPool:
         self._pending.clear()
         self._resources = None
 
-    def _receive_probe(self) -> tuple[int, bytes]:
+    def _receive_probe(self) -> tuple[int, bytes, bool]:
         while True:
             if self._controls[0].poll(POLL_SECONDS):
-                kind, status, payload = self._controls[0].recv()
+                kind, status, payload, batch_supported = self._controls[0].recv()
                 if kind != "probe":
                     raise RuntimeError("worker returned an invalid probe response")
-                return status, payload
+                return status, payload, batch_supported
             self._check_worker(0, None)
 
     def _launch_worker(

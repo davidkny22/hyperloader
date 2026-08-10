@@ -166,6 +166,7 @@ class ProcessPoolTest(unittest.TestCase):
     def test_sequential_batch_uses_one_native_dispatch_per_result(self) -> None:
         loader = DataLoader(NumpyDataset(5), batch_size=2, num_workers=2, seed=23)
         try:
+            self.assertEqual(loader._process_pool.batch_size, 2)
             with mock.patch.object(
                 loader._process_pool,
                 "try_submit",
@@ -181,6 +182,16 @@ class ProcessPoolTest(unittest.TestCase):
         self.assertEqual(
             [call.kwargs["batch_len"] for call in submit.call_args_list], [2, 2, 1]
         )
+
+    def test_non_array_probe_retains_scalar_storage_transport(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=2, num_workers=2, seed=29)
+        try:
+            self.assertIsNone(loader._process_pool.batch_size)
+            batches = list(loader)
+        finally:
+            loader.close()
+
+        self.assertEqual(sum(batch["index"].numel() for batch in batches), 4)
 
     def test_numpy_batching_preserves_per_sample_rng(self) -> None:
         first = DataLoader(NumpyRandomDataset(), batch_size=2, num_workers=2, seed=29)
