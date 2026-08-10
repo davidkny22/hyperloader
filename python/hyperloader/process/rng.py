@@ -8,39 +8,43 @@ from typing import Any
 from hyperloader import _hyperloader
 
 
-def install_sample_rng(root_seed: int, epoch: int, position: int) -> int:
-    """Install the three seeded CPU globals and return the torch seed."""
-    torch_seed, random_seed, numpy_words = _hyperloader._sample_seed_words(
-        root_seed, epoch, position
-    )
-    import numpy as np
-    import torch
+class WorkerRngContext:
+    """Retain worker-local RNG and identity objects across sample installs."""
 
-    torch.default_generator.manual_seed(torch_seed)
-    random.seed(random_seed)
-    np.random.seed(np.asarray(numpy_words, dtype=np.uint32))
-    return torch_seed
+    def __init__(self, worker_id: int, worker_count: int, dataset: Any) -> None:
+        import numpy as np
+        import torch
+        from torch.utils.data._utils import worker as worker_module
 
+        self._torch_generator = torch.default_generator
+        self._random_seed = random.seed
+        self._numpy_seed = np.random.seed
+        self._worker_module = worker_module
+        self._worker_info_type = worker_module.WorkerInfo
+        self._worker_id = worker_id
+        self._worker_count = worker_count
+        self._dataset = dataset
+        self._install_worker_info(None)
 
-def set_worker_info(
-    worker_id: int,
-    worker_count: int,
-    seed: int | None,
-    dataset: Any,
-) -> None:
-    """Install torch's process-global worker view for the current sample."""
-    from torch.utils.data._utils import worker as worker_module
+    def install(self, root_seed: int, epoch: int, position: int) -> int:
+        """Install the three seeded CPU globals and the current worker seed."""
+        torch_seed, random_seed, numpy_words = _hyperloader._sample_seed_words(
+            root_seed, epoch, position
+        )
+        self._torch_generator.manual_seed(torch_seed)
+        self._random_seed(random_seed)
+        self._numpy_seed(numpy_words)
+        self._install_worker_info(torch_seed)
+        return torch_seed
 
-    worker_module._worker_info = worker_module.WorkerInfo(
-        id=worker_id,
-        num_workers=worker_count,
-        seed=seed,
-        dataset=dataset,
-    )
+    def _install_worker_info(self, seed: int | None) -> None:
+        self._worker_module._worker_info = self._worker_info_type(
+            id=self._worker_id,
+            num_workers=self._worker_count,
+            seed=seed,
+            dataset=self._dataset,
+        )
 
-
-def clear_worker_info() -> None:
-    """Release the worker-global dataset reference before process exit."""
-    from torch.utils.data._utils import worker as worker_module
-
-    worker_module._worker_info = None
+    def clear(self) -> None:
+        """Release the worker-global dataset reference before process exit."""
+        self._worker_module._worker_info = None

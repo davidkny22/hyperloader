@@ -144,12 +144,16 @@ class ProcessPool:
         if self._immediate and self._immediate[0][0] == worker:
             _, position, status, payload = self._immediate.popleft()
             return position, status, payload
-        if self._completion_signals[worker] == 0:
+        uses_completion_signals = self._batch_size is not None
+        if uses_completion_signals and self._completion_signals[worker] == 0:
             return None
         completion = self._resources.try_receive(worker)
-        if completion is None:
+        if completion is None and uses_completion_signals:
             raise RuntimeError("worker signaled a completion before publishing it")
-        self._completion_signals[worker] -= 1
+        if completion is None:
+            return None
+        if uses_completion_signals:
+            self._completion_signals[worker] -= 1
         self._pending.pop((worker, completion[0]), None)
         return completion
 

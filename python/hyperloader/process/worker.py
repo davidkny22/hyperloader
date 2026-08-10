@@ -12,7 +12,7 @@ from hyperloader import _hyperloader
 
 from .batching import encode_batch, supports_worker_batch
 from .parent_watchdog import start_parent_watchdog
-from .rng import clear_worker_info, install_sample_rng, set_worker_info
+from .rng import WorkerRngContext
 from .serialization import ResultEncoder
 
 BLACK_BOX_STAGE = 0
@@ -32,7 +32,7 @@ def worker_main(
     dataset, worker_init_fn = pickle.loads(dataset_payload)
     encoder = ResultEncoder()
     probe_value: Any = NO_PROBE_VALUE
-    set_worker_info(worker_id, worker_count, None, dataset)
+    rng_context = WorkerRngContext(worker_id, worker_count, dataset)
     try:
         startup_error = None
         try:
@@ -51,6 +51,7 @@ def worker_main(
                     epoch,
                     position,
                     index,
+                    rng_context,
                 )
                 if status == 0:
                     probe_value = result
@@ -78,9 +79,10 @@ def worker_main(
             startup_error,
             encoder,
             probe_values,
+            rng_context,
         )
     finally:
-        clear_worker_info()
+        rng_context.clear()
         control.close()
 
 
@@ -94,6 +96,7 @@ def run_commands(
     startup_error: tuple[int, bytes] | None,
     encoder: ResultEncoder,
     probe_values: list[Any],
+    rng_context: WorkerRngContext,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -123,6 +126,7 @@ def run_commands(
                 root_seed,
                 encoder,
                 probe_values,
+                rng_context,
             )
         publish_completion(control, endpoint, dispatch, result[0], result[1])
 
@@ -135,6 +139,7 @@ def evaluate_dispatch(
     root_seed: int,
     encoder: ResultEncoder,
     probe_values: list[Any],
+    rng_context: WorkerRngContext,
 ) -> tuple[int, bytes]:
     """Evaluate one sample command or one contiguous default-collation batch."""
     if dispatch.batch_len == 0:
@@ -146,6 +151,7 @@ def evaluate_dispatch(
             dispatch.epoch,
             dispatch.position,
             dispatch.index,
+            rng_context,
         )
         return (0, encoder.encode(value)) if status == 0 else (status, value)
 
@@ -163,6 +169,7 @@ def evaluate_dispatch(
             dispatch.epoch,
             position,
             position,
+            rng_context,
         )
         if status != 0:
             return status, value
@@ -181,11 +188,11 @@ def evaluate_sample(
     epoch: int,
     position: int,
     index: int,
+    rng_context: WorkerRngContext,
 ) -> tuple[int, Any]:
     """Run one black-box sample under its exact RNG and worker view."""
     try:
-        torch_seed = install_sample_rng(root_seed, epoch, position)
-        set_worker_info(worker_id, worker_count, torch_seed, dataset)
+        rng_context.install(root_seed, epoch, position)
         return 0, dataset[index]
     except BaseException as error:
         return encode_exception(error)
@@ -217,7 +224,8 @@ def publish_completion(
             else endpoint.try_complete_exception(dispatch, payload)
         )
         if complete:
-            control.send(("ready",))
+            if dispatch.batch_len:
+                control.send(("ready",))
             return
         if control.poll():
             command = control.recv()
