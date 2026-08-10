@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import unittest
 
+import torch
+from torchvision.io import decode_png, encode_png
+
 from hyperloader import AUTO, Collate, DataLoader, Decode, HyperConfig, Source, pipeline
 from hyperloader.config import DeterminismConfig, SchedulerConfig
-from hyperloader.decoder import select_decoder_pins
+from hyperloader.decoder import bind_decoder_selections, select_decoder_pins
 from hyperloader.decoder.pins import platform_pin
 
 
@@ -18,6 +21,11 @@ def decode_bytes(value: bytes) -> int:
 def collect(values: list[int]) -> list[int]:
     """Provide one stable collate stage."""
     return values
+
+
+def forbidden_user_decoder(_value: torch.Tensor) -> torch.Tensor:
+    """Fail if an opted-in stage bypasses its selected provider."""
+    raise AssertionError("the user decoder must not run after substitution")
 
 
 def _pipeline(*, codec: str | None = None, substitute: bool = False):
@@ -108,6 +116,66 @@ class DecoderSelectionTest(unittest.TestCase):
         finally:
             base.close()
             changed.close()
+
+    def test_bound_provider_executes_the_selected_png_decoder(self) -> None:
+        image = torch.arange(18, dtype=torch.uint8).reshape(3, 2, 3)
+        encoded = encode_png(image)
+        declared = pipeline(
+            Source([encoded], output_type=torch.Tensor),
+            Decode(
+                decode_bytes,
+                input_type=torch.Tensor,
+                output_type=torch.Tensor,
+                codec="png",
+                substitute=True,
+            ),
+            Collate(collect, input_type=torch.Tensor, output_type=list),
+        )
+        selections = select_decoder_pins(declared, AUTO, platform="win32")
+
+        bound = bind_decoder_selections(declared, selections)
+
+        self.assertTrue(torch.equal(bound[0], decode_png(encoded)))
+
+    def test_selected_provider_version_is_enforced_at_first_use(self) -> None:
+        declared = _pipeline(codec="png", substitute=True)
+        selections = select_decoder_pins(
+            declared,
+            {"png": "torchvision.io.decode_png@0.0.0"},
+            platform="win32",
+        )
+        bound = bind_decoder_selections(declared, selections)
+
+        with self.assertRaisesRegex(RuntimeError, "requires 0.0.0"):
+            bound[0]
+
+    def test_public_process_path_executes_the_selected_provider(self) -> None:
+        image = torch.arange(18, dtype=torch.uint8).reshape(3, 2, 3)
+        encoded = encode_png(image)
+        declared = pipeline(
+            Source([encoded], output_type=torch.Tensor),
+            Decode(
+                forbidden_user_decoder,
+                input_type=torch.Tensor,
+                output_type=torch.Tensor,
+                codec="png",
+                substitute=True,
+            ),
+            Collate(collect, input_type=torch.Tensor, output_type=list),
+        )
+        loader = DataLoader(
+            declared,
+            batch_size=1,
+            num_workers=1,
+            config=HyperConfig(scheduler=SchedulerConfig(profile_cache="off")),
+        )
+        try:
+            batches = list(loader)
+        finally:
+            loader.close()
+
+        self.assertEqual(len(batches), 1)
+        self.assertTrue(torch.equal(batches[0][0], decode_png(encoded)))
 
     def test_invalid_declarations_and_unmatched_overrides_raise(self) -> None:
         with self.assertRaisesRegex(ValueError, "explicit codec"):

@@ -9,7 +9,7 @@ from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
 from .constructor import validate_constructor
-from .decoder import select_decoder_pins
+from .decoder import bind_decoder_selections, select_decoder_pins
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
 from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_plan
@@ -128,6 +128,9 @@ class DataLoader:
         )
         self._decoder_selections = select_decoder_pins(
             dataset, resolved_config.determinism.decoder_pins
+        )
+        self._execution_dataset = bind_decoder_selections(
+            self._execution_dataset, self._decoder_selections
         )
         self._dataset_fingerprint = build_dataset_fingerprint(
             dataset, resolved_config.determinism.fingerprint
