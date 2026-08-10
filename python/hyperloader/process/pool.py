@@ -38,6 +38,7 @@ class ProcessPool:
         registry_path: str | Path | None = None,
         queue_capacity: int = 2,
         on_worker_death: str = "close",
+        batch_size: int | None = None,
     ) -> None:
         self._context = resolve_context(multiprocessing_context)
         self._timeout = timeout
@@ -46,6 +47,7 @@ class ProcessPool:
         self._on_worker_death = on_worker_death
         self._root_seed = root_seed
         self._worker_total = worker_count
+        self._batch_size = batch_size
         self._resources: Any = None
         self._controls: list[Connection] = []
         self._workers: list[mp.Process] = []
@@ -53,7 +55,7 @@ class ProcessPool:
         self._probe_status = 0
         self._probe_payload: bytes | None = None
         self._immediate: deque[tuple[int, int, int, bytes]] = deque()
-        self._pending: dict[tuple[int, int], tuple[int, int]] = {}
+        self._pending: dict[tuple[int, int], tuple[int, int, bool]] = {}
         self._dataset = dataset
         self._worker_init_fn = worker_init_fn
         self._decoder = ResultDecoder()
@@ -91,8 +93,19 @@ class ProcessPool:
         """Return the fixed number of persistent process workers."""
         return len(self._workers)
 
+    @property
+    def batch_size(self) -> int | None:
+        """Return the enabled homogeneous worker batch size."""
+        return self._batch_size
+
     def try_submit(
-        self, epoch: int, position: int, index: int, worker: int
+        self,
+        epoch: int,
+        position: int,
+        index: int,
+        worker: int,
+        *,
+        batch_end: bool = True,
     ) -> bool:
         """Attempt one targeted black-box dispatch without waiting for capacity."""
         if self._closed:
@@ -107,10 +120,10 @@ class ProcessPool:
             self._probe_payload = None
             return True
         accepted = self._resources.try_submit(
-            epoch, position, index, BLACK_BOX_STAGE, worker
+            epoch, position, index, BLACK_BOX_STAGE, worker, batch_end
         )
         if accepted:
-            self._pending[(worker, position)] = (epoch, index)
+            self._pending[(worker, position)] = (epoch, index, batch_end)
         return accepted
 
     def try_receive(self, worker: int) -> tuple[int, int, bytes] | None:
@@ -218,6 +231,7 @@ class ProcessPool:
                 self._worker_total,
                 self._root_seed,
                 probe,
+                self._batch_size,
             ),
             daemon=True,
         )
@@ -234,9 +248,9 @@ class ProcessPool:
         self._workers[worker] = process
         owner.send(("attach", self._resources.descriptor(worker)))
         for position in positions:
-            epoch, index = self._pending[(worker, position)]
+            epoch, index, batch_end = self._pending[(worker, position)]
             if not self._resources.try_submit(
-                epoch, position, index, BLACK_BOX_STAGE, worker
+                epoch, position, index, BLACK_BOX_STAGE, worker, batch_end
             ):
                 raise RuntimeError("replacement worker transport rejected recovered work")
         return positions

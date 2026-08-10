@@ -8,6 +8,7 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
+from .batching import unwrap_batch_payload
 from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .pool import POLL_SECONDS
@@ -34,6 +35,7 @@ class ProcessIterator(Iterator[Any]):
                 self._length,
                 depth,
                 loader._process_pool.worker_count,
+                loader._process_pool.batch_size or 1,
             )
             self._fill_frontier()
 
@@ -53,12 +55,9 @@ class ProcessIterator(Iterator[Any]):
                 self._position += 1
                 return self._next_sample(position)
             stop = min(self._position + batch_size, self._length)
-            batch = [
-                self._next_sample(position)
-                for position in range(self._position, stop)
-            ]
+            batch = self._next_batch(self._position, stop)
             self._position = stop
-            return self._loader._collate_batch(batch)
+            return batch
         except StopIteration:
             raise
         except WorkerDied:
@@ -68,6 +67,41 @@ class ProcessIterator(Iterator[Any]):
             raise
 
     def _next_sample(self, expected_position: int) -> Any:
+        status, payload, worker = self._next_completion(expected_position)
+        return self._loader._process_pool.decode(status, payload, worker)
+
+    def _next_batch(self, start: int, stop: int) -> Any:
+        pool = self._loader._process_pool
+        samples = []
+        saw_acknowledgement = False
+        materialized = None
+        saw_materialized = False
+        for position in range(start, stop):
+            status, payload, worker = self._next_completion(position)
+            if status != 0:
+                pool.decode(status, payload, worker)
+            if not payload:
+                saw_acknowledgement = True
+                continue
+            batch_payload = unwrap_batch_payload(payload)
+            if batch_payload is not None:
+                if position != stop - 1:
+                    raise RuntimeError(
+                        "worker batch payload arrived before its final position"
+                    )
+                materialized = pool.decode(status, batch_payload, worker)
+                saw_materialized = True
+                continue
+            if saw_acknowledgement:
+                raise RuntimeError("worker sample payload followed a batch acknowledgement")
+            samples.append(pool.decode(status, payload, worker))
+        if saw_materialized:
+            return materialized
+        if saw_acknowledgement:
+            raise RuntimeError("worker batch payload is missing")
+        return self._loader._collate_batch(samples)
+
+    def _next_completion(self, expected_position: int) -> tuple[int, bytes, int]:
         pool = self._loader._process_pool
         deadline = pool.deadline()
         while True:
@@ -78,7 +112,7 @@ class ProcessIterator(Iterator[Any]):
                     raise RuntimeError("scheduler committed a noncontiguous position")
                 status, payload, worker = self._ready.pop(position)
                 self._fill_frontier()
-                return pool.decode(status, payload, worker)
+                return status, payload, worker
             progressed = self._poll_completions()
             if not progressed:
                 pool.check_workers(deadline)
@@ -91,7 +125,17 @@ class ProcessIterator(Iterator[Any]):
             index = self._loader._plan.index(
                 self._loader.root_seed, self._epoch, position
             )
-            if not pool.try_submit(self._epoch, position, index, worker):
+            batch_size = pool.batch_size
+            batch_end = batch_size is None or (
+                (position + 1) % batch_size == 0 or position + 1 == self._length
+            )
+            if not pool.try_submit(
+                self._epoch,
+                position,
+                index,
+                worker,
+                batch_end=batch_end,
+            ):
                 return
             self._schedule.mark_dispatched(position, worker)
 

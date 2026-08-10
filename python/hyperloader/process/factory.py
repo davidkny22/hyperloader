@@ -14,6 +14,11 @@ def prepare_process_pool(loader: Any) -> None:
         return
     depth = frontier_depth(loader)
     probe_index = loader._plan.index(loader.root_seed, loader._epoch, 0)
+    batch_size = (
+        loader.batch_size
+        if loader.config.executor.on_worker_death == "close"
+        else None
+    )
     loader._process_pool = ProcessPool(
         loader.dataset,
         loader.num_workers,
@@ -26,4 +31,5 @@ def prepare_process_pool(loader: Any) -> None:
         timeout=loader.timeout,
         queue_capacity=queue_capacity(depth, loader.num_workers),
         on_worker_death=loader.config.executor.on_worker_death,
+        batch_size=batch_size,
     )

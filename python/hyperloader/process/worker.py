@@ -10,11 +10,13 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
+from .batching import ArrayBatcher
 from .parent_watchdog import start_parent_watchdog
 from .rng import clear_worker_info, install_sample_rng, set_worker_info
 from .serialization import ResultEncoder
 
 BLACK_BOX_STAGE = 0
+NO_PROBE_VALUE = object()
 
 
 def worker_main(
@@ -24,11 +26,13 @@ def worker_main(
     worker_count: int,
     root_seed: int,
     probe: tuple[int, int, int] | None,
+    batch_size: int | None,
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
     start_parent_watchdog()
     dataset, worker_init_fn = pickle.loads(dataset_payload)
     encoder = ResultEncoder()
+    probe_value: Any = NO_PROBE_VALUE
     set_worker_info(worker_id, worker_count, None, dataset)
     try:
         startup_error = None
@@ -40,9 +44,8 @@ def worker_main(
         if probe is not None:
             if startup_error is None:
                 epoch, position, index = probe
-                status, payload = execute_sample(
+                status, result = evaluate_sample(
                     dataset,
-                    encoder,
                     worker_id,
                     worker_count,
                     root_seed,
@@ -50,6 +53,11 @@ def worker_main(
                     position,
                     index,
                 )
+                if status == 0:
+                    probe_value = result
+                    payload = encoder.encode(result)
+                else:
+                    payload = result
             else:
                 status, payload = startup_error
             control.send(("probe", status, payload))
@@ -59,6 +67,9 @@ def worker_main(
         if command[0] != "attach":
             raise RuntimeError("worker received an invalid control command")
         endpoint = _hyperloader._WorkerEndpoint(*command[1])
+        batcher = ArrayBatcher(batch_size, encoder)
+        if probe_value is not NO_PROBE_VALUE:
+            batcher.seed_probe(probe_value)
         run_commands(
             control,
             endpoint,
@@ -67,7 +78,7 @@ def worker_main(
             worker_count,
             root_seed,
             startup_error,
-            encoder,
+            batcher,
         )
     finally:
         clear_worker_info()
@@ -82,7 +93,7 @@ def run_commands(
     worker_count: int,
     root_seed: int,
     startup_error: tuple[int, bytes] | None,
-    encoder: ResultEncoder,
+    batcher: ArrayBatcher,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -97,14 +108,15 @@ def run_commands(
             continue
         if startup_error is not None:
             status, payload = startup_error
+            completions = batcher.failure(dispatch, status, payload)
         elif dispatch.stage_plan != BLACK_BOX_STAGE:
             status, payload = encode_exception(
                 RuntimeError(f"unknown stage plan {dispatch.stage_plan}")
             )
+            completions = batcher.failure(dispatch, status, payload)
         else:
-            status, payload = execute_sample(
+            status, result = evaluate_sample(
                 dataset,
-                encoder,
                 worker_id,
                 worker_count,
                 root_seed,
@@ -112,24 +124,35 @@ def run_commands(
                 dispatch.position,
                 dispatch.index,
             )
-        publish_completion(control, endpoint, dispatch, status, payload)
+            completions = (
+                batcher.success(dispatch, result)
+                if status == 0
+                else batcher.failure(dispatch, status, result)
+            )
+        for completion in completions:
+            publish_completion(
+                control,
+                endpoint,
+                completion.dispatch,
+                completion.status,
+                completion.payload,
+            )
 
 
-def execute_sample(
+def evaluate_sample(
     dataset: Any,
-    encoder: ResultEncoder,
     worker_id: int,
     worker_count: int,
     root_seed: int,
     epoch: int,
     position: int,
     index: int,
-) -> tuple[int, bytes]:
+) -> tuple[int, Any]:
     """Run one black-box sample under its exact RNG and worker view."""
     try:
         torch_seed = install_sample_rng(root_seed, epoch, position)
         set_worker_info(worker_id, worker_count, torch_seed, dataset)
-        return 0, encoder.encode(dataset[index])
+        return 0, dataset[index]
     except BaseException as error:
         return encode_exception(error)
 

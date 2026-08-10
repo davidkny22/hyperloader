@@ -45,6 +45,10 @@ class ResultEncoder:
             return _envelope(TENSOR_VIEW, pickle.dumps(coordinates, protocol=5))
         return _envelope(PICKLE_VALUE, ForkingPickler.dumps(value, protocol=5))
 
+    def encode_uncached(self, value: Any) -> bytes:
+        """Encode one value without retaining its storage identity."""
+        return _envelope(PICKLE_VALUE, ForkingPickler.dumps(value, protocol=5))
+
 
 class ResultDecoder:
     """Reconstruct successful values and retain shared tensor storage owners."""

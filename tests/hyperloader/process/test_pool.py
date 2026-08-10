@@ -54,6 +54,38 @@ class PublicDataset:
         }
 
 
+class NumpyDataset:
+    """Return contiguous NumPy rows through the black-box public path."""
+
+    def __init__(self, length: int = 8) -> None:
+        self.values = np.arange(length * 4, dtype=np.int64).reshape(length, 4)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __getitem__(self, index: int) -> np.ndarray:
+        return self.values[index]
+
+
+class NumpyRandomDataset:
+    """Expose per-sample seeded NumPy draws in a homogeneous array."""
+
+    def __len__(self) -> int:
+        return 4
+
+    def __getitem__(self, index: int) -> np.ndarray:
+        return np.array([index, np.random.randint(0, 2**31)], dtype=np.int64)
+
+
+class NumpyFailureDataset(NumpyDataset):
+    """Raise between homogeneous rows to verify exact failure placement."""
+
+    def __getitem__(self, index: int) -> np.ndarray:
+        if index == 1:
+            raise ValueError("array position one failed")
+        return super().__getitem__(index)
+
+
 class DelayedDataset:
     """Record worker execution order while delaying one frontier head."""
 
@@ -114,6 +146,47 @@ class ProcessPoolTest(unittest.TestCase):
         for position, value in enumerate(first_values):
             expected_seed = _hyperloader._sample_seed_words(17, 0, position)[0]
             self.assertEqual(value["seed"], expected_seed)
+
+    def test_public_loader_batches_numpy_rows_and_partial_tail(self) -> None:
+        dataset = NumpyDataset(5)
+        loader = DataLoader(dataset, batch_size=2, num_workers=2, seed=19)
+        try:
+            batches = list(loader)
+        finally:
+            loader.close()
+
+        expected = [
+            torch.utils.data.default_collate([dataset[index] for index in range(0, 2)]),
+            torch.utils.data.default_collate([dataset[index] for index in range(2, 4)]),
+            torch.utils.data.default_collate([dataset[4]]),
+        ]
+        self.assertEqual(len(batches), len(expected))
+        self.assertTrue(all(torch.equal(left, right) for left, right in zip(batches, expected)))
+
+    def test_numpy_batching_preserves_per_sample_rng(self) -> None:
+        first = DataLoader(NumpyRandomDataset(), batch_size=2, num_workers=2, seed=29)
+        second = DataLoader(NumpyRandomDataset(), batch_size=2, num_workers=2, seed=29)
+        try:
+            first_batches = list(first)
+            second_batches = list(second)
+        finally:
+            first.close()
+            second.close()
+
+        self.assertTrue(
+            all(
+                torch.equal(left, right)
+                for left, right in zip(first_batches, second_batches)
+            )
+        )
+
+    def test_numpy_batching_retains_the_failing_sample_position(self) -> None:
+        loader = DataLoader(NumpyFailureDataset(), batch_size=2, num_workers=2, seed=31)
+        try:
+            with self.assertRaisesRegex(ValueError, "array position one failed"):
+                next(iter(loader))
+        finally:
+            loader.close()
 
     def test_worker_init_runs_once_with_no_sample_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
