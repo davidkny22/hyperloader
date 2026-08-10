@@ -134,6 +134,13 @@ class DataLoader:
         self._execution_dataset = bind_decoder_selections(
             self._execution_dataset, self._decoder_selections
         )
+        from .structured import bind_native_pipeline
+
+        self._execution_dataset = bind_native_pipeline(
+            self._execution_dataset,
+            shuffle=bool(shuffle),
+            worker_count=num_workers,
+        )
         self._dataset_fingerprint = build_dataset_fingerprint(
             dataset, resolved_config.determinism.fingerprint
         )
@@ -247,11 +254,15 @@ class DataLoader:
 
     def stats(self) -> dict[str, object]:
         """Return current telemetry and the latest completed epoch summary."""
-        return telemetry_snapshot(
+        snapshot = telemetry_snapshot(
             self._telemetry,
             self._last_controller_report,
             self._active_iterator_ref,
         )
+        memory_report = getattr(self._execution_dataset, "memory_report", None)
+        if memory_report is not None:
+            snapshot["memory"] = memory_report()
+        return snapshot
 
     @property
     def decoder_pins(self) -> tuple[dict[str, object], ...]:

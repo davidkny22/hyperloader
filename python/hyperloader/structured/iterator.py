@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..telemetry.delivery import build_delivery_telemetry
+from ..process.sizing import frontier_depth
 from .metrics import payload_bytes
 
 
@@ -23,6 +24,13 @@ class StructuredIterator(Iterator[Any]):
         self._complete = False
         self._valid = True
         self._delivery_telemetry = build_delivery_telemetry(loader)
+        begin_epoch = getattr(loader._execution_dataset, "begin_native_epoch", None)
+        if begin_epoch is not None:
+            batch_size = loader.batch_size or 1
+            retained_stop = (
+                min(batch_size, length) if loader._native_batch_probe is not None else 0
+            )
+            begin_epoch(length, frontier_depth(loader), retained_stop)
 
     def __iter__(self) -> StructuredIterator:
         return self

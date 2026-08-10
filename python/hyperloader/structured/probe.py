@@ -19,9 +19,13 @@ class NativeBatchProbe:
 
 def is_native_batch_path(loader: Any) -> bool:
     """Return whether the loader configuration admits owner-side batch execution."""
+    plan_enabled = isinstance(loader._plan, StructurePlan) and loader._plan.native_batch
+    adapter_enabled = bool(
+        getattr(loader._execution_dataset, "native_batch_enabled", False)
+    )
+    execution_enabled = adapter_enabled or not loader._sample_thread_safe
     return bool(
-        isinstance(loader._plan, StructurePlan)
-        and loader._plan.native_batch
+        (plan_enabled or adapter_enabled)
         and loader.batch_size is not None
         and isinstance(loader.num_workers, int)
         and loader.num_workers > 0
@@ -29,7 +33,7 @@ def is_native_batch_path(loader: Any) -> bool:
         and loader.batch_sampler is None
         and loader.collate_fn is None
         and loader.mode == "native"
-        and not loader._sample_thread_safe
+        and execution_enabled
     )
 
 

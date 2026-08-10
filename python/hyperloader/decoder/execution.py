@@ -92,7 +92,7 @@ def _image_input(value: Any) -> Any:
 
         return read_file(str(value))
     if isinstance(value, (bytes, bytearray, memoryview)):
-        return torch.tensor(list(value), dtype=torch.uint8)
+        return torch.frombuffer(value, dtype=torch.uint8)
     raise TypeError(
         "image decoder input must be encoded bytes, a path, or a uint8 tensor"
     )
