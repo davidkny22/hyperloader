@@ -25,6 +25,7 @@ pub struct EpochSummary {
     pub delivery_interval_ns: u64,
     pub delivery_latency_ns: [u64; 3],
     pub stall_events: u64,
+    pub gil_restore_events: u64,
     pub controller_decisions: Vec<ControllerRecord>,
     pub ceiling_binds: u64,
 }
@@ -46,6 +47,7 @@ pub struct Telemetry {
     delivery_interval_ns: AtomicU64,
     delivery_latency: LatencyHistogram,
     stall_events: AtomicU64,
+    gil_restore_events: AtomicU64,
     ceiling_binds: AtomicU64,
     controller_decisions: Mutex<Vec<ControllerRecord>>,
     last_epoch: Mutex<Option<EpochSummary>>,
@@ -68,6 +70,7 @@ impl Telemetry {
             delivery_interval_ns: AtomicU64::new(0),
             delivery_latency: LatencyHistogram::new(),
             stall_events: AtomicU64::new(0),
+            gil_restore_events: AtomicU64::new(0),
             ceiling_binds: AtomicU64::new(0),
             controller_decisions: Mutex::new(Vec::new()),
             last_epoch: Mutex::new(None),
@@ -120,6 +123,11 @@ impl Telemetry {
         self.stall_events.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record one observed transition from free-threaded to GIL-enabled execution.
+    pub fn record_gil_restore(&self) {
+        self.gil_restore_events.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Record one low-cadence controller decision.
     pub fn record_controller(&self, decision: ControllerRecord) {
         if decision.binding.is_some() {
@@ -163,6 +171,7 @@ impl Telemetry {
             delivery_interval_ns: self.delivery_interval_ns.load(Ordering::Relaxed),
             delivery_latency_ns: self.delivery_latency.percentiles(),
             stall_events: self.stall_events.load(Ordering::Relaxed),
+            gil_restore_events: self.gil_restore_events.load(Ordering::Relaxed),
             controller_decisions: self
                 .controller_decisions
                 .lock()
@@ -179,6 +188,7 @@ impl Telemetry {
         self.delivery_interval_ns.store(0, Ordering::Relaxed);
         self.delivery_latency.reset();
         self.stall_events.store(0, Ordering::Relaxed);
+        self.gil_restore_events.store(0, Ordering::Relaxed);
         self.ceiling_binds.store(0, Ordering::Relaxed);
         self.controller_decisions
             .lock()

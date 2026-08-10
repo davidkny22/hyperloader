@@ -86,6 +86,10 @@ impl PyTelemetry {
         self.recorder.record_stall();
     }
 
+    fn record_gil_restore(&self) {
+        self.recorder.record_gil_restore();
+    }
+
     #[pyo3(signature = (previous_width, width, reason, starvation, resource_loss, binding=None))]
     fn record_controller(
         &self,
@@ -159,6 +163,7 @@ fn summary_dict<'py>(py: Python<'py>, summary: &EpochSummary) -> PyResult<Bound<
     result.set_item("delivery_latency_ns", latency)?;
     result.set_item("delivery_rate", delivery_rate)?;
     result.set_item("epoch", summary.epoch)?;
+    result.set_item("gil_restore_events", summary.gil_restore_events)?;
     result.set_item("stall_events", summary.stall_events)?;
     Ok(result)
 }

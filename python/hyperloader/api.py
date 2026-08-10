@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import weakref
 import warnings
+import weakref
 from collections.abc import Iterator
 from typing import Any
 
@@ -100,6 +100,8 @@ class DataLoader:
                 )
         if mode not in {"native", "torch-compat"}:
             raise ValueError("mode must be native or torch-compat")
+        if not isinstance(thread_safe, bool):
+            raise TypeError("thread_safe must be a boolean declaration")
 
         resolved_config = config if config is not None else HyperConfig()
         if (
@@ -174,6 +176,7 @@ class DataLoader:
         self._epoch_state = EpochState()
         self._abandon_notice_emitted = False
         self._process_pool: Any = None
+        self._thread_pool: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
         self._cost_profile = build_cost_profile(self)
@@ -205,7 +208,7 @@ class DataLoader:
             raise RuntimeError(
                 "the requested hyperloader execution tier is not initialized"
             )
-        if self.mode != "native" or self.thread_safe:
+        if self.mode != "native":
             raise RuntimeError(
                 "the requested hyperloader execution mode is not initialized"
             )
@@ -231,6 +234,10 @@ class DataLoader:
             self.close()
         if isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
+        elif self.thread_safe:
+            from .thread import ThreadIterator
+
+            iterator = ThreadIterator(self)
         else:
             iterator = ProcessIterator(self)
         self._active_iterator_ref = weakref.ref(iterator)
@@ -258,6 +265,9 @@ class DataLoader:
         if getattr(self, "_process_pool", None) is not None:
             self._process_pool.close()
             self._process_pool = None
+        if getattr(self, "_thread_pool", None) is not None:
+            self._thread_pool.close()
+            self._thread_pool = None
 
     def stats(self) -> dict[str, object]:
         """Return current telemetry and the latest completed epoch summary."""
