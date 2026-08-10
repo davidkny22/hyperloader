@@ -7,9 +7,11 @@ from importlib.resources import files
 from typing import Any
 
 from .black_box import BlackBoxPlan, build_black_box_plan
+from .stages import StagePlan, build_stage_plan
 from .tensor import TensorPlan, build_tensor_plan
+from ..stages import Pipeline
 
-Plan = BlackBoxPlan | TensorPlan
+Plan = BlackBoxPlan | StagePlan | TensorPlan
 
 
 def _load_mappings() -> tuple[dict[str, str], ...]:
@@ -33,6 +35,8 @@ def _registered_plan(dataset: Any) -> str | None:
 
 def build_plan(dataset: Any, shuffle: bool | None) -> Plan | None:
     """Select a registered plan or the non-erroring black-box refuge."""
+    if isinstance(dataset, Pipeline):
+        return build_stage_plan(dataset, shuffle)
     registration = _registered_plan(dataset)
     if registration == "contiguous_tensor":
         return build_tensor_plan(dataset, shuffle)

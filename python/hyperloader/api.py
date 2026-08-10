@@ -9,11 +9,12 @@ from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
 from .epoch import EpochState
-from .planner import BlackBoxPlan, TensorPlan, build_plan
+from .planner import BlackBoxPlan, StagePlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
 from .profile import build_cost_profile
 from .telemetry import build_telemetry, telemetry_snapshot
+from .stages import Pipeline
 
 
 def _require_nonnegative_workers(num_workers: int | Auto) -> None:
@@ -87,6 +88,8 @@ class DataLoader:
             raise ValueError("batch_size must be a positive integer or None")
         if batch_size is None and drop_last:
             raise ValueError("batch_size=None is mutually exclusive with drop_last")
+        if isinstance(dataset, Pipeline) and collate_fn is not None:
+            raise ValueError("pipeline Collate is mutually exclusive with collate_fn")
 
         _require_nonnegative_workers(num_workers)
         if timeout < 0:
@@ -179,6 +182,19 @@ class DataLoader:
         self._thread_pool: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
+        if (
+            thread_safe
+            and isinstance(self._plan, StagePlan)
+            and not self._plan.sample_thread_safe
+        ):
+            raise ValueError(
+                "thread_safe=True conflicts with an isolated pipeline sample stage"
+            )
+        self._sample_thread_safe = (
+            self._plan.sample_thread_safe
+            if isinstance(self._plan, StagePlan)
+            else thread_safe
+        )
         self._cost_profile = build_cost_profile(self)
         self._calibration: Any = None
         self._controller: Any = None
@@ -188,14 +204,14 @@ class DataLoader:
             dict[str, int | float | str | bool | None] | None
         ) = None
         if (
-            isinstance(self._plan, BlackBoxPlan)
+            isinstance(self._plan, (BlackBoxPlan, StagePlan))
             and num_workers is not AUTO
             and num_workers > 0
             and sampler is None
             and batch_sampler is None
             and collate_fn is None
             and mode == "native"
-            and not thread_safe
+            and not self._sample_thread_safe
         ):
             prepare_process_pool(self)
 
@@ -234,7 +250,7 @@ class DataLoader:
             self.close()
         if isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
-        elif self.thread_safe:
+        elif self._sample_thread_safe:
             from .thread import ThreadIterator
 
             iterator = ThreadIterator(self)
@@ -279,6 +295,8 @@ class DataLoader:
 
     def _collate_batch(self, batch: list[Any]) -> Any:
         """Collate an engine-produced batch through the native contract mirror."""
+        if isinstance(self.dataset, Pipeline):
+            return self.dataset.collate(batch)
         from . import _hyperloader
 
         return _hyperloader._default_collate(batch)

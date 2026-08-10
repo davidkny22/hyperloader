@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..stages import Pipeline
 from .pool import ProcessPool
 from .sizing import frontier_budget, frontier_ceiling, frontier_minimum
 
@@ -25,6 +26,7 @@ def prepare_process_pool(loader: Any) -> None:
             and not loader._plan.shuffle
             and loader.batch_size is not None
             and loader.batch_size > 1
+            and not isinstance(loader.dataset, Pipeline)
         )
         else None
     )

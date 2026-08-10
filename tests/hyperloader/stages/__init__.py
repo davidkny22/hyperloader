@@ -1,0 +1,1 @@
+"""Typed stage API tests."""
