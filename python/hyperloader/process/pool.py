@@ -86,6 +86,7 @@ class ProcessPool:
                 self._frontier_ceiling = max(
                     frontier_minimum, min(frontier_ceiling, affordable)
                 )
+                self._frontier_budget_bound = self._frontier_ceiling < frontier_ceiling
                 from .sizing import queue_capacity as resolve_queue_capacity
 
                 command_ceiling = (
@@ -96,6 +97,7 @@ class ProcessPool:
                 queue_capacity = resolve_queue_capacity(command_ceiling, worker_count)
             else:
                 self._frontier_ceiling = frontier_ceiling or frontier_minimum
+                self._frontier_budget_bound = False
             batch_capacity = (
                 0
                 if self._batch_size is None or layout is None
@@ -145,6 +147,11 @@ class ProcessPool:
     def frontier_ceiling(self) -> int:
         """Return the probe-frozen frontier ceiling in per-rank samples."""
         return self._frontier_ceiling
+
+    @property
+    def frontier_budget_bound(self) -> bool:
+        """Return whether measured sample bytes reduced the formula ceiling."""
+        return self._frontier_budget_bound
 
     def try_submit(
         self,

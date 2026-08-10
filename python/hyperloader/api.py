@@ -173,6 +173,7 @@ class DataLoader:
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
         self._cost_profile = build_cost_profile(self)
+        self._last_frontier_report: dict[str, int | float | str] | None = None
         if (
             isinstance(self._plan, BlackBoxPlan)
             and num_workers is not AUTO

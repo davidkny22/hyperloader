@@ -60,4 +60,10 @@ class FactorConfig:
             _require_positive("factors.f_snap", self.f_snap)
         if self.alpha > 1:
             raise ValueError("factors.alpha must not exceed one")
+        if (
+            isinstance(self.growth_mult, bool)
+            or not isinstance(self.growth_mult, int)
+            or self.growth_mult <= 1
+        ):
+            raise ValueError("factors.growth_mult must be an integer greater than one")
         _require_nonnegative_int("factors.d_min", self.d_min)

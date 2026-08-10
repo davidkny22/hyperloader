@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from typing import Any
 
-from hyperloader import _hyperloader
-
 from .exceptions import WorkerDied
 from .factory import prepare_process_pool
-from .sizing import delivery_length, frontier_depth
+from .frontier import FrontierRuntime, binding_cause
+from .sizing import delivery_length, frontier_ceiling, frontier_depth
 
 
 class ProcessIterator(Iterator[Any]):
@@ -23,7 +23,7 @@ class ProcessIterator(Iterator[Any]):
         self._complete = False
         self._valid = True
         self._ready: dict[int, tuple[int, bytes, int]] = {}
-        self._schedule: Any = None
+        self._schedule: FrontierRuntime | None = None
         self._worker_batches = False
         if self._length:
             prepare_process_pool(loader)
@@ -40,11 +40,19 @@ class ProcessIterator(Iterator[Any]):
                 if batch_size is not None
                 else depth
             )
-            self._schedule = _hyperloader._StaticSchedule(
-                0,
+            ceiling = frontier_ceiling(loader)
+            schedule_ceiling = (
+                max(1, (ceiling + batch_size - 1) // batch_size)
+                if batch_size is not None
+                else ceiling
+            )
+            self._schedule = FrontierRuntime(
                 schedule_length,
                 schedule_depth,
+                schedule_ceiling,
                 loader._process_pool.worker_count,
+                loader.config.factors.growth_mult,
+                binding_cause(loader),
             )
             self._fill_frontier()
 
@@ -52,6 +60,15 @@ class ProcessIterator(Iterator[Any]):
         return self
 
     def __next__(self) -> Any:
+        started = time.perf_counter_ns()
+        try:
+            return self._next_value()
+        finally:
+            if self._schedule is not None:
+                self._schedule.record_active(time.perf_counter_ns() - started)
+
+    def _next_value(self) -> Any:
+        """Produce one value while the public wrapper records active loader time."""
         if not self._valid:
             raise RuntimeError("process iterator is no longer active")
         try:
@@ -113,7 +130,9 @@ class ProcessIterator(Iterator[Any]):
             progressed = self._poll_completions()
             if not progressed:
                 pool.check_workers(deadline)
+                wait_started = time.perf_counter_ns()
                 pool.wait_for_completion(deadline)
+                self._schedule.record_wait(time.perf_counter_ns() - wait_started)
 
     def _fill_frontier(self) -> None:
         pool = self._loader._process_pool
@@ -173,6 +192,8 @@ class ProcessIterator(Iterator[Any]):
     def _finish_epoch(self) -> None:
         if not self._complete:
             self._loader._epoch_state.complete(self._epoch)
+            if self._schedule is not None:
+                self._loader._last_frontier_report = self._schedule.report()
             self._complete = True
 
     @property

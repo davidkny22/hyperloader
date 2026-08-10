@@ -366,6 +366,9 @@ class ProcessPoolTest(unittest.TestCase):
             mean_ns, p999_ns, populated = statistics
             expected = max(2, math.ceil(2 * (p999_ns / mean_ns) * 1.5))
             self.assertEqual(frontier_depth(loader), expected)
+            report = loader._last_frontier_report
+            self.assertLessEqual(report["max_occupied"], report["ceiling"])
+            self.assertEqual(report["binding"], "cold-variance")
         finally:
             loader.close()
 

@@ -47,6 +47,10 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "alpha"):
             FactorConfig(alpha=1.1)
 
+    def test_frontier_growth_multiplier_must_make_progress(self) -> None:
+        with self.assertRaisesRegex(ValueError, "growth_mult"):
+            FactorConfig(growth_mult=1)
+
 
 if __name__ == "__main__":
     unittest.main()

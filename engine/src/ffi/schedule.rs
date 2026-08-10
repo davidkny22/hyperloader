@@ -48,6 +48,10 @@ impl PyStaticSchedule {
     fn occupied(&self) -> usize {
         self.schedule.occupied()
     }
+
+    fn set_depth(&mut self, depth: usize) -> PyResult<()> {
+        self.schedule.set_depth(depth).map_err(value_error)
+    }
 }
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {

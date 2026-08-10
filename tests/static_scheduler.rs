@@ -93,3 +93,22 @@ fn invalid_transitions_are_rejected() {
         .expect("completion accepted");
     assert!(schedule.mark_completed(dispatch).is_err());
 }
+
+#[test]
+fn depth_growth_admits_more_work_without_reordering_commit() {
+    let mut schedule = StaticSchedule::new(0, 5, 2, 2).expect("valid schedule");
+    let first = schedule.next_dispatch().expect("first dispatch");
+    schedule.mark_dispatched(first).expect("first accepted");
+    let second = schedule.next_dispatch().expect("second dispatch");
+    schedule.mark_dispatched(second).expect("second accepted");
+    assert_eq!(schedule.next_dispatch(), None);
+    assert!(schedule.set_depth(1).is_err());
+
+    schedule.set_depth(4).expect("growth accepted");
+    assert_eq!(schedule.next_dispatch().map(|item| item.position), Some(2));
+    schedule.mark_completed(second).expect("second completed");
+    assert_eq!(schedule.try_commit(), None);
+    schedule.mark_completed(first).expect("first completed");
+    assert_eq!(schedule.try_commit(), Some(0));
+    assert_eq!(schedule.try_commit(), Some(1));
+}

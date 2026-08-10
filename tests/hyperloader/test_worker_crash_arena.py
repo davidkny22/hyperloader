@@ -83,15 +83,19 @@ class WorkerCrashArenaGate(unittest.TestCase):
             iterator = iter(loader)
             original_pids = loader._process_pool.worker_pids
             mutation = (
-                mock.patch.object(ProcessPool, "_restart_worker", _reclaim_without_restart)
-                if os.environ.get("HYPERLOADER_WORKER_CRASH_MUTATION")
-                == "omit-restart"
+                mock.patch.object(
+                    ProcessPool, "_restart_worker", _reclaim_without_restart
+                )
+                if os.environ.get("HYPERLOADER_WORKER_CRASH_MUTATION") == "omit-restart"
                 else nullcontext()
             )
             try:
                 self.assertEqual(int(next(iterator).item()), 0)
-                with mutation, self.assertRaisesRegex(
-                    RuntimeError, r"worker 1 exited.*positions \[1\]"
+                with (
+                    mutation,
+                    self.assertRaisesRegex(
+                        RuntimeError, r"worker 1 exited.*positions \[1, 3\]"
+                    ),
                 ):
                     next(iterator)
                 replacement_pids = loader._process_pool.worker_pids
@@ -121,7 +125,7 @@ class WorkerCrashArenaGate(unittest.TestCase):
             try:
                 self.assertEqual(int(next(iterator).item()), 0)
                 with self.assertRaisesRegex(
-                    RuntimeError, r"closed after reclaiming positions \[1\]"
+                    RuntimeError, r"closed after reclaiming positions \[1, 3\]"
                 ):
                     next(iterator)
                 self.assertIsNone(loader._process_pool)

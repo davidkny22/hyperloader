@@ -142,4 +142,18 @@ impl StaticSchedule {
     pub fn occupied(&self) -> usize {
         self.positions.len()
     }
+
+    /// Change the frontier depth without evicting active positions.
+    pub fn set_depth(&mut self, depth: usize) -> Result<(), ScheduleError> {
+        let depth = u64::try_from(depth)
+            .map_err(|_| ScheduleError("frontier depth does not fit the position domain"))?;
+        if depth == 0 {
+            return Err(ScheduleError("frontier depth must be positive"));
+        }
+        if depth < self.positions.len() as u64 {
+            return Err(ScheduleError("frontier depth is below current occupancy"));
+        }
+        self.depth = depth;
+        Ok(())
+    }
 }
