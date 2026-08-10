@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 mod process;
 mod profile;
 mod schedule;
+mod telemetry;
 
 /// Return the package version embedded in the native extension.
 #[pyfunction]
@@ -125,5 +126,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     process::register(module)?;
     module.add_class::<profile::PyCostProfile>()?;
     module.add_class::<schedule::PyStaticSchedule>()?;
+    module.add_class::<telemetry::PyTelemetry>()?;
     Ok(())
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import weakref
 import warnings
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -13,6 +14,7 @@ from .planner import BlackBoxPlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
 from .profile import build_cost_profile
+from .telemetry import build_telemetry, telemetry_snapshot
 
 
 def _require_nonnegative_workers(num_workers: int | Auto) -> None:
@@ -66,6 +68,7 @@ class DataLoader:
         config: HyperConfig | None = None,
     ) -> None:
         """Validate and retain a loader configuration for plan construction."""
+        construction_started_ns = time.perf_counter_ns()
         if sampler is not None and shuffle:
             raise ValueError("sampler option is mutually exclusive with shuffle")
         if batch_sampler is not None and (
@@ -175,6 +178,8 @@ class DataLoader:
         self._cost_profile = build_cost_profile(self)
         self._calibration: Any = None
         self._controller: Any = None
+        self._telemetry = build_telemetry(resolved_config.telemetry.enabled)
+        self._construction_started_ns = construction_started_ns
         self._last_frontier_report: dict[str, int | float | str] | None = None
         self._last_controller_report: (
             dict[str, int | float | str | bool | None] | None
@@ -255,9 +260,8 @@ class DataLoader:
             self._process_pool = None
 
     def stats(self) -> dict[str, object]:
-        """Return the latest controller diagnosis snapshot."""
-        report = self._last_controller_report
-        return {"controller": None if report is None else dict(report)}
+        """Return current telemetry and the latest completed epoch summary."""
+        return telemetry_snapshot(self._telemetry, self._last_controller_report)
 
     def _collate_batch(self, batch: list[Any]) -> Any:
         """Collate an engine-produced batch through the native contract mirror."""

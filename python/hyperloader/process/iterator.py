@@ -10,6 +10,7 @@ from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .frontier import FrontierRuntime, binding_cause
 from .sizing import delivery_length, frontier_ceiling, frontier_depth
+from ..telemetry.delivery import build_delivery_telemetry
 
 
 class ProcessIterator(Iterator[Any]):
@@ -26,6 +27,7 @@ class ProcessIterator(Iterator[Any]):
         self._schedule: FrontierRuntime | None = None
         self._worker_batches = False
         self._last_delivery_ns = time.perf_counter_ns()
+        self._delivery_telemetry = build_delivery_telemetry(loader)
         if self._length:
             prepare_process_pool(loader)
             depth = frontier_depth(loader)
@@ -64,8 +66,17 @@ class ProcessIterator(Iterator[Any]):
 
     def __next__(self) -> Any:
         started = time.perf_counter_ns()
+        previous_position = self._position
         try:
-            return self._next_value()
+            value = self._next_value()
+            if self._delivery_telemetry is not None:
+                samples = self._position - previous_position
+                self._delivery_telemetry.record_delivery(
+                    samples,
+                    self._loader._process_pool.bytes_sample * samples,
+                    started,
+                )
+            return value
         finally:
             if self._schedule is not None:
                 self._schedule.record_active(time.perf_counter_ns() - started)
@@ -139,6 +150,8 @@ class ProcessIterator(Iterator[Any]):
                 wait_started = time.perf_counter_ns()
                 pool.wait_for_completion(deadline)
                 self._schedule.record_wait(time.perf_counter_ns() - wait_started)
+                if self._delivery_telemetry is not None:
+                    self._delivery_telemetry.record_stall()
 
     def _fill_frontier(self) -> None:
         pool = self._loader._process_pool
@@ -217,6 +230,8 @@ class ProcessIterator(Iterator[Any]):
 
         self._schedule.set_worker_count(decision.width)
         self._loader._last_controller_report = decision_report(decision)
+        if self._delivery_telemetry is not None:
+            self._delivery_telemetry.record_controller(decision)
 
     def _poll_completions(self) -> bool:
         pool = self._loader._process_pool
@@ -252,6 +267,8 @@ class ProcessIterator(Iterator[Any]):
             self._loader._epoch_state.complete(self._epoch)
             if self._schedule is not None:
                 self._loader._last_frontier_report = self._schedule.report()
+            if self._delivery_telemetry is not None:
+                self._delivery_telemetry.finish_epoch(self._epoch)
             self._complete = True
 
     @property
