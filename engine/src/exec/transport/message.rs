@@ -10,6 +10,7 @@ const DISPATCH_KIND: u8 = 1;
 const COMPLETION_KIND: u8 = 2;
 const READY_STATUS: u8 = 1;
 const EXCEPTION_STATUS: u8 = 2;
+const BATCH_STATUS: u8 = 3;
 const SIDE_PRESENT: u8 = 1;
 
 /// One scheduler-to-worker command.
@@ -38,6 +39,8 @@ pub struct DispatchMessage {
 pub enum CompletionStatus {
     /// The primary slot contains a produced payload.
     Ready,
+    /// The primary slot contains one raw in-place batch.
+    ReadyBatch,
     /// User code raised and the exception payload occupies the side slab.
     Exception,
 }
@@ -111,6 +114,7 @@ pub(super) fn encode_completion(
     }
     let (status, flags) = match (message.status, message.exception) {
         (CompletionStatus::Ready, None) => (READY_STATUS, 0),
+        (CompletionStatus::ReadyBatch, None) => (BATCH_STATUS, 0),
         (CompletionStatus::Exception, Some(exception)) => {
             validate_exception(exception).map_err(TransportError::InvalidMessage)?;
             if message.produced_length != 0 {
@@ -154,6 +158,12 @@ pub(super) fn decode_completion(
                 return Err("ready side slab");
             }
             (CompletionStatus::Ready, None)
+        }
+        (BATCH_STATUS, 0) => {
+            if frame[80..].iter().any(|byte| *byte != 0) {
+                return Err("batch side slab");
+            }
+            (CompletionStatus::ReadyBatch, None)
         }
         (EXCEPTION_STATUS, SIDE_PRESENT) => {
             if produced_length != 0 {

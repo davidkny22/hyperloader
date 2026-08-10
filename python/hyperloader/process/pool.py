@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-import multiprocessing as mp
-import sys
 import time
 from collections import deque
-from multiprocessing.connection import Connection, wait
+from multiprocessing.connection import wait
 from pathlib import Path
 from typing import Any
 
 from hyperloader import _hyperloader
 
-from .exceptions import WorkerDied, reraise_worker_exception
-from .serialization import ResultDecoder, encode_multiprocessing
-from .worker import BLACK_BOX_STAGE, worker_main
+from .batching import BatchLayout, decode_batch
+from .exceptions import reraise_worker_exception
+from .recovery import check_worker, restart_worker
+from .serialization import ResultDecoder
+from .worker import BLACK_BOX_STAGE
+from .worker_set import WorkerSet, resolve_context
 
 POLL_SECONDS = 0.005
-SHUTDOWN_SECONDS = 5.0
 
 
 class ProcessPool:
@@ -40,38 +40,42 @@ class ProcessPool:
         on_worker_death: str = "close",
         batch_size: int | None = None,
     ) -> None:
-        self._context = resolve_context(multiprocessing_context)
+        context = resolve_context(multiprocessing_context)
         self._timeout = timeout
         self._closed = False
         self._next_worker = 0
         self._on_worker_death = on_worker_death
-        self._root_seed = root_seed
-        self._worker_total = worker_count
-        self._completion_stride = batch_size
         self._batch_size = batch_size
+        self._batch_layout: BatchLayout | None = None
         self._resources: Any = None
-        self._controls: list[Connection] = []
-        self._workers: list[mp.Process] = []
+        self._worker_set = WorkerSet(
+            context,
+            dataset,
+            worker_init_fn,
+            worker_count,
+            root_seed,
+            batch_size,
+        )
         self._completion_signals = [0] * worker_count
         self._probe_key = (probe_epoch, probe_position, probe_index)
         self._probe_status = 0
         self._probe_payload: bytes | None = None
         self._immediate: deque[tuple[int, int, int, bytes]] = deque()
         self._pending: dict[tuple[int, int], tuple[int, int, int]] = {}
-        self._dataset = dataset
-        self._worker_init_fn = worker_init_fn
         self._decoder = ResultDecoder()
         try:
-            for worker_id in range(worker_count):
-                probe = self._probe_key if worker_id == 0 else None
-                owner, process = self._launch_worker(worker_id, probe)
-                self._controls.append(owner)
-                self._workers.append(process)
-            status, probe_payload, batch_supported = self._receive_probe()
-            if not batch_supported:
+            self._worker_set.launch_all(self._probe_key)
+            status, probe_payload, layout = self._receive_probe()
+            self._batch_layout = layout
+            if layout is None:
                 self._batch_size = None
             self._probe_status = status
-            payload_capacity = max(262_144, len(probe_payload))
+            batch_capacity = (
+                0
+                if self._batch_size is None or layout is None
+                else self._batch_size * layout[2] + 65_536
+            )
+            payload_capacity = max(262_144, len(probe_payload), batch_capacity)
             exception_capacity = max(65_536, len(probe_payload))
             self._resources = _hyperloader._ProcessResources(
                 worker_count,
@@ -80,8 +84,7 @@ class ProcessPool:
                 exception_capacity,
                 None if registry_path is None else Path(registry_path),
             )
-            for worker_id, control in enumerate(self._controls):
-                control.send(("attach", self._resources.descriptor(worker_id)))
+            self._worker_set.attach_all(self._resources, self._batch_layout)
             self._probe_payload = probe_payload
         except BaseException:
             self.close()
@@ -91,13 +94,15 @@ class ProcessPool:
     def worker_pids(self) -> tuple[int, ...]:
         """Return stable process identifiers for liveness tests and diagnosis."""
         return tuple(
-            process.pid for process in self._workers if process.pid is not None
+            process.pid
+            for process in self._worker_set.processes
+            if process.pid is not None
         )
 
     @property
     def worker_count(self) -> int:
         """Return the fixed number of persistent process workers."""
-        return len(self._workers)
+        return len(self._worker_set.processes)
 
     @property
     def batch_size(self) -> int | None:
@@ -164,12 +169,20 @@ class ProcessPool:
             return self._decoder.decode(payload, worker)
         reraise_worker_exception(payload, worker)
 
+    def decode_batch(self, status: int, payload: Any, worker: int) -> Any:
+        """Deliver one raw in-place batch or decode its compatibility fallback."""
+        if status == 2:
+            if self._batch_layout is None:
+                raise RuntimeError("raw batch completion has no probed layout")
+            return decode_batch(payload, self._batch_layout)
+        return self.decode(status, payload, worker)
+
     def execute(self, epoch: int, position: int, index: int) -> Any:
         """Execute one black-box sample and reconstruct its result or exception."""
         if self._closed:
             raise RuntimeError("process pool is closed")
         worker = self._next_worker
-        self._next_worker = (self._next_worker + 1) % len(self._workers)
+        self._next_worker = (self._next_worker + 1) % self.worker_count
         deadline = None if self._timeout == 0 else time.monotonic() + self._timeout
         while not self.try_submit(epoch, position, index, worker):
             self._check_worker(worker, deadline)
@@ -192,7 +205,7 @@ class ProcessPool:
 
     def check_workers(self, deadline: float | None) -> None:
         """Validate every process and the consumer timeout deadline."""
-        for worker in range(len(self._workers)):
+        for worker in range(self.worker_count):
             self._check_worker(worker, deadline)
 
     def wait_for_completion(self, deadline: float | None) -> bool:
@@ -200,21 +213,23 @@ class ProcessPool:
         timeout = POLL_SECONDS
         if deadline is not None:
             timeout = max(0.0, min(timeout, deadline - time.monotonic()))
-        ready = wait(self._controls, timeout)
+        ready = wait(self._worker_set.controls, timeout)
         observed = False
-        for worker, control in enumerate(self._controls):
+        for worker, control in enumerate(self._worker_set.controls):
             if control not in ready:
                 continue
-            while control.poll():
-                try:
+            try:
+                while control.poll():
                     message = control.recv()
-                except EOFError:
-                    break
-                if message != ("ready",):
-                    raise RuntimeError("worker returned an invalid completion signal")
-                if self._batch_size is not None:
-                    self._completion_signals[worker] += 1
-                observed = True
+                    if message != ("ready",):
+                        raise RuntimeError(
+                            "worker returned an invalid completion signal"
+                        )
+                    if self._batch_size is not None:
+                        self._completion_signals[worker] += 1
+                    observed = True
+            except (BrokenPipeError, EOFError, OSError):
+                self._check_worker(worker, deadline)
         return observed
 
     def close(self) -> None:
@@ -222,16 +237,7 @@ class ProcessPool:
         if self._closed:
             return
         self._closed = True
-        for control in self._controls:
-            try:
-                control.send(("stop",))
-            except (BrokenPipeError, EOFError, OSError):
-                pass
-        for process in self._workers:
-            process.join(SHUTDOWN_SECONDS)
-            if process.is_alive():
-                process.terminate()
-                process.join(SHUTDOWN_SECONDS)
+        self._worker_set.close()
         self._release_handles()
 
     def abort(self) -> None:
@@ -239,107 +245,30 @@ class ProcessPool:
         if self._closed:
             return
         self._closed = True
-        for process in self._workers:
-            if process.is_alive():
-                process.terminate()
-        for process in self._workers:
-            process.join(SHUTDOWN_SECONDS)
+        self._worker_set.abort()
         self._release_handles()
 
     def _release_handles(self) -> None:
         """Close controls and drop native owners after every shutdown mode."""
-        for control in self._controls:
-            control.close()
-        self._controls.clear()
-        self._workers.clear()
         self._completion_signals.clear()
         self._pending.clear()
         self._resources = None
 
-    def _receive_probe(self) -> tuple[int, bytes, bool]:
+    def _receive_probe(self) -> tuple[int, bytes, BatchLayout | None]:
         while True:
-            if self._controls[0].poll(POLL_SECONDS):
-                kind, status, payload, batch_supported = self._controls[0].recv()
+            control = self._worker_set.controls[0]
+            if control.poll(POLL_SECONDS):
+                kind, status, payload, layout = control.recv()
                 if kind != "probe":
                     raise RuntimeError("worker returned an invalid probe response")
-                return status, payload, batch_supported
+                return status, payload, layout
             self._check_worker(0, None)
 
-    def _launch_worker(
-        self, worker: int, probe: tuple[int, int, int] | None
-    ) -> tuple[Connection, mp.Process]:
-        owner, child = self._context.Pipe(duplex=True)
-        process = self._context.Process(
-            target=worker_main,
-            args=(
-                child,
-                encode_multiprocessing((self._dataset, self._worker_init_fn)),
-                worker,
-                self._worker_total,
-                self._root_seed,
-                self._completion_stride,
-                probe,
-            ),
-            daemon=True,
-        )
-        process.start()
-        child.close()
-        return owner, process
-
     def _restart_worker(self, worker: int) -> list[int]:
-        positions = sorted(self._resources.restart_worker(worker))
-        self._workers[worker].join(0)
-        self._controls[worker].close()
-        owner, process = self._launch_worker(worker, None)
-        self._controls[worker] = owner
-        self._workers[worker] = process
-        self._completion_signals[worker] = 0
-        owner.send(("attach", self._resources.descriptor(worker)))
-        for position in positions:
-            epoch, index, batch_len = self._pending[(worker, position)]
-            if not self._resources.try_submit(
-                epoch,
-                position,
-                index,
-                BLACK_BOX_STAGE,
-                worker,
-                batch_len,
-            ):
-                raise RuntimeError(
-                    "replacement worker transport rejected recovered work"
-                )
-        return positions
+        return restart_worker(self, worker)
 
     def _check_worker(self, worker: int, deadline: float | None) -> None:
-        process = self._workers[worker]
-        if not process.is_alive():
-            exitcode = process.exitcode
-            positions: list[int] = []
-            if self._resources is not None:
-                if self._on_worker_death == "restart":
-                    positions = self._restart_worker(worker)
-                    raise WorkerDied(
-                        f"hyperloader worker {worker} exited with code {exitcode}; "
-                        f"restarted after reclaiming positions {positions}"
-                    )
-                positions = self._resources.reclaim_dead_worker(worker)
-            self.abort()
-            raise RuntimeError(
-                f"hyperloader worker {worker} exited with code {exitcode}; "
-                f"closed after reclaiming positions {positions}"
-            )
-        if deadline is not None and time.monotonic() >= deadline:
-            self.abort()
-            raise RuntimeError(f"DataLoader timed out after {self._timeout} seconds")
+        check_worker(self, worker, deadline)
 
     def __del__(self) -> None:
         self.close()
-
-
-def resolve_context(requested: Any) -> Any:
-    """Resolve an explicit context or the spawn-safe platform default."""
-    if requested is not None:
-        return mp.get_context(requested) if isinstance(requested, str) else requested
-    if sys.platform in {"win32", "darwin"}:
-        return mp.get_context("spawn")
-    return mp.get_context("forkserver")

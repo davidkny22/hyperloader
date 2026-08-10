@@ -50,6 +50,22 @@ fn completion_decoder_rejects_status_and_length_corruption() {
     assert_eq!(decode_completion(&bad_length), Err("produced length"));
 }
 
+#[test]
+fn raw_batch_completion_round_trips_its_distinct_status() {
+    let message = CompletionMessage {
+        position: 5,
+        worker: 1,
+        status: CompletionStatus::ReadyBatch,
+        slot: slot(),
+        produced_length: 64,
+        exception: None,
+    };
+
+    let frame = encode_completion(message).expect("batch completion frame");
+
+    assert_eq!(decode_completion(&frame), Ok(message));
+}
+
 fn slot() -> SlotRef {
     SlotRef {
         region_sequence: 4,

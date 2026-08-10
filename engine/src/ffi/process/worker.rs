@@ -5,6 +5,8 @@ use crate::exec::{
     CommandTransport, CompletionMessage, CompletionStatus, DispatchMessage, ExceptionRef,
     TransportError,
 };
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::PyBufferError;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -97,6 +99,41 @@ impl WorkerEndpoint {
             status: CompletionStatus::Ready,
             slot: command.message.slot,
             produced_length: payload.len() as u64,
+            exception: None,
+        })
+    }
+
+    /// Copy one contiguous row into its offset within the assigned batch slot.
+    fn write_batch_row(
+        &mut self,
+        command: &WorkerCommand,
+        row_offset: usize,
+        payload: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let buffer = PyBuffer::<u8>::get(payload)?;
+        if !buffer.is_c_contiguous() {
+            return Err(PyBufferError::new_err(
+                "batch row buffer must be contiguous",
+            ));
+        }
+        // SAFETY: the GIL remains held, the supplied byte-cast memoryview owns its exporter,
+        // and the copy completes before either Python object or its buffer can be released.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(buffer.buf_ptr().cast::<u8>(), buffer.len_bytes())
+        };
+        self.writer
+            .write_at(command.message.slot, row_offset, bytes)
+            .map_err(runtime_error)
+    }
+
+    /// Publish one raw batch already materialized inside the assigned slot.
+    fn try_complete_batch(&self, command: &WorkerCommand, produced_length: u64) -> PyResult<bool> {
+        self.try_complete(CompletionMessage {
+            position: command.message.position,
+            worker: command.message.worker,
+            status: CompletionStatus::ReadyBatch,
+            slot: command.message.slot,
+            produced_length,
             exception: None,
         })
     }

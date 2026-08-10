@@ -1,6 +1,7 @@
 """Cross-language tests for native sample RNG derivation."""
 
 import itertools
+import struct
 import unittest
 
 from hyperloader import _hyperloader
@@ -10,7 +11,8 @@ from .rng_reference import (
     materialized_permutation,
     permutation_index,
     philox4x32_10,
-    sample_seed_words,
+    mt19937_state,
+    sample_torch_seed,
 )
 
 
@@ -28,7 +30,7 @@ class RngContractTest(unittest.TestCase):
         epochs = (0, 1, (1 << 32) - 1)
         coordinates = (0, 1, (1 << 32) - 1, 1 << 32, (1 << 64) - 1)
         draws = (0, 1, 2, (1 << 32) - 1)
-        streams = (0, 1, 4, 5, 6)
+        streams = (0, 1, 4, 5, 6, 7, 8)
 
         for arguments in itertools.product(
             root_seeds, epochs, coordinates, draws, streams
@@ -36,20 +38,29 @@ class RngContractTest(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 self.assertEqual(_hyperloader._rng_block(*arguments), block(*arguments))
 
-    def test_reserved_seed_words_match_reference(self) -> None:
+    def test_sample_rng_states_match_reference(self) -> None:
         cases = ((0, 0, 0), (1, 7, 19), ((1 << 64) - 1, (1 << 32) - 1, (1 << 64) - 1))
 
         for arguments in cases:
             with self.subTest(arguments=arguments):
-                self.assertEqual(
-                    _hyperloader._sample_seed_words(*arguments),
-                    sample_seed_words(*arguments),
+                torch_seed, random_bytes, numpy_bytes = _hyperloader._sample_rng_states(
+                    *arguments
                 )
+                random_state = struct.unpack("=625I", random_bytes)
+                numpy_state = struct.unpack("=624I", numpy_bytes)
+
+                self.assertEqual(torch_seed, sample_torch_seed(*arguments))
+                self.assertEqual(random_state[:-1], mt19937_state(*arguments, 7))
+                self.assertEqual(random_state[-1], 624)
+                self.assertEqual(numpy_state, mt19937_state(*arguments, 8))
 
     def test_named_streams_are_separated(self) -> None:
-        blocks = {_hyperloader._rng_block(11, 3, 29, 2, stream) for stream in (0, 1, 4, 5, 6)}
+        blocks = {
+            _hyperloader._rng_block(11, 3, 29, 2, stream)
+            for stream in (0, 1, 4, 5, 6, 7, 8)
+        }
 
-        self.assertEqual(len(blocks), 5)
+        self.assertEqual(len(blocks), 7)
 
     def test_large_permutations_match_reference(self) -> None:
         domains = (1 << 17, (1 << 17) + 1, 300_000, 1 << 20, 1_000_000_007)

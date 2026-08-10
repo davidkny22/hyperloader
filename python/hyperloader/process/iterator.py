@@ -94,7 +94,7 @@ class ProcessIterator(Iterator[Any]):
 
     def _next_worker_batch(self, ordinal: int) -> Any:
         status, payload, worker = self._next_completion(ordinal)
-        return self._loader._process_pool.decode(status, payload, worker)
+        return self._loader._process_pool.decode_batch(status, payload, worker)
 
     def _next_completion(self, expected_position: int) -> tuple[int, bytes, int]:
         pool = self._loader._process_pool

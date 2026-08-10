@@ -45,7 +45,8 @@ def _write_report(
         "trials": str(trials),
         "iterations": "100000",
         "warmup_iterations": "10000",
-        "sample_derivation_blocks": "2",
+        "sample_derivation_blocks": "1",
+        "state_synthesis_blocks": "312",
         "feistel_rounds": "8",
     }
     with path.open("w", newline="", encoding="utf-8") as stream:
@@ -118,9 +119,7 @@ class RngFloorHarnessTest(unittest.TestCase):
         self.assertEqual(result["decision"], "FAIL")
 
     def test_nonperformance_governor_is_rejected(self) -> None:
-        _write_report(
-            self.performance_path, "perf", 19, governor="powersave"
-        )
+        _write_report(self.performance_path, "perf", 19, governor="powersave")
         with self.assertRaisesRegex(ValueError, "governor"):
             analyzer.validate_report(
                 analyzer.parse_report(self.performance_path), "perf", 19
@@ -153,7 +152,8 @@ class RngFloorHarnessTest(unittest.TestCase):
     def test_contract_metadata_assumptions_are_rejected(self) -> None:
         report = analyzer.parse_report(self.performance_path)
         cases = (
-            ("sample_derivation_blocks", "1", "two Philox blocks"),
+            ("sample_derivation_blocks", "2", "one Philox block"),
+            ("state_synthesis_blocks", "311", "312 Philox blocks"),
             ("feistel_rounds", "7", "eight Feistel rounds"),
             ("iterations", "99999", "repetition count"),
         )

@@ -1,6 +1,7 @@
 use _hyperloader::rng::{
-    FEISTEL_THRESHOLD, SAMPLE_STREAM, block, feistel_permute, key64, permutation_index,
-    philox4x32_10, sample_seed_words, splitmix64,
+    FEISTEL_THRESHOLD, SAMPLE_STREAM, STATE_NUMPY_STREAM, STATE_RANDOM_STREAM, block,
+    feistel_permute, key64, mt19937_state, permutation_index, philox4x32_10, sample_torch_seed,
+    splitmix64,
 };
 
 #[test]
@@ -19,13 +20,15 @@ fn splitmix_is_a_bare_finalizer() {
 }
 
 #[test]
-fn sample_seed_words_use_the_two_reserved_draws() {
-    let (torch_seed, random_seed, numpy) = sample_seed_words(11, 3, 29);
+fn sample_rng_material_uses_separated_streams() {
+    let torch_seed = sample_torch_seed(11, 3, 29);
     let globals = block(11, 3, 29, 0, SAMPLE_STREAM);
     assert_eq!(torch_seed, globals[0] as u64 | ((globals[1] as u64) << 32));
-    assert_eq!(random_seed, globals[2] as u64 | ((globals[3] as u64) << 32));
-    assert_eq!(numpy, block(11, 3, 29, 1, SAMPLE_STREAM));
-    assert_ne!(numpy, block(11, 3, 29, 2, SAMPLE_STREAM));
+    let random = mt19937_state(11, 3, 29, STATE_RANDOM_STREAM);
+    let numpy = mt19937_state(11, 3, 29, STATE_NUMPY_STREAM);
+    assert_eq!(&random[..4], &block(11, 3, 29, 0, STATE_RANDOM_STREAM));
+    assert_eq!(&numpy[..4], &block(11, 3, 29, 0, STATE_NUMPY_STREAM));
+    assert_ne!(random, numpy);
 }
 
 #[test]

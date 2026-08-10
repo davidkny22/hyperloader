@@ -14,5 +14,6 @@ pub use placement::{
 };
 pub use streams::{
     ACCESSOR_NUMPY_STREAM, ACCESSOR_RANDOM_STREAM, ACCESSOR_TORCH_STREAM, COLLATE_STREAM,
-    SAMPLE_STREAM, block, key64, sample_seed_words, splitmix64,
+    SAMPLE_STREAM, STATE_NUMPY_STREAM, STATE_RANDOM_STREAM, block, key64, mt19937_state,
+    sample_rng_states, sample_torch_seed, splitmix64,
 };

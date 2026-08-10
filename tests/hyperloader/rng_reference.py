@@ -26,7 +26,9 @@ def key64(root_seed: int, epoch: int) -> int:
     return splitmix64(root_seed) ^ splitmix64(epoch_tag)
 
 
-def philox4x32_10(counter: tuple[int, int, int, int], key: tuple[int, int]) -> tuple[int, int, int, int]:
+def philox4x32_10(
+    counter: tuple[int, int, int, int], key: tuple[int, int]
+) -> tuple[int, int, int, int]:
     """Evaluate the ten Random123 Philox4x32 rounds without mutable global state."""
     words = tuple(word & MASK32 for word in counter)
     key0, key1 = (word & MASK32 for word in key)
@@ -47,7 +49,9 @@ def philox4x32_10(counter: tuple[int, int, int, int], key: tuple[int, int]) -> t
     return words
 
 
-def block(root_seed: int, epoch: int, coord: int, draw_index: int, stream_id: int) -> tuple[int, int, int, int]:
+def block(
+    root_seed: int, epoch: int, coord: int, draw_index: int, stream_id: int
+) -> tuple[int, int, int, int]:
     """Derive one block using hyperloader's key and counter layout."""
     key = key64(root_seed, epoch)
     return philox4x32_10(
@@ -56,13 +60,25 @@ def block(root_seed: int, epoch: int, coord: int, draw_index: int, stream_id: in
     )
 
 
-def sample_seed_words(root_seed: int, epoch: int, coord: int) -> tuple[int, int, tuple[int, int, int, int]]:
-    """Return the torch, Python random, and NumPy seed material."""
+def sample_torch_seed(root_seed: int, epoch: int, coord: int) -> int:
+    """Return the torch seed material reserved in the sample stream."""
     globals_block = block(root_seed, epoch, coord, 0, 0)
-    numpy_block = block(root_seed, epoch, coord, 1, 0)
-    torch_seed = globals_block[0] | (globals_block[1] << 32)
-    random_seed = globals_block[2] | (globals_block[3] << 32)
-    return torch_seed, random_seed, numpy_block
+    return globals_block[0] | (globals_block[1] << 32)
+
+
+def mt19937_state(
+    root_seed: int, epoch: int, coord: int, stream_id: int
+) -> tuple[int, ...]:
+    """Synthesize one complete MT19937 state from a dedicated stream."""
+    words = tuple(
+        word
+        for draw_index in range(156)
+        for word in block(root_seed, epoch, coord, draw_index, stream_id)
+    )
+    if any(words):
+        return words
+    regeneration = block(root_seed, epoch, coord, 156, stream_id)
+    return regeneration + words[4:]
 
 
 def feistel_permute(root_seed: int, epoch: int, domain: int, position: int) -> int:
@@ -89,7 +105,9 @@ def feistel_permute(root_seed: int, epoch: int, domain: int, position: int) -> i
             return candidate
 
 
-def materialized_permutation(root_seed: int, epoch: int, domain: int) -> tuple[list[int], int]:
+def materialized_permutation(
+    root_seed: int, epoch: int, domain: int
+) -> tuple[list[int], int]:
     """Build the exact-uniform backward Fisher-Yates permutation and draw count."""
     if not 0 <= domain < FEISTEL_THRESHOLD:
         raise ValueError("invalid materialized domain")

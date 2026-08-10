@@ -123,6 +123,15 @@ def random_signature(value: dict[str, object]) -> tuple[object, ...]:
     )
 
 
+def wait_for_signal(pool: ProcessPool, timeout: float = 1.0) -> bool:
+    """Wait across liveness intervals until one event or the caller deadline."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pool.wait_for_completion(deadline):
+            return True
+    return False
+
+
 class ProcessPoolTest(unittest.TestCase):
     """Exercise persistence, RNG installation, errors, and public delivery."""
 
@@ -146,7 +155,7 @@ class ProcessPoolTest(unittest.TestCase):
         )
         self.assertEqual(len({value["seed"] for value in first_values}), 4)
         for position, value in enumerate(first_values):
-            expected_seed = _hyperloader._sample_seed_words(17, 0, position)[0]
+            expected_seed = _hyperloader._sample_rng_states(17, 0, position)[0]
             self.assertEqual(value["seed"], expected_seed)
 
     def test_public_loader_batches_numpy_rows_and_partial_tail(self) -> None:
@@ -167,10 +176,10 @@ class ProcessPoolTest(unittest.TestCase):
             all(torch.equal(left, right) for left, right in zip(batches, expected))
         )
 
-    def test_numpy_rows_retain_scalar_native_dispatch(self) -> None:
+    def test_numpy_rows_use_one_native_command_per_batch(self) -> None:
         loader = DataLoader(NumpyDataset(5), batch_size=2, num_workers=2, seed=23)
         try:
-            self.assertIsNone(loader._process_pool.batch_size)
+            self.assertEqual(loader._process_pool.batch_size, 2)
             with mock.patch.object(
                 loader._process_pool,
                 "try_submit",
@@ -181,13 +190,11 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
         self.assertEqual(len(batches), 3)
-        self.assertEqual(submit.call_count, 5)
-        self.assertEqual(
-            [call.args[1] for call in submit.call_args_list], [0, 1, 2, 3, 4]
-        )
+        self.assertEqual(submit.call_count, 3)
+        self.assertEqual([call.args[1] for call in submit.call_args_list], [0, 1, 2])
         self.assertEqual(
             [call.kwargs["batch_len"] for call in submit.call_args_list],
-            [0, 0, 0, 0, 0],
+            [2, 2, 1],
         )
 
     def test_scalar_batch_boundary_wakes_the_owner_control_pipe(self) -> None:
@@ -195,7 +202,7 @@ class ProcessPoolTest(unittest.TestCase):
         try:
             self.assertTrue(pool.try_submit(0, 0, 0, 0))
             self.assertTrue(pool.try_submit(0, 1, 1, 0))
-            self.assertTrue(pool.wait_for_completion(time.monotonic() + 1.0))
+            self.assertTrue(wait_for_signal(pool))
             completions = []
             while len(completions) < 2:
                 completion = pool.try_receive(0)
@@ -210,16 +217,16 @@ class ProcessPoolTest(unittest.TestCase):
         pool = ProcessPool(NumpyDataset(2), 1, 23, 0, 0, 0, batch_size=2)
         try:
             self.assertTrue(pool.try_submit(0, 0, 0, 0, batch_len=2))
-            self.assertTrue(pool.wait_for_completion(time.monotonic() + 1.0))
+            self.assertTrue(wait_for_signal(pool))
             completion = pool.try_receive(0)
             self.assertIsNotNone(completion)
             position, status, payload = completion
-            value = pool.decode(status, payload, 0)
+            value = pool.decode_batch(status, payload, 0)
         finally:
             pool.close()
 
         self.assertEqual(position, 0)
-        self.assertEqual(status, 0)
+        self.assertEqual(status, 2)
         self.assertTrue(torch.equal(value, torch.arange(8).reshape(2, 4)))
 
     def test_non_array_probe_retains_scalar_storage_transport(self) -> None:

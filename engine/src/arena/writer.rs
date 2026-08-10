@@ -22,7 +22,17 @@ impl ArenaWriter {
 
     /// Write one payload into a slot exclusively assigned to this worker.
     pub fn write(&mut self, slot: SlotRef, payload: &[u8]) -> Result<(), ArenaWriterError> {
-        validate_slot(slot, payload.len())?;
+        self.write_at(slot, 0, payload)
+    }
+
+    /// Write one row at a byte offset inside an exclusively assigned batch slot.
+    pub fn write_at(
+        &mut self,
+        slot: SlotRef,
+        relative_offset: usize,
+        payload: &[u8],
+    ) -> Result<(), ArenaWriterError> {
+        validate_slot(slot, relative_offset, payload.len())?;
         let payload_size = usize::try_from(slot.region_size)
             .map_err(|_| ArenaWriterError::InvalidSlot("region size"))?;
         if !self.regions.contains_key(&slot.region_sequence) {
@@ -37,7 +47,9 @@ impl ArenaWriter {
             return Err(ArenaWriterError::InvalidSlot("cached region size"));
         }
         let start = usize::try_from(slot.offset)
-            .map_err(|_| ArenaWriterError::InvalidSlot("slot offset"))?;
+            .map_err(|_| ArenaWriterError::InvalidSlot("slot offset"))?
+            .checked_add(relative_offset)
+            .ok_or(ArenaWriterError::InvalidSlot("slot range"))?;
         let end = start
             .checked_add(payload.len())
             .ok_or(ArenaWriterError::InvalidSlot("slot range"))?;
@@ -87,7 +99,11 @@ impl From<RegionError> for ArenaWriterError {
     }
 }
 
-fn validate_slot(slot: SlotRef, payload_length: usize) -> Result<(), ArenaWriterError> {
+fn validate_slot(
+    slot: SlotRef,
+    relative_offset: usize,
+    payload_length: usize,
+) -> Result<(), ArenaWriterError> {
     let end = slot
         .offset
         .checked_add(slot.capacity)
@@ -95,10 +111,13 @@ fn validate_slot(slot: SlotRef, payload_length: usize) -> Result<(), ArenaWriter
     if slot.region_size == 0 || slot.capacity == 0 || end > slot.region_size {
         return Err(ArenaWriterError::InvalidSlot("slot range"));
     }
-    if payload_length as u64 > slot.capacity {
+    let produced = relative_offset
+        .checked_add(payload_length)
+        .ok_or(ArenaWriterError::InvalidSlot("slot range"))?;
+    if produced as u64 > slot.capacity {
         return Err(ArenaWriterError::SlotOverflow {
             capacity: slot.capacity,
-            actual: payload_length,
+            actual: produced,
         });
     }
     Ok(())

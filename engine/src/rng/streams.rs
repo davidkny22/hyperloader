@@ -12,6 +12,12 @@ pub const ACCESSOR_TORCH_STREAM: u32 = 4;
 pub const ACCESSOR_NUMPY_STREAM: u32 = 5;
 /// The stream used by the provided Python random accessor.
 pub const ACCESSOR_RANDOM_STREAM: u32 = 6;
+/// The stream used to synthesize the Python random MT19937 state.
+pub const STATE_RANDOM_STREAM: u32 = 7;
+/// The stream used to synthesize the NumPy legacy MT19937 state.
+pub const STATE_NUMPY_STREAM: u32 = 8;
+
+const MT19937_WORDS: usize = 624;
 
 /// Apply the stateless SplitMix64 finalizer without a gamma increment.
 pub const fn splitmix64(mut value: u64) -> u64 {
@@ -44,11 +50,51 @@ pub const fn block(
     )
 }
 
-/// Return the two global seeds and four NumPy words reserved for one sample.
-pub const fn sample_seed_words(root_seed: u64, epoch: u64, coord: u64) -> (u64, u64, [u32; 4]) {
+/// Return the CPU torch seed reserved for one sample.
+pub const fn sample_torch_seed(root_seed: u64, epoch: u64, coord: u64) -> u64 {
     let globals = block(root_seed, epoch, coord, 0, SAMPLE_STREAM);
-    let numpy = block(root_seed, epoch, coord, 1, SAMPLE_STREAM);
-    let torch_seed = globals[0] as u64 | ((globals[1] as u64) << 32);
-    let random_seed = globals[2] as u64 | ((globals[3] as u64) << 32);
-    (torch_seed, random_seed, numpy)
+    globals[0] as u64 | ((globals[1] as u64) << 32)
 }
+
+/// Synthesize one complete MT19937 state from its dedicated Philox stream.
+pub fn mt19937_state(
+    root_seed: u64,
+    epoch: u64,
+    coord: u64,
+    stream_id: u32,
+) -> [u32; MT19937_WORDS] {
+    assert!(
+        stream_id == STATE_RANDOM_STREAM || stream_id == STATE_NUMPY_STREAM,
+        "MT19937 state requires a dedicated state stream"
+    );
+    let mut state = [0_u32; MT19937_WORDS];
+    for draw_index in 0..156_u32 {
+        let words = block(root_seed, epoch, coord, draw_index, stream_id);
+        let start = draw_index as usize * 4;
+        state[start..start + 4].copy_from_slice(&words);
+    }
+    repair_zero_state(&mut state, block(root_seed, epoch, coord, 156, stream_id));
+    state
+}
+
+/// Return torch's seed and both whole legacy MT19937 states for one sample.
+pub fn sample_rng_states(
+    root_seed: u64,
+    epoch: u64,
+    coord: u64,
+) -> (u64, [u32; MT19937_WORDS], [u32; MT19937_WORDS]) {
+    (
+        sample_torch_seed(root_seed, epoch, coord),
+        mt19937_state(root_seed, epoch, coord, STATE_RANDOM_STREAM),
+        mt19937_state(root_seed, epoch, coord, STATE_NUMPY_STREAM),
+    )
+}
+
+fn repair_zero_state(state: &mut [u32; MT19937_WORDS], regeneration: [u32; 4]) {
+    if state.iter().all(|word| *word == 0) {
+        state[..4].copy_from_slice(&regeneration);
+    }
+}
+
+#[cfg(test)]
+mod tests;

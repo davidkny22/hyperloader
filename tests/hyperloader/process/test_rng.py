@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import random
+import struct
 import unittest
 
 import numpy as np
 import torch
 from torch.utils.data import get_worker_info
+from torch.utils.data._utils import worker as worker_module
 
 from hyperloader import _hyperloader
 from hyperloader.process.rng import WorkerRngContext
@@ -30,14 +32,25 @@ class WorkerRngContextTest(unittest.TestCase):
         dataset = [0]
         context = WorkerRngContext(2, 4, dataset)
         try:
-            torch_seed, random_seed, numpy_words = _hyperloader._sample_seed_words(
+            torch_seed, random_bytes, numpy_bytes = _hyperloader._sample_rng_states(
                 17, 3, 11
             )
             context.install(17, 3, 11)
+            self.assertIsNone(worker_module._worker_info)
             info = get_worker_info()
 
-            expected_random = random.Random(random_seed).random()
-            expected_numpy = np.random.RandomState(np.asarray(numpy_words)).random()
+            random_reference = random.Random()
+            random_reference.setstate((3, struct.unpack("=625I", random_bytes), None))
+            numpy_reference = np.random.RandomState()
+            numpy_reference.set_state(
+                (
+                    "MT19937",
+                    np.frombuffer(numpy_bytes, dtype=np.uint32),
+                    624,
+                    0,
+                    0.0,
+                )
+            )
             expected_torch = torch.rand(
                 (), generator=torch.Generator().manual_seed(torch_seed)
             )
@@ -46,8 +59,8 @@ class WorkerRngContextTest(unittest.TestCase):
             self.assertEqual(info.num_workers, 4)
             self.assertEqual(info.seed, torch_seed)
             self.assertIs(info.dataset, dataset)
-            self.assertEqual(random.random(), expected_random)
-            self.assertEqual(np.random.random(), expected_numpy)
+            self.assertEqual(random.random(), random_reference.random())
+            self.assertEqual(np.random.random(), numpy_reference.random())
             self.assertEqual(torch.rand(()).item(), expected_torch.item())
         finally:
             context.clear()
@@ -64,6 +77,16 @@ class WorkerRngContextTest(unittest.TestCase):
 
             self.assertIsNot(first, second)
             self.assertNotEqual(first.seed, second.seed)
+        finally:
+            context.clear()
+
+    def test_sample_without_worker_info_call_does_not_construct_identity(self) -> None:
+        context = WorkerRngContext(0, 1, [0])
+        try:
+            context.install(7, 0, 0)
+
+            self.assertIsNone(worker_module._worker_info)
+            self.assertIsNone(context._worker_info._current)
         finally:
             context.clear()
 

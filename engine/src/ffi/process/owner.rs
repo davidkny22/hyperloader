@@ -1,7 +1,9 @@
 //! Loader-owner allocation, dispatch, completion, and delivery endpoint.
 
 use super::sizing::process_slab_specs;
-use crate::arena::{ArenaAllocator, GrowthPolicy, RegionRegistry, RegionToken, SlotRef};
+use crate::arena::{
+    ArenaAllocator, DeliveryView, GrowthPolicy, RegionRegistry, RegionToken, SlotRef,
+};
 use crate::exec::{CommandTransport, DispatchMessage, TransportError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -176,7 +178,7 @@ impl ProcessResources {
         &mut self,
         py: Python<'_>,
         worker: u32,
-    ) -> PyResult<Option<(u64, u8, Py<pyo3::types::PyBytes>)>> {
+    ) -> PyResult<Option<(u64, u8, Py<PyAny>)>> {
         self.transport(worker)?;
         super::delivery::try_receive(self, py, worker)
     }
@@ -248,6 +250,17 @@ impl ProcessResources {
             .expect("one requested view is returned")
             .to_vec()
             .map_err(runtime_error)
+    }
+
+    pub(super) fn deliver_slot(&self, slot: SlotRef) -> PyResult<DeliveryView> {
+        self.allocator
+            .deliver(
+                slot,
+                std::num::NonZeroU32::new(1).expect("one view is nonzero"),
+            )
+            .map_err(runtime_error)?
+            .pop()
+            .ok_or_else(|| PyRuntimeError::new_err("arena delivery returned no view"))
     }
 }
 

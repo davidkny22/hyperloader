@@ -1,5 +1,6 @@
 //! Private Python bindings for persistent process-owner and worker endpoints.
 
+mod buffer;
 mod delivery;
 mod owner;
 mod sizing;
@@ -14,5 +15,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ProcessResources>()?;
     module.add_class::<WorkerEndpoint>()?;
     module.add_class::<WorkerCommand>()?;
+    module.add_class::<buffer::ArenaBuffer>()?;
     Ok(())
 }

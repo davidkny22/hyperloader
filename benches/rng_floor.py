@@ -15,6 +15,7 @@ from typing import Any
 EXPECTED_METRICS = {
     "sample_derivation",
     "native_draw",
+    "state_synthesis",
     "permutation_131072",
     "permutation_300000",
     "permutation_1000000007",
@@ -70,6 +71,7 @@ def validate_report(report: Report, label: str, core: int) -> None:
         "iterations",
         "warmup_iterations",
         "sample_derivation_blocks",
+        "state_synthesis_blocks",
         "feistel_rounds",
     }
     if set(report.metadata) != required:
@@ -78,8 +80,10 @@ def validate_report(report: Report, label: str, core: int) -> None:
         raise ValueError("benchmark report came from the wrong cluster or core")
     if report.metadata["governor"] != "performance":
         raise ValueError("benchmark core governor must be performance")
-    if report.metadata["sample_derivation_blocks"] != "2":
-        raise ValueError("sample derivation must execute two Philox blocks")
+    if report.metadata["sample_derivation_blocks"] != "1":
+        raise ValueError("sample derivation must execute one Philox block")
+    if report.metadata["state_synthesis_blocks"] != "312":
+        raise ValueError("state synthesis must execute 312 Philox blocks")
     if report.metadata["feistel_rounds"] != "8":
         raise ValueError("permutation evaluation must execute eight Feistel rounds")
     trials = int(report.metadata["trials"])

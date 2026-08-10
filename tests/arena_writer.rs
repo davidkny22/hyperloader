@@ -34,9 +34,8 @@ fn attached_writer_publishes_reserved_bytes_without_owner_copy() {
     let second = arena.reserve(32, 7).expect("second slot");
     let mut writer = ArenaWriter::new(token);
     writer.write(first, b"first payload").expect("first write");
-    writer
-        .write(second, b"second payload")
-        .expect("cached second write");
+    writer.write_at(second, 0, b"second ").expect("second row");
+    writer.write_at(second, 7, b"payload").expect("third row");
     arena
         .publish(first, 7, b"first payload".len())
         .expect("publish first");
