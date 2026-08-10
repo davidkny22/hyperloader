@@ -106,6 +106,8 @@ class DataLoader:
         self._abandon_notice_emitted = False
         self._process_pool: Any = None
         self._thread_pool: Any = None
+        self._native_batch_probe: Any = None
+        self._native_batch_shape: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
         self._execution_dataset = (
@@ -135,6 +137,10 @@ class DataLoader:
         self._dataset_fingerprint = build_dataset_fingerprint(
             dataset, resolved_config.determinism.fingerprint
         )
+        from .structured import is_native_batch_path, prepare_native_batch
+
+        if is_native_batch_path(self):
+            prepare_native_batch(self)
         self._fingerprint = build_contract_fingerprint(self)
         self._machine_identity: Any = None
         self._cost_profile = build_cost_profile(self)
@@ -154,6 +160,7 @@ class DataLoader:
             and collate_fn is None
             and mode == "native"
             and not self._sample_thread_safe
+            and not is_native_batch_path(self)
         ):
             prepare_process_pool(self)
             self._fingerprint = build_contract_fingerprint(self)
@@ -161,6 +168,7 @@ class DataLoader:
     def __iter__(self) -> Iterator[Any]:
         """Create an iterator over the selected native execution plan."""
         from .process.iterator import ProcessIterator
+        from .structured import StructuredIterator, is_native_batch_path
         from .tensor import TensorIterator
 
         if self.num_workers is AUTO or self.num_workers == 0:
@@ -193,6 +201,8 @@ class DataLoader:
             self.close()
         if isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
+        elif is_native_batch_path(self):
+            iterator = StructuredIterator(self)
         elif self._sample_thread_safe:
             from .thread import ThreadIterator
 
@@ -222,12 +232,18 @@ class DataLoader:
         if active is not None:
             active.invalidate()
         self._active_iterator_ref = None
+        self._native_batch_probe = None
         if getattr(self, "_process_pool", None) is not None:
             self._process_pool.close()
             self._process_pool = None
         if getattr(self, "_thread_pool", None) is not None:
             self._thread_pool.close()
             self._thread_pool = None
+        execution_dataset = getattr(self, "_execution_dataset", None)
+        if execution_dataset is not getattr(self, "dataset", None):
+            close = getattr(execution_dataset, "close", None)
+            if close is not None:
+                close()
 
     def stats(self) -> dict[str, object]:
         """Return current telemetry and the latest completed epoch summary."""

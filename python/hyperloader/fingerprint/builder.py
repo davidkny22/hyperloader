@@ -95,6 +95,9 @@ def _batch_shape(loader: Any) -> Any:
     declared = loader.config.memory.batch_shape
     if declared is not AUTO:
         return {"source": "declared", "value": stable_value(declared)}
+    native = getattr(loader, "_native_batch_shape", None)
+    if native is not None:
+        return native
     pool = getattr(loader, "_process_pool", None)
     if pool is not None:
         return pool.batch_shape_fingerprint

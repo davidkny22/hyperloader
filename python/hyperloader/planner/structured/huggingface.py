@@ -7,6 +7,7 @@ from typing import Any
 
 from hyperloader.stages import StageIO
 
+from .columns import collate_columns
 from .plan import StructurePlan, StructureStage
 
 
@@ -42,6 +43,10 @@ class ArrowDatasetAdapter:
             output_all_columns=self.dataset._output_all_columns,
         )
 
+    def native_batch(self, start: int, stop: int) -> Any:
+        """Query and format one contiguous Arrow range as columns."""
+        return collate_columns(self.dataset[start:stop])
+
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
     """Build an Arrow plan only when the formatter state is recognizable."""
@@ -57,6 +62,7 @@ def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
     if not all(hasattr(dataset, name) for name in required):
         return None
     adapter = ArrowDatasetAdapter(dataset)
+    batch_safe_format = dataset._format_type in {None, "numpy", "torch"}
     return StructurePlan(
         length=len(adapter),
         shuffle=bool(shuffle),
@@ -66,4 +72,5 @@ def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
             StructureStage("configured-format"),
         ),
         execution_dataset=adapter,
+        native_batch=not bool(shuffle) and batch_safe_format,
     )

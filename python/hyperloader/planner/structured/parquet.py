@@ -7,6 +7,7 @@ from typing import Any
 
 from hyperloader.stages import StageIO
 
+from .columns import collate_columns
 from .plan import StructurePlan, StructureStage
 
 
@@ -43,6 +44,11 @@ class ParquetDatasetAdapter:
             )
         return self._dataset
 
+    def native_batch(self, start: int, stop: int) -> dict[str, Any]:
+        """Decode one contiguous row range and expose its columns once."""
+        indices = list(range(start, stop))
+        return collate_columns(self._source().take(indices).to_pydict())
+
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
     """Build a local Parquet plan when partition reconstruction is unnecessary."""
@@ -72,4 +78,5 @@ def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
         mapping_id="pyarrow-parquet-dataset",
         stages=(StructureStage("parquet-open-and-decode", io=StageIO.READ),),
         execution_dataset=adapter,
+        native_batch=not bool(shuffle),
     )

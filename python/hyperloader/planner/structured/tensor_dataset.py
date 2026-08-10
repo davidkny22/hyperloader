@@ -25,6 +25,10 @@ class TensorDatasetAdapter:
     def __getitem__(self, index: int) -> tuple[Any, ...]:
         return tuple(tensor[index] for tensor in self.dataset.tensors)
 
+    def native_batch(self, start: int, stop: int) -> list[Any]:
+        """Return default-collated tensor views for one contiguous range."""
+        return [tensor[start:stop] for tensor in self.dataset.tensors]
+
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
     """Build a tensor-tuple plan when every leading dimension agrees."""
@@ -40,4 +44,5 @@ def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
         mapping_id="torch-tensor-dataset",
         stages=(StructureStage("tensor-row-view"),),
         execution_dataset=TensorDatasetAdapter(dataset),
+        native_batch=not bool(shuffle),
     )

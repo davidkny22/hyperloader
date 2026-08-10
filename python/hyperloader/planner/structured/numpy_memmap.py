@@ -53,6 +53,18 @@ class MemmapAdapter:
             )
         return self._mapped
 
+    def native_batch(self, start: int, stop: int) -> Any:
+        """Return a torch view over one contiguous memory-mapped row range."""
+        import numpy as np
+        import torch
+
+        rows = np.asarray(self._array()[start:stop])
+        return torch.from_numpy(rows)
+
+    def close(self) -> None:
+        """Release the owner-side mapping without changing the source object."""
+        self._mapped = None
+
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
     """Build a reopenable map only for nonempty row-addressable arrays."""
@@ -77,4 +89,5 @@ def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:
         mapping_id="numpy-memmap",
         stages=(StructureStage("memmap-row-read", io=StageIO.READ),),
         execution_dataset=adapter,
+        native_batch=not bool(shuffle) and order == "C",
     )

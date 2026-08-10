@@ -28,6 +28,7 @@ class StructurePlan:
     mapping_id: str
     stages: tuple[StructureStage, ...]
     execution_dataset: Any = field(repr=False, compare=False)
+    native_batch: bool = False
 
     def index(self, root_seed: int, epoch: int, position: int) -> int:
         """Map one sampler position to its structure-adapter index."""
