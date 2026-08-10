@@ -13,17 +13,9 @@ pub(crate) struct PyStaticSchedule {
 #[pymethods]
 impl PyStaticSchedule {
     #[new]
-    #[pyo3(signature = (start, end, depth, worker_count, dispatch_group=1))]
-    fn new(
-        start: u64,
-        end: u64,
-        depth: usize,
-        worker_count: u32,
-        dispatch_group: usize,
-    ) -> PyResult<Self> {
+    fn new(start: u64, end: u64, depth: usize, worker_count: u32) -> PyResult<Self> {
         Ok(Self {
-            schedule: StaticSchedule::new_grouped(start, end, depth, worker_count, dispatch_group)
-                .map_err(value_error)?,
+            schedule: StaticSchedule::new(start, end, depth, worker_count).map_err(value_error)?,
         })
     }
 

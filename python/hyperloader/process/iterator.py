@@ -45,7 +45,6 @@ class ProcessIterator(Iterator[Any]):
                 schedule_length,
                 schedule_depth,
                 loader._process_pool.worker_count,
-                1,
             )
             self._fill_frontier()
 
