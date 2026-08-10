@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from hyperloader import _hyperloader
@@ -35,6 +36,7 @@ class FrontierRuntime:
         worker_count: int,
         growth_multiplier: int,
         binding: str,
+        cost_estimator: Callable[[int], float | None] | None = None,
     ) -> None:
         self._schedule = _hyperloader._StaticSchedule(0, end, depth, worker_count)
         self._initial_depth = depth
@@ -42,6 +44,7 @@ class FrontierRuntime:
         self._ceiling = ceiling
         self._growth_multiplier = growth_multiplier
         self._binding = binding
+        self._cost_estimator = cost_estimator
         self._max_occupied = 0
         self._growth_events = 0
         self._wait_ns = 0
@@ -49,7 +52,31 @@ class FrontierRuntime:
 
     def next_dispatch(self) -> tuple[int, int] | None:
         """Return the next native dispatch candidate."""
-        return self._schedule.next_dispatch()
+        order = self.dispatch_order()
+        return self.dispatch_at(order[0]) if order else None
+
+    def dispatch_order(self) -> list[int]:
+        """Order the admitted window by descending known cost, then position."""
+        candidates = self._schedule.dispatch_candidates()
+        if self._cost_estimator is None:
+            return candidates
+        estimates = {
+            position: self._cost_estimator(position) for position in candidates
+        }
+        if not any(estimate is not None for estimate in estimates.values()):
+            return candidates
+        return sorted(
+            candidates,
+            key=lambda position: (
+                estimates[position] is None,
+                -(estimates[position] or 0.0),
+                position,
+            ),
+        )
+
+    def dispatch_at(self, position: int) -> tuple[int, int] | None:
+        """Route one selected position when it remains frontier-eligible."""
+        return self._schedule.dispatch_at(position)
 
     def mark_dispatched(self, position: int, worker: int) -> None:
         """Commit one transport admission and update peak occupancy."""

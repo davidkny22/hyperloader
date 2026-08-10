@@ -153,6 +153,14 @@ class ProcessPool:
         """Return whether measured sample bytes reduced the formula ceiling."""
         return self._frontier_budget_bound
 
+    @property
+    def retained_probe_command(self) -> int | None:
+        """Return the command position that must retain worker-zero routing."""
+        if self._probe_payload is None:
+            return None
+        position = self._probe_key[1]
+        return position // self._batch_size if self._batch_size is not None else position
+
     def try_submit(
         self,
         epoch: int,

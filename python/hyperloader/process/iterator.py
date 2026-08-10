@@ -53,6 +53,7 @@ class ProcessIterator(Iterator[Any]):
                 loader._process_pool.worker_count,
                 loader.config.factors.growth_mult,
                 binding_cause(loader),
+                self._dispatch_cost,
             )
             self._fill_frontier()
 
@@ -136,7 +137,15 @@ class ProcessIterator(Iterator[Any]):
 
     def _fill_frontier(self) -> None:
         pool = self._loader._process_pool
-        while (dispatch := self._schedule.next_dispatch()) is not None:
+        order = self._schedule.dispatch_order()
+        retained_probe = pool.retained_probe_command
+        if retained_probe in order:
+            order.remove(retained_probe)
+            order.insert(0, retained_probe)
+        for selected_position in order:
+            dispatch = self._schedule.dispatch_at(selected_position)
+            if dispatch is None:
+                continue
             position, worker = dispatch
             batch_size = pool.batch_size
             sample_position = (
@@ -159,6 +168,21 @@ class ProcessIterator(Iterator[Any]):
             ):
                 return
             self._schedule.mark_dispatched(position, worker)
+
+    def _dispatch_cost(self, position: int) -> float | None:
+        """Estimate one transport command from its profiled sample positions."""
+        profile = self._loader._cost_profile
+        if profile is None:
+            return None
+        batch_size = self._loader._process_pool.batch_size
+        if batch_size is None:
+            return profile.estimate(position)
+        start = position * batch_size
+        stop = min(start + batch_size, self._length)
+        estimates = [profile.estimate(sample) for sample in range(start, stop)]
+        if any(estimate is None for estimate in estimates):
+            return None
+        return sum(estimate for estimate in estimates if estimate is not None)
 
     def _poll_completions(self) -> bool:
         pool = self._loader._process_pool

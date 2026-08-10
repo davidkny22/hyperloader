@@ -43,9 +43,10 @@ def worker_main(
         except BaseException as error:
             startup_error = encode_exception(error)
         if probe is not None:
-            probe_started = time.perf_counter_ns()
+            probe_cost_ns = 1
             if startup_error is None:
                 epoch, position, index = probe
+                probe_started = time.perf_counter_ns()
                 status, result = evaluate_sample(
                     dataset,
                     worker_id,
@@ -56,6 +57,7 @@ def worker_main(
                     index,
                     rng_context,
                 )
+                probe_cost_ns = max(1, time.perf_counter_ns() - probe_started)
                 if status == 0:
                     probe_value = result
                     payload = encoder.encode(result)
@@ -64,7 +66,6 @@ def worker_main(
             else:
                 status, payload = startup_error
             layout = batch_layout(probe_value) if status == 0 else None
-            probe_cost_ns = max(1, time.perf_counter_ns() - probe_started)
             control.send(("probe", status, payload, layout, probe_cost_ns))
         command = control.recv()
         if command[0] == "stop":

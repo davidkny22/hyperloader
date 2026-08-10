@@ -38,6 +38,37 @@ class FrontierRuntimeTest(unittest.TestCase):
 
         self.assertEqual(frontier.report()["final_depth"], 2)
 
+    def test_known_costs_dispatch_descending_with_position_ties(self) -> None:
+        costs = {0: 10.0, 1: 100.0, 2: 100.0, 3: 20.0}
+        frontier = FrontierRuntime(
+            4,
+            4,
+            4,
+            2,
+            2,
+            "profile-tail",
+            costs.get,
+        )
+
+        order = []
+        while (dispatch := frontier.next_dispatch()) is not None:
+            position, worker = dispatch
+            order.append(position)
+            frontier.mark_dispatched(position, worker)
+
+        self.assertEqual(order, [1, 2, 3, 0])
+
+    def test_unknown_costs_retain_fifo_order(self) -> None:
+        frontier = FrontierRuntime(3, 3, 3, 1, 2, "cold-variance", lambda _: None)
+
+        order = []
+        while (dispatch := frontier.next_dispatch()) is not None:
+            position, worker = dispatch
+            order.append(position)
+            frontier.mark_dispatched(position, worker)
+
+        self.assertEqual(order, [0, 1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

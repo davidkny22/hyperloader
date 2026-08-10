@@ -4,7 +4,7 @@ use crate::sched::{Dispatch, StaticSchedule};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-/// Native fixed-depth FIFO and reorder state machine.
+/// Native bounded frontier and reorder state machine.
 #[pyclass(name = "_StaticSchedule")]
 pub(crate) struct PyStaticSchedule {
     schedule: StaticSchedule,
@@ -22,6 +22,16 @@ impl PyStaticSchedule {
     fn next_dispatch(&self) -> Option<(u64, u32)> {
         self.schedule
             .next_dispatch()
+            .map(|dispatch| (dispatch.position, dispatch.worker))
+    }
+
+    fn dispatch_candidates(&self) -> Vec<u64> {
+        self.schedule.dispatch_candidates().collect()
+    }
+
+    fn dispatch_at(&self, position: u64) -> Option<(u64, u32)> {
+        self.schedule
+            .dispatch_at(position)
             .map(|dispatch| (dispatch.position, dispatch.worker))
     }
 

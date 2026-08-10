@@ -1,4 +1,4 @@
-//! Bounded FIFO dispatch with out-of-order completion buffering.
+//! Bounded dispatch selection with out-of-order completion buffering.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -31,13 +31,12 @@ impl Display for ScheduleError {
 
 impl Error for ScheduleError {}
 
-/// Fixed-depth FIFO frontier with strict sampler-order commit.
+/// Bounded frontier with selectable dispatch and strict sampler-order commit.
 #[derive(Debug)]
 pub struct StaticSchedule {
     end: u64,
     depth: u64,
     worker_count: u32,
-    next_dispatch: u64,
     next_commit: u64,
     dispatch_ordinal: u64,
     positions: HashMap<u64, PositionState>,
@@ -66,7 +65,6 @@ impl StaticSchedule {
             end,
             depth,
             worker_count,
-            next_dispatch: start,
             next_commit: start,
             dispatch_ordinal: 0,
             positions: HashMap::with_capacity(depth as usize),
@@ -75,29 +73,40 @@ impl StaticSchedule {
 
     /// Return the next FIFO dispatch while the bounded frontier has room.
     pub fn next_dispatch(&self) -> Option<Dispatch> {
-        if self.next_dispatch >= self.end
-            || self.next_dispatch.saturating_sub(self.next_commit) >= self.depth
+        let position = self.dispatch_candidates().next()?;
+        self.dispatch_at(position)
+    }
+
+    /// Return every unsubmitted position admitted by the current frontier.
+    pub fn dispatch_candidates(&self) -> impl Iterator<Item = u64> + '_ {
+        let stop = self.next_commit.saturating_add(self.depth).min(self.end);
+        (self.next_commit..stop).filter(|position| !self.positions.contains_key(position))
+    }
+
+    /// Build the next worker route for one eligible frontier position.
+    pub fn dispatch_at(&self, position: u64) -> Option<Dispatch> {
+        let stop = self.next_commit.saturating_add(self.depth).min(self.end);
+        if position < self.next_commit || position >= stop || self.positions.contains_key(&position)
         {
             return None;
         }
         Some(Dispatch {
-            position: self.next_dispatch,
+            position,
             worker: (self.dispatch_ordinal % u64::from(self.worker_count)) as u32,
         })
     }
 
     /// Confirm that the current candidate entered its worker transport.
     pub fn mark_dispatched(&mut self, dispatch: Dispatch) -> Result<(), ScheduleError> {
-        if Some(dispatch) != self.next_dispatch() {
+        if Some(dispatch) != self.dispatch_at(dispatch.position) {
             return Err(ScheduleError(
-                "dispatch does not match the next FIFO candidate",
+                "dispatch is not an eligible frontier candidate",
             ));
         }
         self.positions.insert(
             dispatch.position,
             PositionState::Dispatched(dispatch.worker),
         );
-        self.next_dispatch += 1;
         self.dispatch_ordinal += 1;
         Ok(())
     }
@@ -150,8 +159,9 @@ impl StaticSchedule {
         if depth == 0 {
             return Err(ScheduleError("frontier depth must be positive"));
         }
-        if depth < self.positions.len() as u64 {
-            return Err(ScheduleError("frontier depth is below current occupancy"));
+        let stop = self.next_commit.saturating_add(depth);
+        if self.positions.keys().any(|position| *position >= stop) {
+            return Err(ScheduleError("frontier depth excludes an active position"));
         }
         self.depth = depth;
         Ok(())
