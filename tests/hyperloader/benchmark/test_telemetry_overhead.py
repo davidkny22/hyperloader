@@ -105,6 +105,12 @@ class TelemetryOverheadReportTest(unittest.TestCase):
         self.assertEqual(result["decision"], "FAIL")
         self.assertFalse(result["wall"]["below_noise"])
 
+    def test_detectable_effect_below_null_noise_passes(self) -> None:
+        result = report_module.evaluate_report(_report(telemetry_penalty=0.0001))
+        self.assertEqual(result["decision"], "PASS")
+        self.assertGreater(result["wall"]["ci95_penalty"][0], 0.0)
+        self.assertTrue(result["wall"]["below_noise"])
+
     def test_absolute_cpu_budget_failure_is_red(self) -> None:
         result = report_module.evaluate_report(_report(cpu_ns_per_batch=1_000.0))
         self.assertEqual(result["decision"], "FAIL")

@@ -125,7 +125,7 @@ def evaluate_report(report: dict[str, Any]) -> dict[str, Any]:
     wall_mean = statistics.fmean(wall_penalties)
     batches_per_second = TARGET_SAMPLE_RATE / BATCH_SIZE
     cpu_core_fraction_upper = max(0.0, cpu_interval[1]) * batches_per_second / 1e9
-    wall_below_noise = wall_interval[0] <= 0.0 <= wall_interval[1] and abs(wall_mean) <= noise_floor
+    wall_below_noise = abs(wall_mean) <= noise_floor
     cpu_within_budget = cpu_core_fraction_upper <= CPU_CORE_BUDGET
     return {
         "cpu": {
