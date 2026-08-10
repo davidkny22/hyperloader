@@ -66,6 +66,7 @@ fn invalid_transitions_are_rejected() {
     assert!(StaticSchedule::new(1, 0, 1, 1).is_err());
     assert!(StaticSchedule::new(0, 1, 0, 1).is_err());
     assert!(StaticSchedule::new(0, 1, 1, 0).is_err());
+    assert!(StaticSchedule::new_grouped(0, 1, 1, 1, 0).is_err());
 
     let mut schedule = StaticSchedule::new(0, 2, 2, 1).expect("valid schedule");
     let dispatch = schedule.next_dispatch().expect("dispatch");
@@ -92,4 +93,18 @@ fn invalid_transitions_are_rejected() {
         .mark_completed(dispatch)
         .expect("completion accepted");
     assert!(schedule.mark_completed(dispatch).is_err());
+}
+
+#[test]
+fn grouped_dispatch_keeps_each_batch_on_one_worker() {
+    let mut schedule = StaticSchedule::new_grouped(0, 8, 8, 2, 2).expect("valid schedule");
+    let mut routes = Vec::new();
+    while let Some(dispatch) = schedule.next_dispatch() {
+        routes.push(dispatch.worker);
+        schedule
+            .mark_dispatched(dispatch)
+            .expect("dispatch accepted");
+    }
+
+    assert_eq!(routes, vec![0, 0, 1, 1, 0, 0, 1, 1]);
 }

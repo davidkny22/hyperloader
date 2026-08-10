@@ -25,6 +25,8 @@ pub struct DispatchMessage {
     pub index: u64,
     /// Worker route selected by the executor.
     pub worker: u32,
+    /// This position closes its default-collation batch.
+    pub batch_end: bool,
     /// Arena slot receiving the produced payload.
     pub slot: SlotRef,
     /// Arena side slot reserved for an exception payload.
@@ -77,14 +79,20 @@ pub(super) fn encode_dispatch(
     validate_slot(message.exception_slot).map_err(TransportError::InvalidMessage)?;
     put_slot(&mut frame, 72, message.exception_slot);
     put_u64(&mut frame, 112, message.epoch);
+    frame[120] = u8::from(message.batch_end);
     Ok(frame)
 }
 
 pub(super) fn decode_dispatch(frame: &[u8; FRAME_SIZE]) -> Result<DispatchMessage, &'static str> {
     validate_header(frame, DISPATCH_KIND)?;
-    if frame[6] != 0 || frame[7] != 0 || frame[120..].iter().any(|byte| *byte != 0) {
+    if frame[6] != 0 || frame[7] != 0 || frame[121..].iter().any(|byte| *byte != 0) {
         return Err("dispatch reserved fields");
     }
+    let batch_end = match frame[120] {
+        0 => false,
+        1 => true,
+        _ => return Err("dispatch batch end"),
+    };
     let slot = get_slot(frame, 32)?;
     Ok(DispatchMessage {
         position: get_u64(frame, 8),
@@ -92,6 +100,7 @@ pub(super) fn decode_dispatch(frame: &[u8; FRAME_SIZE]) -> Result<DispatchMessag
         worker: get_u32(frame, 16),
         stage_plan: get_u32(frame, 20),
         index: get_u64(frame, 24),
+        batch_end,
         slot,
         exception_slot: get_slot(frame, 72)?,
     })

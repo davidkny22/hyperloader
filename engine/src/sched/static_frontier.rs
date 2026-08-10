@@ -37,6 +37,7 @@ pub struct StaticSchedule {
     end: u64,
     depth: u64,
     worker_count: u32,
+    dispatch_group: u64,
     next_dispatch: u64,
     next_commit: u64,
     dispatch_ordinal: u64,
@@ -51,6 +52,17 @@ impl StaticSchedule {
         depth: usize,
         worker_count: u32,
     ) -> Result<Self, ScheduleError> {
+        Self::new_grouped(start, end, depth, worker_count, 1)
+    }
+
+    /// Create a schedule whose adjacent dispatch groups share one worker route.
+    pub fn new_grouped(
+        start: u64,
+        end: u64,
+        depth: usize,
+        worker_count: u32,
+        dispatch_group: usize,
+    ) -> Result<Self, ScheduleError> {
         if end < start {
             return Err(ScheduleError("schedule end precedes its start"));
         }
@@ -60,12 +72,18 @@ impl StaticSchedule {
         if worker_count == 0 {
             return Err(ScheduleError("worker count must be positive"));
         }
+        if dispatch_group == 0 {
+            return Err(ScheduleError("dispatch group must be positive"));
+        }
         let depth = u64::try_from(depth)
             .map_err(|_| ScheduleError("frontier depth does not fit the position domain"))?;
+        let dispatch_group = u64::try_from(dispatch_group)
+            .map_err(|_| ScheduleError("dispatch group does not fit the position domain"))?;
         Ok(Self {
             end,
             depth,
             worker_count,
+            dispatch_group,
             next_dispatch: start,
             next_commit: start,
             dispatch_ordinal: 0,
@@ -82,7 +100,8 @@ impl StaticSchedule {
         }
         Some(Dispatch {
             position: self.next_dispatch,
-            worker: (self.dispatch_ordinal % u64::from(self.worker_count)) as u32,
+            worker: ((self.dispatch_ordinal / self.dispatch_group) % u64::from(self.worker_count))
+                as u32,
         })
     }
 

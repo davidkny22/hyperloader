@@ -41,6 +41,11 @@ impl WorkerCommand {
     const fn worker(&self) -> u32 {
         self.message.worker
     }
+
+    #[getter]
+    const fn batch_end(&self) -> bool {
+        self.message.batch_end
+    }
 }
 
 /// Native endpoint attached inside one persistent Python worker.
