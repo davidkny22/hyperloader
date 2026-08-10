@@ -55,6 +55,15 @@ def process_has_exited(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
+    if sys.platform.startswith("linux"):
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(
+                ") ", 1
+            )[1]
+        except (FileNotFoundError, ProcessLookupError):
+            return True
+        if fields.startswith("Z "):
+            return True
     return False
 
 
@@ -71,6 +80,18 @@ def wait_for_exit(pids: tuple[int, ...] | list[int], timeout: float = 5.0) -> No
 
 class SharedMemoryHygieneGate(unittest.TestCase):
     """Prove normal, interrupted, and crash cleanup through DataLoader."""
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs only")
+    def test_zombie_worker_is_observed_as_exited(self) -> None:
+        with (
+            mock.patch.object(os, "kill"),
+            mock.patch.object(
+                Path,
+                "read_text",
+                return_value="130 (python worker) Z 1 2 3",
+            ),
+        ):
+            self.assertTrue(process_has_exited(130))
 
     def test_explicit_close_releases_workers_and_registry(self) -> None:
         with TemporaryDirectory() as cache, mock.patch.dict(
