@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import weakref
+import warnings
 from collections.abc import Iterator
 from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
+from .epoch import EpochState
 from .planner import BlackBoxPlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
@@ -164,7 +166,8 @@ class DataLoader:
         self.config = resolved_config
         self.delivery_memory = resolved_memory
         self.root_seed = resolve_root_seed(resolved_seed, generator)
-        self._epoch = 0
+        self._epoch_state = EpochState()
+        self._abandon_notice_emitted = False
         self._process_pool: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
@@ -199,6 +202,15 @@ class DataLoader:
             raise RuntimeError("user sampler planning is not initialized")
         if self.collate_fn is not None:
             raise RuntimeError("user collation planning is not initialized")
+        auto_advanced = self._epoch_state.begin_iteration()
+        if auto_advanced and not self._abandon_notice_emitted:
+            warnings.warn(
+                "A fresh iterator after partial delivery advanced the epoch. "
+                "Call set_epoch(epoch) before iterating to replay explicitly.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._abandon_notice_emitted = True
         active = (
             None if self._active_iterator_ref is None else self._active_iterator_ref()
         )
@@ -210,6 +222,15 @@ class DataLoader:
             iterator = ProcessIterator(self)
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
+
+    @property
+    def _epoch(self) -> int:
+        """Return the epoch selected for the next map-style iterator."""
+        return self._epoch_state.current
+
+    def set_epoch(self, epoch: int) -> None:
+        """Select an epoch and reset the next iterator to its first batch."""
+        self._epoch_state.set_epoch(epoch)
 
     def close(self) -> None:
         """Release persistent process resources owned by this loader."""

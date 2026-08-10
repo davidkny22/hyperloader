@@ -371,12 +371,13 @@ class ProcessPoolTest(unittest.TestCase):
         self.assertLess(executed.index(2), executed.index(1))
         self.assertEqual(executed.count(0), 1)
 
-    def test_abandoned_iterator_replays_epoch_with_a_clean_frontier(self) -> None:
+    def test_delivering_abandoned_iterator_advances_with_a_clean_frontier(self) -> None:
         loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
         first_iterator = iter(loader)
         first_sample = next(first_iterator)
         try:
-            replayed = list(loader)
+            with self.assertWarnsRegex(UserWarning, "advanced the epoch"):
+                resumed = list(loader)
             with self.assertRaisesRegex(RuntimeError, "no longer active"):
                 next(first_iterator)
         finally:
@@ -384,8 +385,39 @@ class ProcessPoolTest(unittest.TestCase):
 
         self.assertEqual(int(first_sample["index"].item()), 0)
         self.assertEqual(
-            [int(batch["index"].item()) for batch in replayed], [0, 1, 2, 3]
+            [int(batch["index"].item()) for batch in resumed], [0, 1, 2, 3]
         )
+        self.assertNotEqual(first_sample["torch"], resumed[0]["torch"])
+
+    def test_empty_abandoned_iterator_replays_without_a_notice(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
+        first_iterator = iter(loader)
+        try:
+            with mock.patch("hyperloader.api.warnings.warn") as warn:
+                replayed = list(loader)
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                next(first_iterator)
+        finally:
+            loader.close()
+
+        warn.assert_not_called()
+        expected_seed = _hyperloader._sample_rng_context(41, 0, 0)[0]
+        generator = torch.Generator().manual_seed(expected_seed)
+        expected_draw = torch.rand((), generator=generator).item()
+        self.assertEqual(replayed[0]["torch"].item(), expected_draw)
+
+    def test_set_epoch_explicitly_replays_partial_epoch(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
+        first_iterator = iter(loader)
+        first_sample = next(first_iterator)
+        loader.set_epoch(0)
+        try:
+            with mock.patch("warnings.warn") as warn:
+                replayed = list(loader)
+        finally:
+            loader.close()
+
+        warn.assert_not_called()
         self.assertEqual(first_sample["torch"], replayed[0]["torch"])
 
     def test_construction_prepares_workers_and_retains_shuffled_probe(self) -> None:

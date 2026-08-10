@@ -61,8 +61,10 @@ class ProcessIterator(Iterator[Any]):
             batch_size = self._loader.batch_size
             if batch_size is None:
                 position = self._position
+                sample = self._next_sample(position)
                 self._position += 1
-                return self._next_sample(position)
+                self._loader._epoch_state.mark_delivered(self._epoch)
+                return sample
             stop = min(self._position + batch_size, self._length)
             batch = (
                 self._next_worker_batch(self._position // batch_size)
@@ -70,6 +72,7 @@ class ProcessIterator(Iterator[Any]):
                 else self._next_batch(self._position, stop)
             )
             self._position = stop
+            self._loader._epoch_state.mark_delivered(self._epoch)
             return batch
         except StopIteration:
             raise
@@ -153,7 +156,7 @@ class ProcessIterator(Iterator[Any]):
 
     def _finish_epoch(self) -> None:
         if not self._complete:
-            self._loader._epoch += 1
+            self._loader._epoch_state.complete(self._epoch)
             self._complete = True
 
     @property

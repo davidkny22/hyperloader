@@ -35,21 +35,27 @@ class TensorIterator(Iterator[Any]):
                 self._loader.root_seed, self._epoch, self._position
             )
             self._position += 1
-            return self._loader.dataset[index]
+            sample = self._loader.dataset[index]
+            self._loader._epoch_state.mark_delivered(self._epoch)
+            return sample
         start = self._position
         stop = min(start + batch_size, self._length)
         self._position = stop
         if not self._loader._plan.shuffle:
-            return self._loader.dataset[start:stop]
+            batch = self._loader.dataset[start:stop]
+            self._loader._epoch_state.mark_delivered(self._epoch)
+            return batch
         indices = [
             self._loader._plan.index(self._loader.root_seed, self._epoch, position)
             for position in range(start, stop)
         ]
-        return self._loader.dataset[indices]
+        batch = self._loader.dataset[indices]
+        self._loader._epoch_state.mark_delivered(self._epoch)
+        return batch
 
     def _finish_epoch(self) -> None:
         if not self._complete:
-            self._loader._epoch += 1
+            self._loader._epoch_state.complete(self._epoch)
             self._complete = True
 
     @property

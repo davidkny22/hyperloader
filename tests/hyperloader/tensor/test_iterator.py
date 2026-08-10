@@ -47,6 +47,44 @@ class TensorIteratorTest(unittest.TestCase):
         self.assertTrue(iterator.complete)
         self.assertEqual(loader._epoch, 1)
 
+    def test_abandoned_shuffled_iterator_starts_the_next_epoch(self) -> None:
+        dataset = torch.arange(24, dtype=torch.int64).reshape(8, 3)
+        loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=1, seed=13)
+        abandoned = iter(loader)
+        next(abandoned)
+
+        with self.assertWarnsRegex(UserWarning, "advanced the epoch"):
+            first_next_epoch = next(iter(loader))
+
+        indices = [
+            _hyperloader._permutation_index(13, 1, 8, position) for position in range(2)
+        ]
+        self.assertTrue(torch.equal(first_next_epoch, dataset[indices]))
+
+    def test_set_epoch_replays_an_abandoned_tensor_epoch(self) -> None:
+        dataset = torch.arange(24, dtype=torch.int64).reshape(8, 3)
+        loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=1, seed=13)
+        first = next(iter(loader))
+
+        loader.set_epoch(0)
+        replayed = next(iter(loader))
+
+        self.assertTrue(torch.equal(first, replayed))
+
+    def test_abandonment_notice_is_emitted_once_per_loader(self) -> None:
+        dataset = torch.arange(24, dtype=torch.int64).reshape(8, 3)
+        loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=1, seed=17)
+        next(iter(loader))
+
+        with self.assertWarnsRegex(UserWarning, "advanced the epoch"):
+            second = iter(loader)
+        next(second)
+
+        with mock.patch("hyperloader.api.warnings.warn") as warn:
+            iter(loader)
+
+        warn.assert_not_called()
+
     def test_public_route_has_wiring_teeth(self) -> None:
         loader = DataLoader(torch.arange(6).reshape(2, 3), num_workers=1)
         with mock.patch.object(

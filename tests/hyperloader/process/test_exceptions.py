@@ -178,7 +178,8 @@ class ProcessExceptionTest(unittest.TestCase):
                     self.assertEqual(int(next(failed).item()), 0)
                     with self.assertRaisesRegex(ValueError, "fail once"):
                         next(failed)
-                    replayed = [int(batch.item()) for batch in loader]
+                    with self.assertWarnsRegex(UserWarning, "advanced the epoch"):
+                        replayed = [int(batch.item()) for batch in loader]
                 finally:
                     loader.close()
 
