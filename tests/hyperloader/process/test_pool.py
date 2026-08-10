@@ -69,6 +69,19 @@ class NumpyDataset:
         return self.values[index]
 
 
+class TensorDataset:
+    """Return views from one parent-owned tensor storage."""
+
+    def __init__(self, length: int = 8) -> None:
+        self.values = torch.arange(length * 4, dtype=torch.int64).reshape(length, 4)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        return self.values[index]
+
+
 class NumpyRandomDataset:
     """Expose per-sample seeded NumPy draws in a homogeneous array."""
 
@@ -264,6 +277,16 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
         self.assertEqual(sum(batch["index"].numel() for batch in batches), 4)
+
+    def test_each_tensor_worker_receives_an_independent_storage_token(self) -> None:
+        dataset = TensorDataset()
+        loader = DataLoader(dataset, batch_size=2, num_workers=4, seed=29)
+        try:
+            batches = list(loader)
+        finally:
+            loader.close()
+
+        self.assertTrue(torch.equal(torch.cat(batches), dataset.values))
 
     def test_numpy_batching_preserves_per_sample_rng(self) -> None:
         first = DataLoader(NumpyRandomDataset(), batch_size=2, num_workers=2, seed=29)

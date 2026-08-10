@@ -35,7 +35,8 @@ class WorkerSet:
         completion_stride: int | None,
     ) -> None:
         self._context = context
-        self._dataset_payload = encode_multiprocessing((dataset, worker_init_fn))
+        self._dataset = dataset
+        self._worker_init_fn = worker_init_fn
         self._worker_count = worker_count
         self._root_seed = root_seed
         self._completion_stride = completion_stride
@@ -97,11 +98,14 @@ class WorkerSet:
         self, worker: int, probe: tuple[int, int, int] | None
     ) -> tuple[Connection, mp.Process]:
         owner, child = self._context.Pipe(duplex=True)
+        dataset_payload = encode_multiprocessing(
+            (self._dataset, self._worker_init_fn)
+        )
         process = self._context.Process(
             target=worker_main,
             args=(
                 child,
-                self._dataset_payload,
+                dataset_payload,
                 worker,
                 self._worker_count,
                 self._root_seed,
