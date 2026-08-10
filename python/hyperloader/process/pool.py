@@ -63,8 +63,8 @@ class ProcessPool:
                 self._workers.append(process)
             status, probe_payload = self._receive_probe()
             self._probe_status = status
-            payload_capacity = 262_144 if status != 0 else max(1, len(probe_payload))
-            exception_capacity = max(65_536, len(probe_payload), payload_capacity * 2)
+            payload_capacity = max(262_144, len(probe_payload))
+            exception_capacity = max(65_536, len(probe_payload))
             self._resources = _hyperloader._ProcessResources(
                 worker_count,
                 queue_capacity,

@@ -2,6 +2,7 @@
 
 mod delivery;
 mod owner;
+mod sizing;
 mod worker;
 
 use pyo3::prelude::*;

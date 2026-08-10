@@ -1,6 +1,7 @@
 //! Loader-owner allocation, dispatch, completion, and delivery endpoint.
 
-use crate::arena::{ArenaAllocator, GrowthPolicy, RegionRegistry, RegionToken, SlabSpec, SlotRef};
+use super::sizing::process_slab_specs;
+use crate::arena::{ArenaAllocator, GrowthPolicy, RegionRegistry, RegionToken, SlotRef};
 use crate::exec::{CommandTransport, DispatchMessage, TransportError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -71,29 +72,13 @@ impl ProcessResources {
                 .map_err(runtime_error)?,
             ));
         }
-        let standard_capacity = payload_capacity.max(exception_capacity);
-        let overflow_capacity = standard_capacity
-            .checked_mul(2)
-            .ok_or_else(|| PyValueError::new_err("arena capacity overflowed"))?;
-        let standard_slots = worker_count
-            .checked_mul(
-                u32::try_from(queue_capacity)
-                    .map_err(|_| PyValueError::new_err("queue capacity is too large"))?,
-            )
-            .and_then(|value| value.checked_mul(2))
-            .ok_or_else(|| PyValueError::new_err("arena slot count overflowed"))?;
-        let specs = [
-            SlabSpec {
-                slot_capacity: standard_capacity,
-                slots_per_slab: standard_slots,
-                overflow: false,
-            },
-            SlabSpec {
-                slot_capacity: overflow_capacity,
-                slots_per_slab: worker_count,
-                overflow: true,
-            },
-        ];
+        let specs = process_slab_specs(
+            worker_count,
+            queue_capacity,
+            payload_capacity,
+            exception_capacity,
+        )
+        .map_err(runtime_error)?;
         let allocator = ArenaAllocator::new_at_sequence(
             registry.clone(),
             token,
