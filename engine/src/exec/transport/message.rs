@@ -61,6 +61,8 @@ pub struct CompletionMessage {
     pub position: u64,
     /// Worker that executed or failed the command.
     pub worker: u32,
+    /// Worker-measured wall time for the completed command.
+    pub cost_ns: u64,
     /// Ready or exception outcome.
     pub status: CompletionStatus,
     /// Primary sample or batch slot from the dispatch command.
@@ -131,6 +133,10 @@ pub(super) fn encode_completion(
         message.position,
         message.worker,
     );
+    if message.cost_ns == 0 {
+        return Err(TransportError::InvalidMessage("completion cost"));
+    }
+    put_u64(&mut frame, 20, message.cost_ns);
     put_slot(&mut frame, 32, message.slot);
     put_u64(&mut frame, 72, message.produced_length);
     if let Some(exception) = message.exception {
@@ -144,8 +150,12 @@ pub(super) fn decode_completion(
     frame: &[u8; FRAME_SIZE],
 ) -> Result<CompletionMessage, &'static str> {
     validate_header(frame, COMPLETION_KIND)?;
-    if frame[20..32].iter().any(|byte| *byte != 0) {
+    if frame[28..32].iter().any(|byte| *byte != 0) {
         return Err("completion reserved fields");
+    }
+    let cost_ns = get_u64(frame, 20);
+    if cost_ns == 0 {
+        return Err("completion cost");
     }
     let slot = get_slot(frame, 32)?;
     let produced_length = get_u64(frame, 72);
@@ -181,6 +191,7 @@ pub(super) fn decode_completion(
     Ok(CompletionMessage {
         position: get_u64(frame, 8),
         worker: get_u32(frame, 16),
+        cost_ns,
         status,
         slot,
         produced_length,

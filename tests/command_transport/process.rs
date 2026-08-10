@@ -30,6 +30,7 @@ fn dispatch_and_completion_cross_an_independent_process() {
         CompletionMessage {
             position: message.position,
             worker: message.worker,
+            cost_ns: 500,
             status: CompletionStatus::Ready,
             slot: message.slot,
             produced_length: 17,
@@ -57,6 +58,7 @@ fn command_transport_child() {
         .try_send_completion(CompletionMessage {
             position: received.position,
             worker: received.worker,
+            cost_ns: 500,
             status: CompletionStatus::Ready,
             slot: received.slot,
             produced_length: 17,

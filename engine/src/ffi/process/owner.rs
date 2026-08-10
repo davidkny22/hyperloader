@@ -173,12 +173,12 @@ impl ProcessResources {
         }
     }
 
-    /// Attempt one completion and return `(position, status, encoded_bytes)`.
+    /// Attempt one completion and return its position, status, payload, and measured cost.
     fn try_receive(
         &mut self,
         py: Python<'_>,
         worker: u32,
-    ) -> PyResult<Option<(u64, u8, Py<PyAny>)>> {
+    ) -> PyResult<Option<super::delivery::ReceivedCompletion>> {
         self.transport(worker)?;
         super::delivery::try_receive(self, py, worker)
     }

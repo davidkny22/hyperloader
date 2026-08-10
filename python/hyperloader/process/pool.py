@@ -36,7 +36,10 @@ class ProcessPool:
         multiprocessing_context: Any = None,
         timeout: float = 0,
         registry_path: str | Path | None = None,
-        queue_capacity: int = 2,
+        queue_capacity: int | None = 2,
+        frontier_ceiling: int | None = None,
+        frontier_minimum: int = 1,
+        frontier_budget: int | None = None,
         on_worker_death: str = "close",
         batch_size: int | None = None,
     ) -> None:
@@ -60,16 +63,39 @@ class ProcessPool:
         self._probe_key = (probe_epoch, probe_position, probe_index)
         self._probe_status = 0
         self._probe_payload: bytes | None = None
-        self._immediate: deque[tuple[int, int, int, bytes]] = deque()
+        self._probe_cost_ns = 1
+        self._immediate: deque[tuple[int, int, int, bytes, int]] = deque()
         self._pending: dict[tuple[int, int], tuple[int, int, int]] = {}
         self._decoder = ResultDecoder()
         try:
             self._worker_set.launch_all(self._probe_key)
-            status, probe_payload, layout = self._receive_probe()
+            status, probe_payload, layout, probe_cost_ns = self._receive_probe()
             self._batch_layout = layout
             if layout is None:
                 self._batch_size = None
             self._probe_status = status
+            self._bytes_sample = max(
+                1, layout[2] if layout is not None else len(probe_payload)
+            )
+            if queue_capacity is None:
+                if frontier_ceiling is None or frontier_budget is None:
+                    raise ValueError(
+                        "derived queue capacity requires a frontier ceiling and budget"
+                    )
+                affordable = frontier_budget // self._bytes_sample
+                self._frontier_ceiling = max(
+                    frontier_minimum, min(frontier_ceiling, affordable)
+                )
+                from .sizing import queue_capacity as resolve_queue_capacity
+
+                command_ceiling = (
+                    (self._frontier_ceiling + self._batch_size - 1) // self._batch_size
+                    if self._batch_size is not None
+                    else self._frontier_ceiling
+                )
+                queue_capacity = resolve_queue_capacity(command_ceiling, worker_count)
+            else:
+                self._frontier_ceiling = frontier_ceiling or frontier_minimum
             batch_capacity = (
                 0
                 if self._batch_size is None or layout is None
@@ -86,6 +112,7 @@ class ProcessPool:
             )
             self._worker_set.attach_all(self._resources, self._batch_layout)
             self._probe_payload = probe_payload
+            self._probe_cost_ns = probe_cost_ns
         except BaseException:
             self.close()
             raise
@@ -108,6 +135,16 @@ class ProcessPool:
     def batch_size(self) -> int | None:
         """Return the enabled homogeneous worker batch size."""
         return self._batch_size
+
+    @property
+    def bytes_sample(self) -> int:
+        """Return the probe-measured sample payload size used by frontier budgets."""
+        return self._bytes_sample
+
+    @property
+    def frontier_ceiling(self) -> int:
+        """Return the probe-frozen frontier ceiling in per-rank samples."""
+        return self._frontier_ceiling
 
     def try_submit(
         self,
@@ -132,7 +169,13 @@ class ProcessPool:
             if worker != 0:
                 raise RuntimeError("construction probe must retain worker zero routing")
             self._immediate.append(
-                (worker, position, self._probe_status, self._probe_payload)
+                (
+                    worker,
+                    position,
+                    self._probe_status,
+                    self._probe_payload,
+                    self._probe_cost_ns,
+                )
             )
             self._probe_payload = None
             return True
@@ -145,11 +188,11 @@ class ProcessPool:
             self._pending[(worker, position)] = (epoch, index, batch_len)
         return accepted
 
-    def try_receive(self, worker: int) -> tuple[int, int, bytes] | None:
+    def try_receive(self, worker: int) -> tuple[int, int, bytes, int] | None:
         """Attempt one completion without imposing consumer delivery order."""
         if self._immediate and self._immediate[0][0] == worker:
-            _, position, status, payload = self._immediate.popleft()
-            return position, status, payload
+            _, position, status, payload, cost_ns = self._immediate.popleft()
+            return position, status, payload, cost_ns
         uses_completion_signals = self._batch_size is not None
         if uses_completion_signals and self._completion_signals[worker] == 0:
             return None
@@ -190,7 +233,7 @@ class ProcessPool:
         while True:
             completion = self.try_receive(worker)
             if completion is not None:
-                received_position, status, payload = completion
+                received_position, status, payload, _cost_ns = completion
                 if received_position != position:
                     raise RuntimeError(
                         "process completion position does not match dispatch"
@@ -254,14 +297,14 @@ class ProcessPool:
         self._pending.clear()
         self._resources = None
 
-    def _receive_probe(self) -> tuple[int, bytes, BatchLayout | None]:
+    def _receive_probe(self) -> tuple[int, bytes, BatchLayout | None, int]:
         while True:
             control = self._worker_set.controls[0]
             if control.poll(POLL_SECONDS):
-                kind, status, payload, layout = control.recv()
+                kind, status, payload, layout, cost_ns = control.recv()
                 if kind != "probe":
                     raise RuntimeError("worker returned an invalid probe response")
-                return status, payload, layout
+                return status, payload, layout, cost_ns
             self._check_worker(0, None)
 
     def _restart_worker(self, worker: int) -> list[int]:

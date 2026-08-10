@@ -43,6 +43,7 @@ def worker_main(
         except BaseException as error:
             startup_error = encode_exception(error)
         if probe is not None:
+            probe_started = time.perf_counter_ns()
             if startup_error is None:
                 epoch, position, index = probe
                 status, result = evaluate_sample(
@@ -63,7 +64,8 @@ def worker_main(
             else:
                 status, payload = startup_error
             layout = batch_layout(probe_value) if status == 0 else None
-            control.send(("probe", status, payload, layout))
+            probe_cost_ns = max(1, time.perf_counter_ns() - probe_started)
+            control.send(("probe", status, payload, layout, probe_cost_ns))
         command = control.recv()
         if command[0] == "stop":
             return
@@ -71,7 +73,9 @@ def worker_main(
             raise RuntimeError("worker received an invalid control command")
         endpoint = _hyperloader._WorkerEndpoint(*command[1])
         layout = command[2]
-        probe_values = [] if probe_value is NO_PROBE_VALUE else [probe_value]
+        probe_values = (
+            [] if probe_value is NO_PROBE_VALUE else [(probe_value, probe_cost_ns)]
+        )
         run_commands(
             control,
             endpoint,
@@ -116,14 +120,15 @@ def run_commands(
         if dispatch is None:
             time.sleep(0.0005)
             continue
+        started = time.perf_counter_ns()
         if startup_error is not None:
             status, payload = startup_error
-            result = (status, payload, None)
+            result = (status, payload, None, 0)
         elif dispatch.stage_plan != BLACK_BOX_STAGE:
             status, payload = encode_exception(
                 RuntimeError(f"unknown stage plan {dispatch.stage_plan}")
             )
-            result = (status, payload, None)
+            result = (status, payload, None, 0)
         else:
             result = evaluate_dispatch(
                 dispatch,
@@ -137,6 +142,7 @@ def run_commands(
                 endpoint,
                 layout,
             )
+        cost_ns = max(1, time.perf_counter_ns() - started + result[3])
         publish_completion(
             control,
             endpoint,
@@ -145,6 +151,7 @@ def run_commands(
             result[1],
             completion_stride,
             result[2],
+            cost_ns,
         )
 
 
@@ -155,11 +162,11 @@ def evaluate_dispatch(
     worker_count: int,
     root_seed: int,
     encoder: ResultEncoder,
-    probe_values: list[Any],
+    probe_values: list[tuple[Any, int]],
     rng_context: WorkerRngContext,
     endpoint: Any,
     layout: BatchLayout | None,
-) -> tuple[int, bytes, int | None]:
+) -> tuple[int, bytes, int | None, int]:
     """Evaluate one sample command or one contiguous default-collation batch."""
     if dispatch.batch_len == 0:
         status, value = evaluate_sample(
@@ -173,14 +180,18 @@ def evaluate_dispatch(
             rng_context,
         )
         return (
-            (0, encoder.encode(value), None) if status == 0 else (status, value, None)
+            (0, encoder.encode(value), None, 0)
+            if status == 0
+            else (status, value, None, 0)
         )
 
     values = []
+    retained_cost_ns = 0
     for offset in range(dispatch.batch_len):
         position = dispatch.index + offset
         if position == 0 and probe_values:
-            values.append(probe_values.pop())
+            value, retained_cost_ns = probe_values.pop()
+            values.append(value)
             continue
         status, value = evaluate_sample(
             dataset,
@@ -193,7 +204,7 @@ def evaluate_dispatch(
             rng_context,
         )
         if status != 0:
-            return status, value, None
+            return status, value, None, retained_cost_ns
         values.append(value)
     try:
         if layout is not None and all(
@@ -206,11 +217,11 @@ def evaluate_dispatch(
                     offset * row_bytes,
                     memoryview(value).cast("B"),
                 )
-            return 0, b"", len(values) * row_bytes
-        return 0, encode_batch(values, encoder), None
+            return 0, b"", len(values) * row_bytes, retained_cost_ns
+        return 0, encode_batch(values, encoder), None, retained_cost_ns
     except BaseException as error:
         status, payload = encode_exception(error)
-        return status, payload, None
+        return status, payload, None, retained_cost_ns
 
 
 def evaluate_sample(
@@ -250,15 +261,16 @@ def publish_completion(
     payload: bytes,
     completion_stride: int | None,
     produced_length: int | None,
+    cost_ns: int,
 ) -> None:
     """Retry bounded completion publication while preserving shutdown."""
     while True:
         if status != 0:
-            complete = endpoint.try_complete_exception(dispatch, payload)
+            complete = endpoint.try_complete_exception(dispatch, payload, cost_ns)
         elif produced_length is not None:
-            complete = endpoint.try_complete_batch(dispatch, produced_length)
+            complete = endpoint.try_complete_batch(dispatch, produced_length, cost_ns)
         else:
-            complete = endpoint.try_complete_ready(dispatch, payload)
+            complete = endpoint.try_complete_ready(dispatch, payload, cost_ns)
         if complete:
             batch_boundary = (
                 completion_stride is not None

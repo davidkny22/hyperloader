@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 import random
 import tempfile
 import time
@@ -18,6 +19,7 @@ from torch.utils.data import get_worker_info
 from hyperloader import DataLoader, _hyperloader
 from hyperloader.process import ProcessPool
 from hyperloader.process.random_surface import PhiloxRandom
+from hyperloader.process.sizing import frontier_depth
 
 
 class RandomDataset:
@@ -259,13 +261,14 @@ class ProcessPoolTest(unittest.TestCase):
             self.assertTrue(wait_for_signal(pool))
             completion = pool.try_receive(0)
             self.assertIsNotNone(completion)
-            position, status, payload = completion
+            position, status, payload, cost_ns = completion
             value = pool.decode_batch(status, payload, 0)
         finally:
             pool.close()
 
         self.assertEqual(position, 0)
         self.assertEqual(status, 2)
+        self.assertGreater(cost_ns, 0)
         self.assertTrue(torch.equal(value, torch.arange(8).reshape(2, 4)))
 
     def test_non_array_probe_retains_scalar_storage_transport(self) -> None:
@@ -353,6 +356,20 @@ class ProcessPoolTest(unittest.TestCase):
             {int(pid) for batch in first + second for pid in batch["pid"]}, pids
         )
         self.assertFalse(torch.equal(first[0]["torch"], second[0]["torch"]))
+
+    def test_public_completions_populate_the_adaptive_cost_profile(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=31)
+        try:
+            list(loader)
+            statistics = loader._cost_profile.statistics()
+            self.assertIsNotNone(statistics)
+            mean_ns, p999_ns, populated = statistics
+            expected = max(2, math.ceil(2 * (p999_ns / mean_ns) * 1.5))
+            self.assertEqual(frontier_depth(loader), expected)
+        finally:
+            loader.close()
+
+        self.assertEqual(populated, 4)
 
     def test_public_loader_reorders_real_out_of_order_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

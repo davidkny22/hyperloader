@@ -89,13 +89,19 @@ impl WorkerEndpoint {
     }
 
     /// Write a successful payload and attempt to publish its completion.
-    fn try_complete_ready(&mut self, command: &WorkerCommand, payload: &[u8]) -> PyResult<bool> {
+    fn try_complete_ready(
+        &mut self,
+        command: &WorkerCommand,
+        payload: &[u8],
+        cost_ns: u64,
+    ) -> PyResult<bool> {
         self.writer
             .write(command.message.slot, payload)
             .map_err(runtime_error)?;
         self.try_complete(CompletionMessage {
             position: command.message.position,
             worker: command.message.worker,
+            cost_ns,
             status: CompletionStatus::Ready,
             slot: command.message.slot,
             produced_length: payload.len() as u64,
@@ -127,10 +133,16 @@ impl WorkerEndpoint {
     }
 
     /// Publish one raw batch already materialized inside the assigned slot.
-    fn try_complete_batch(&self, command: &WorkerCommand, produced_length: u64) -> PyResult<bool> {
+    fn try_complete_batch(
+        &self,
+        command: &WorkerCommand,
+        produced_length: u64,
+        cost_ns: u64,
+    ) -> PyResult<bool> {
         self.try_complete(CompletionMessage {
             position: command.message.position,
             worker: command.message.worker,
+            cost_ns,
             status: CompletionStatus::ReadyBatch,
             slot: command.message.slot,
             produced_length,
@@ -143,6 +155,7 @@ impl WorkerEndpoint {
         &mut self,
         command: &WorkerCommand,
         payload: &[u8],
+        cost_ns: u64,
     ) -> PyResult<bool> {
         self.writer
             .write(command.message.exception_slot, payload)
@@ -150,6 +163,7 @@ impl WorkerEndpoint {
         self.try_complete(CompletionMessage {
             position: command.message.position,
             worker: command.message.worker,
+            cost_ns,
             status: CompletionStatus::Exception,
             slot: command.message.slot,
             produced_length: 0,

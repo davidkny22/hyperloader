@@ -5,6 +5,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 mod process;
+mod profile;
 mod schedule;
 
 /// Return the package version embedded in the native extension.
@@ -122,6 +123,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rank_placements, module)?)?;
     module.add_function(wrap_pyfunction!(default_collate, module)?)?;
     process::register(module)?;
+    module.add_class::<profile::PyCostProfile>()?;
     module.add_class::<schedule::PyStaticSchedule>()?;
     Ok(())
 }

@@ -15,6 +15,7 @@ fn concurrent_producers_deliver_each_completion_once() {
                     let message = CompletionMessage {
                         position,
                         worker: worker as u32,
+                        cost_ns: ordinal + 1,
                         status: CompletionStatus::Ready,
                         slot: slot(position),
                         produced_length: 8,

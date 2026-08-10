@@ -49,6 +49,7 @@ pub(super) fn ready_completion(position: u64, worker: u32) -> CompletionMessage 
     CompletionMessage {
         position,
         worker,
+        cost_ns: 100,
         status: CompletionStatus::Ready,
         slot: slot(position),
         produced_length: 8,

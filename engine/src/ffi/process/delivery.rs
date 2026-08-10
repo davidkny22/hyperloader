@@ -7,11 +7,13 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+pub(super) type ReceivedCompletion = (u64, u8, Py<PyAny>, u64);
+
 pub(super) fn try_receive(
     resources: &mut ProcessResources,
     py: Python<'_>,
     worker: u32,
-) -> PyResult<Option<(u64, u8, Py<PyAny>)>> {
+) -> PyResult<Option<ReceivedCompletion>> {
     let completion = match resources.transport(worker)?.try_recv_completion() {
         Ok(message) => message,
         Err(TransportError::CompletionEmpty) => return Ok(None),
@@ -113,5 +115,10 @@ pub(super) fn try_receive(
         }
     };
     resources.pending.remove(&(worker, completion.position));
-    Ok(Some((completion.position, status, payload)))
+    Ok(Some((
+        completion.position,
+        status,
+        payload,
+        completion.cost_ns,
+    )))
 }

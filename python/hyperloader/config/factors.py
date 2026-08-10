@@ -58,4 +58,6 @@ class FactorConfig:
             _require_positive(f"factors.{name}", getattr(self, name))
         if self.f_snap != "off":
             _require_positive("factors.f_snap", self.f_snap)
+        if self.alpha > 1:
+            raise ValueError("factors.alpha must not exceed one")
         _require_nonnegative_int("factors.d_min", self.d_min)

@@ -3,7 +3,13 @@
 import unittest
 
 from hyperloader import AUTO, HyperConfig
-from hyperloader.config import DeterminismConfig, DistributedConfig, ExecutorConfig
+from hyperloader.config import (
+    DeterminismConfig,
+    DistributedConfig,
+    ExecutorConfig,
+    FactorConfig,
+    SchedulerConfig,
+)
 
 
 class ConfigTest(unittest.TestCase):
@@ -32,6 +38,14 @@ class ConfigTest(unittest.TestCase):
     def test_unknown_worker_death_policy_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "on_worker_death"):
             ExecutorConfig(on_worker_death="ignore")  # type: ignore[arg-type]
+
+    def test_profile_cache_rejects_non_path_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "profile_cache"):
+            SchedulerConfig(profile_cache=object())
+
+    def test_profile_ema_factor_cannot_exceed_one(self) -> None:
+        with self.assertRaisesRegex(ValueError, "alpha"):
+            FactorConfig(alpha=1.1)
 
 
 if __name__ == "__main__":

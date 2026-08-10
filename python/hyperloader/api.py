@@ -12,6 +12,7 @@ from .epoch import EpochState
 from .planner import BlackBoxPlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
+from .profile import build_cost_profile
 
 
 def _require_nonnegative_workers(num_workers: int | Auto) -> None:
@@ -171,6 +172,7 @@ class DataLoader:
         self._process_pool: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
+        self._cost_profile = build_cost_profile(self)
         if (
             isinstance(self._plan, BlackBoxPlan)
             and num_workers is not AUTO

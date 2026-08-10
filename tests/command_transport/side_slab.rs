@@ -35,6 +35,7 @@ fn completion_carries_exception_bytes_by_side_slab_reference() {
     let message = CompletionMessage {
         position: 44,
         worker: 7,
+        cost_ns: 900,
         status: CompletionStatus::Exception,
         slot: primary,
         produced_length: 0,

@@ -36,6 +36,7 @@ fn completion_decoder_rejects_status_and_length_corruption() {
     let message = CompletionMessage {
         position: 8,
         worker: 2,
+        cost_ns: 400,
         status: CompletionStatus::Ready,
         slot: slot(),
         produced_length: 16,
@@ -48,6 +49,15 @@ fn completion_decoder_rejects_status_and_length_corruption() {
     let mut bad_length = encode_completion(message).expect("completion frame");
     bad_length[72..80].copy_from_slice(&65_u64.to_le_bytes());
     assert_eq!(decode_completion(&bad_length), Err("produced length"));
+
+    let mut missing_cost = message;
+    missing_cost.cost_ns = 0;
+    assert!(matches!(
+        encode_completion(missing_cost),
+        Err(crate::exec::TransportError::InvalidMessage(
+            "completion cost"
+        ))
+    ));
 }
 
 #[test]
@@ -55,6 +65,7 @@ fn raw_batch_completion_round_trips_its_distinct_status() {
     let message = CompletionMessage {
         position: 5,
         worker: 1,
+        cost_ns: 700,
         status: CompletionStatus::ReadyBatch,
         slot: slot(),
         produced_length: 64,

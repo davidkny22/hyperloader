@@ -26,8 +26,8 @@ class ProcessIterator(Iterator[Any]):
         self._schedule: Any = None
         self._worker_batches = False
         if self._length:
-            depth = frontier_depth(loader)
             prepare_process_pool(loader)
+            depth = frontier_depth(loader)
             batch_size = loader._process_pool.batch_size
             self._worker_batches = batch_size is not None
             schedule_length = (
@@ -148,11 +148,27 @@ class ProcessIterator(Iterator[Any]):
             completion = pool.try_receive(worker)
             if completion is None:
                 continue
-            position, status, payload = completion
+            position, status, payload, cost_ns = completion
             self._schedule.mark_completed(position, worker)
             self._ready[position] = (status, payload, worker)
+            if status in {0, 2}:
+                self._record_cost(position, cost_ns)
             progressed = True
         return progressed
+
+    def _record_cost(self, position: int, cost_ns: int) -> None:
+        profile = getattr(self._loader, "_cost_profile", None)
+        if profile is None:
+            return
+        batch_size = self._loader._process_pool.batch_size
+        if batch_size is None:
+            profile.observe(position, cost_ns)
+            return
+        start = position * batch_size
+        batch_len = min(batch_size, self._length - start)
+        per_sample_ns = max(1, cost_ns // batch_len)
+        for sample_position in range(start, start + batch_len):
+            profile.observe(sample_position, per_sample_ns)
 
     def _finish_epoch(self) -> None:
         if not self._complete:

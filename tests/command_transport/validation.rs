@@ -31,6 +31,7 @@ fn message_validation_rejects_inconsistent_fields() {
         transport.try_send_completion(CompletionMessage {
             position: 0,
             worker: 0,
+            cost_ns: 1,
             status: CompletionStatus::Ready,
             slot: slot(0),
             produced_length: 1,
