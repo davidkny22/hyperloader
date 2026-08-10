@@ -29,6 +29,7 @@ class _GeneratorCache:
     def __init__(self) -> None:
         self.tokens: dict[str, SampleRng] = {}
         self.generators: dict[str, Any] = {}
+        self.numpy_state: dict[str, Any] | None = None
 
     def resolve(self, kind: str, sample: SampleRng) -> Any:
         generator = self.generators.get(kind)
@@ -36,8 +37,15 @@ class _GeneratorCache:
             generator = _build_generator(kind, sample)
             self.generators[kind] = generator
             self.tokens[kind] = sample
+            if kind == "numpy":
+                self.numpy_state = generator.bit_generator.state
         elif self.tokens.get(kind) is not sample:
-            _rekey_generator(kind, generator, sample)
+            if kind == "numpy":
+                if self.numpy_state is None:
+                    raise RuntimeError("NumPy accessor cache has no retained state")
+                _numpy_state(generator, sample, self.numpy_state)
+            else:
+                _rekey_generator(kind, generator, sample)
             self.tokens[kind] = sample
         return generator
 
@@ -57,9 +65,12 @@ def _stream_seed(sample: SampleRng, stream_id: int) -> int:
     return words[0] | (words[1] << 32)
 
 
-def _numpy_state(generator: Any, sample: SampleRng) -> None:
+def _numpy_state(
+    generator: Any, sample: SampleRng, state: dict[str, Any] | None = None
+) -> None:
     stream_key = (sample[_KEY] ^ _splitmix64(_ACC_NUMPY)) & _UINT64_MASK
-    state = generator.bit_generator.state
+    if state is None:
+        state = generator.bit_generator.state
     state["state"]["counter"][:] = (sample[_COORD], 0, 0, 0)
     state["state"]["key"][:] = (stream_key, 0)
     state["buffer"].fill(0)

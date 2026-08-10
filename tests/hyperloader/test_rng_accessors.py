@@ -7,7 +7,7 @@ import unittest
 from hyperloader import DataLoader, _hyperloader, rng
 from hyperloader.process.numpy_surface import _splitmix64
 from hyperloader.process.random_surface import PhiloxRandom
-from hyperloader.rng import _user_code_context
+from hyperloader.rng import _cache, _user_code_context
 
 
 class AccessorDataset:
@@ -75,6 +75,20 @@ class RngAccessorTest(unittest.TestCase):
         finally:
             first_loader.close()
             second_loader.close()
+
+    def test_numpy_accessor_retains_its_state_container_across_samples(self) -> None:
+        first = _hyperloader._sample_rng_context(71, 2, 3)
+        second = _hyperloader._sample_rng_context(71, 2, 4)
+        with _user_code_context(first):
+            generator = rng("numpy")
+        retained = _cache().numpy_state
+        with _user_code_context(second):
+            self.assertIs(rng("numpy"), generator)
+        self.assertIs(_cache().numpy_state, retained)
+        self.assertEqual(
+            generator.bit_generator.state["state"]["counter"].tolist(),
+            [4, 0, 0, 0],
+        )
 
 
 if __name__ == "__main__":
