@@ -16,6 +16,7 @@ class ControllerDecision:
     reason: str
     starvation: bool
     score: tuple[int, float]
+    binding: str | None = None
 
 
 class AdaptiveController:
@@ -30,6 +31,8 @@ class AdaptiveController:
         step_clip: int,
         shrink_hysteresis: int,
         objective: ControllerObjective,
+        cpu_ceiling_binding: bool = False,
+        bandwidth_ceiling: float | None = None,
         work_shape: str = "compute",
         cluster: str = "all",
     ) -> None:
@@ -37,6 +40,8 @@ class AdaptiveController:
             raise ValueError("controller ceiling and cadence must be positive")
         if step_clip <= 0 or shrink_hysteresis <= 0:
             raise ValueError("controller clipping and hysteresis must be positive")
+        if bandwidth_ceiling is not None and bandwidth_ceiling < 0:
+            raise ValueError("controller bandwidth ceiling must be nonnegative")
         self.width_ceiling = width_ceiling
         self.width = width_ceiling
         self._cadence_ns = int(cadence_seconds * 1_000_000_000)
@@ -44,6 +49,8 @@ class AdaptiveController:
         self._step_clip = step_clip
         self._shrink_hysteresis = shrink_hysteresis
         self._objective = objective
+        self._cpu_ceiling_binding = cpu_ceiling_binding
+        self._bandwidth_ceiling = bandwidth_ceiling
         self._work_shape = work_shape
         self._cluster = cluster
         self._last_decision_ns: int | None = None
@@ -71,10 +78,23 @@ class AdaptiveController:
         starvation = self._stalled or occupied < batch_size
         previous = self.width
         reason = "hold"
-        if starvation:
+        binding = None
+        if (
+            self._bandwidth_ceiling is not None
+            and bytes_per_second > self._bandwidth_ceiling
+        ):
+            self.width = max(1, self.width - self._step_clip)
+            self._shrink_cadences = 0
+            reason = "bandwidth-ceiling"
+            binding = "bandwidth"
+        elif starvation:
             self.width = min(self.width_ceiling, self.width + self._step_clip)
             self._shrink_cadences = 0
-            reason = "starvation"
+            if self.width == previous and self._cpu_ceiling_binding:
+                reason = "cpu-ceiling"
+                binding = "cpu_cores"
+            else:
+                reason = "starvation"
         else:
             self._shrink_cadences += 1
             if self._shrink_cadences >= self._shrink_hysteresis and self.width > 1:
@@ -88,7 +108,9 @@ class AdaptiveController:
             cluster=self._cluster,
             bytes_per_second=bytes_per_second,
         )
-        decision = ControllerDecision(previous, self.width, reason, starvation, score)
+        decision = ControllerDecision(
+            previous, self.width, reason, starvation, score, binding
+        )
         self.decisions.append(decision)
         self._last_decision_ns = now_ns
         self._batches = 0

@@ -25,6 +25,7 @@ class ProcessIterator(Iterator[Any]):
         self._ready: dict[int, tuple[int, bytes, int]] = {}
         self._schedule: FrontierRuntime | None = None
         self._worker_batches = False
+        self._last_delivery_ns = time.perf_counter_ns()
         if self._length:
             prepare_process_pool(loader)
             depth = frontier_depth(loader)
@@ -83,17 +84,18 @@ class ProcessIterator(Iterator[Any]):
                 sample = self._next_sample(position)
                 self._position += 1
                 self._loader._epoch_state.mark_delivered(self._epoch)
-                self._adapt_controller()
+                self._adapt_controller(1)
                 return sample
-            stop = min(self._position + batch_size, self._length)
+            start = self._position
+            stop = min(start + batch_size, self._length)
             batch = (
-                self._next_worker_batch(self._position // batch_size)
+                self._next_worker_batch(start // batch_size)
                 if self._worker_batches
-                else self._next_batch(self._position, stop)
+                else self._next_batch(start, stop)
             )
             self._position = stop
             self._loader._epoch_state.mark_delivered(self._epoch)
-            self._adapt_controller()
+            self._adapt_controller(stop - start)
             return batch
         except StopIteration:
             raise
@@ -187,17 +189,27 @@ class ProcessIterator(Iterator[Any]):
             return None
         return sum(estimate for estimate in estimates if estimate is not None)
 
-    def _adapt_controller(self) -> None:
+    def _adapt_controller(self, delivered_samples: int) -> None:
         """Apply one cadenced controller decision by parking scheduler routes."""
+        now_ns = time.perf_counter_ns()
+        elapsed_ns = max(1, now_ns - self._last_delivery_ns)
+        self._last_delivery_ns = now_ns
         if self._position >= self._length:
             self._schedule.consume_stall_flag()
             return
         batch_size = 1 if self._worker_batches else (self._loader.batch_size or 1)
+        bytes_per_second = (
+            self._loader._process_pool.bytes_sample
+            * delivered_samples
+            * 1_000_000_000.0
+            / elapsed_ns
+        )
         decision = self._loader._controller.observe(
-            now_ns=time.perf_counter_ns(),
+            now_ns=now_ns,
             stalled=self._schedule.consume_stall_flag(),
             occupied=self._schedule.occupied,
             batch_size=batch_size,
+            bytes_per_second=bytes_per_second,
         )
         if decision is None:
             return

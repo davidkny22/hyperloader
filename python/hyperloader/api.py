@@ -176,7 +176,9 @@ class DataLoader:
         self._calibration: Any = None
         self._controller: Any = None
         self._last_frontier_report: dict[str, int | float | str] | None = None
-        self._last_controller_report: dict[str, int | float | str | bool] | None = None
+        self._last_controller_report: (
+            dict[str, int | float | str | bool | None] | None
+        ) = None
         if (
             isinstance(self._plan, BlackBoxPlan)
             and num_workers is not AUTO
@@ -251,6 +253,11 @@ class DataLoader:
         if getattr(self, "_process_pool", None) is not None:
             self._process_pool.close()
             self._process_pool = None
+
+    def stats(self) -> dict[str, object]:
+        """Return the latest controller diagnosis snapshot."""
+        report = self._last_controller_report
+        return {"controller": None if report is None else dict(report)}
 
     def _collate_batch(self, batch: list[Any]) -> Any:
         """Collate an engine-produced batch through the native contract mirror."""

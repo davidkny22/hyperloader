@@ -5,13 +5,17 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import mock
 
+from hyperloader import HyperConfig
+from hyperloader.config import CeilingConfig, ControlConfig
 from hyperloader.control import (
     AdaptiveController,
     ControllerObjective,
     CpuCluster,
     MachineIdentity,
+    build_controller,
     resolve_calibration,
     save_calibration,
 )
@@ -107,6 +111,58 @@ class AdaptiveControllerTest(unittest.TestCase):
         self.assertEqual(decision.width, 3)
         self.assertEqual(decision.reason, "starvation")
 
+    def test_binding_cpu_ceiling_names_the_blocked_expansion(self) -> None:
+        controller = AdaptiveController(
+            width_ceiling=1,
+            cadence_seconds=1.0,
+            cadence_batches=2,
+            step_clip=1,
+            shrink_hysteresis=3,
+            objective=ControllerObjective(None),
+            cpu_ceiling_binding=True,
+        )
+        controller.observe(
+            now_ns=1_000_000_000, stalled=True, occupied=1, batch_size=1
+        )
+
+        decision = controller.observe(
+            now_ns=2_000_000_000, stalled=True, occupied=1, batch_size=1
+        )
+
+        self.assertEqual(decision.width, 1)
+        self.assertEqual(decision.binding, "cpu_cores")
+        self.assertEqual(decision.reason, "cpu-ceiling")
+
+    def test_bandwidth_ceiling_shrinks_width_and_names_the_cause(self) -> None:
+        controller = AdaptiveController(
+            width_ceiling=4,
+            cadence_seconds=1.0,
+            cadence_batches=2,
+            step_clip=1,
+            shrink_hysteresis=3,
+            objective=ControllerObjective(None),
+            bandwidth_ceiling=100.0,
+        )
+        controller.observe(
+            now_ns=1_000_000_000,
+            stalled=False,
+            occupied=4,
+            batch_size=1,
+            bytes_per_second=200.0,
+        )
+
+        decision = controller.observe(
+            now_ns=2_000_000_000,
+            stalled=False,
+            occupied=4,
+            batch_size=1,
+            bytes_per_second=200.0,
+        )
+
+        self.assertEqual(decision.width, 3)
+        self.assertEqual(decision.binding, "bandwidth")
+        self.assertEqual(decision.reason, "bandwidth-ceiling")
+
     def test_runtime_loads_the_matching_machine_record(self) -> None:
         machine = MachineIdentity("controller-cpu", (CpuCluster("all", (0,)),), 4096)
         with TemporaryDirectory() as directory:
@@ -126,6 +182,40 @@ class AdaptiveControllerTest(unittest.TestCase):
 
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.machine.cache_key, machine.cache_key)
+
+    def test_runtime_applies_cpu_and_gigabyte_per_second_ceilings(self) -> None:
+        loader = SimpleNamespace(
+            _process_pool=SimpleNamespace(worker_count=4),
+            config=HyperConfig(
+                control=ControlConfig(
+                    ceilings=CeilingConfig(cpu_cores=2, bandwidth=1.5)
+                )
+            ),
+            _calibration=None,
+        )
+        with mock.patch(
+            "hyperloader.control.runtime.resolve_calibration", return_value=None
+        ):
+            controller = build_controller(loader)
+
+        self.assertEqual(controller.width_ceiling, 2)
+        self.assertEqual(controller._bandwidth_ceiling, 1_500_000_000.0)
+
+    def test_zero_cpu_ceiling_rejects_process_execution(self) -> None:
+        loader = SimpleNamespace(
+            _process_pool=SimpleNamespace(worker_count=4),
+            config=HyperConfig(
+                control=ControlConfig(ceilings=CeilingConfig(cpu_cores=0))
+            ),
+            _calibration=None,
+        )
+        with (
+            mock.patch(
+                "hyperloader.control.runtime.resolve_calibration", return_value=None
+            ),
+            self.assertRaisesRegex(ValueError, "positive for process execution"),
+        ):
+            build_controller(loader)
 
 
 if __name__ == "__main__":

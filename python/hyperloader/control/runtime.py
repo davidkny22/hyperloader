@@ -33,19 +33,42 @@ def build_controller(loader: Any) -> AdaptiveController:
         loader.config.factors.f_cad_s if configured is AUTO else float(configured)
     )
     cadence_batches = loader.config.factors.f_cad_b if configured is AUTO else 1
+    spawned_ceiling = loader._process_pool.worker_count
+    configured_cpu = loader.config.control.ceilings.cpu_cores
+    if configured_cpu is AUTO:
+        width_ceiling = spawned_ceiling
+        cpu_ceiling_binding = False
+    else:
+        if configured_cpu == 0:
+            raise ValueError(
+                "control.ceilings.cpu_cores must be positive for process execution"
+            )
+        width_ceiling = min(spawned_ceiling, int(configured_cpu))
+        cpu_ceiling_binding = width_ceiling < spawned_ceiling
+    configured_bandwidth = loader.config.control.ceilings.bandwidth
+    bandwidth_ceiling = (
+        None
+        if configured_bandwidth is AUTO
+        else float(configured_bandwidth) * 1_000_000_000.0
+    )
     return AdaptiveController(
-        width_ceiling=loader._process_pool.worker_count,
+        width_ceiling=width_ceiling,
         cadence_seconds=cadence_seconds,
         cadence_batches=cadence_batches,
         step_clip=loader.config.factors.step_clip,
         shrink_hysteresis=loader.config.factors.hysteresis,
         objective=ControllerObjective(calibration),
+        cpu_ceiling_binding=cpu_ceiling_binding,
+        bandwidth_ceiling=bandwidth_ceiling,
     )
 
 
-def decision_report(decision: ControllerDecision) -> dict[str, int | float | str | bool]:
+def decision_report(
+    decision: ControllerDecision,
+) -> dict[str, int | float | str | bool | None]:
     """Return a stable report payload for telemetry and gate assurance."""
     return {
+        "binding": decision.binding,
         "previous_width": decision.previous_width,
         "reason": decision.reason,
         "resource_loss": decision.score[1],
