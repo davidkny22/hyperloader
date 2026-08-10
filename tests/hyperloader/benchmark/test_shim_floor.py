@@ -20,7 +20,7 @@ class ShimFloorHarnessTest(unittest.TestCase):
     """Exercise every exact tier primitive and its input checks."""
 
     def test_every_tier_primitive_is_timed_and_observable(self) -> None:
-        rows = MODULE.measure_operations(2, 1, 2)
+        rows = MODULE.measure_operations(4, 1, 2)
 
         self.assertEqual({row[0] for row in rows}, set(MODULE.METRICS))
         self.assertEqual(len(rows), len(MODULE.METRICS) * 2)

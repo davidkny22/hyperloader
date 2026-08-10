@@ -154,7 +154,9 @@ def measure_operations(
                 checksum = 0
                 started = time.perf_counter_ns()
                 for position in range(iterations):
-                    checksum ^= operation(position)
+                    checksum = (
+                        checksum + operation(position) + position + 1
+                    ) & ((1 << 64) - 1)
                 elapsed = time.perf_counter_ns() - started
                 rows.append(
                     (metric, trial, iterations, elapsed, elapsed / iterations, checksum)
