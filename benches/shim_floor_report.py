@@ -91,11 +91,22 @@ def tier_statistics(values: dict[str, list[float]], tier: str) -> dict[str, Any]
     no_draw = values[f"{tier}_seed_no_draw"]
     seeded = values[f"{tier}_seed_all"]
     total = values[f"{tier}_shim_total"]
-    if not (len(no_draw) == len(seeded) == len(total)):
+    components = {
+        name: values[f"{tier}_seed_{name}"]
+        for name in ("torch", "numpy", "random")
+    }
+    if len({len(no_draw), len(seeded), len(total), *(len(v) for v in components.values())}) != 1:
         raise ValueError(f"{tier} trial vectors differ in length")
     shim = [wrapper - seed for wrapper, seed in zip(total, no_draw, strict=True)]
+    component_costs = {
+        name: statistic(
+            [cost - base for cost, base in zip(component, no_draw, strict=True)]
+        )
+        for name, component in components.items()
+    }
     return {
         "seed_no_draw": statistic(no_draw),
+        "seed_components": component_costs,
         "t_seed": statistic(seeded),
         "shim_total": statistic(total),
         "t_shim": statistic(shim),

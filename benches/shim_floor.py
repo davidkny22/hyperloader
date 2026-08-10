@@ -24,9 +24,15 @@ from hyperloader.thread.pool import ThreadPool
 
 METRICS = (
     "process_seed_no_draw",
+    "process_seed_torch",
+    "process_seed_numpy",
+    "process_seed_random",
     "process_seed_all",
     "process_shim_total",
     "thread_seed_no_draw",
+    "thread_seed_torch",
+    "thread_seed_numpy",
+    "thread_seed_random",
     "thread_seed_all",
     "thread_shim_total",
 )
@@ -81,6 +87,24 @@ def build_operations() -> ShimOperations:
         sample = process_context.current_sample
         return sample[0] ^ sample[1]
 
+    def process_seed_torch(position: int) -> int:
+        process_context.install(root_seed, epoch, position)
+        process_context._torch._ensure_armed()
+        sample = process_context.current_sample
+        return sample[0] ^ sample[1]
+
+    def process_seed_numpy(position: int) -> int:
+        process_context.install(root_seed, epoch, position)
+        process_context._numpy._ensure_armed()
+        sample = process_context.current_sample
+        return sample[0] ^ sample[1]
+
+    def process_seed_random(position: int) -> int:
+        process_context.install(root_seed, epoch, position)
+        process_context._random.generator._ensure_armed()
+        sample = process_context.current_sample
+        return sample[0] ^ sample[1]
+
     def process_shim_total(position: int) -> int:
         status, value = evaluate_sample(
             dataset,
@@ -110,6 +134,24 @@ def build_operations() -> ShimOperations:
             rng("random")
         return sample[0] ^ sample[1]
 
+    def thread_seed_torch(position: int) -> int:
+        sample = _hyperloader._sample_rng_context(root_seed, epoch, position)
+        with _user_code_context(sample):
+            rng()
+        return sample[0] ^ sample[1]
+
+    def thread_seed_numpy(position: int) -> int:
+        sample = _hyperloader._sample_rng_context(root_seed, epoch, position)
+        with _user_code_context(sample):
+            rng("numpy")
+        return sample[0] ^ sample[1]
+
+    def thread_seed_random(position: int) -> int:
+        sample = _hyperloader._sample_rng_context(root_seed, epoch, position)
+        with _user_code_context(sample):
+            rng("random")
+        return sample[0] ^ sample[1]
+
     def thread_shim_total(position: int) -> int:
         value, cost_ns = thread_pool._evaluate(epoch, position, position)
         return int(value) ^ cost_ns
@@ -117,9 +159,15 @@ def build_operations() -> ShimOperations:
     return ShimOperations(
         operations={
             "process_seed_no_draw": process_seed_no_draw,
+            "process_seed_torch": process_seed_torch,
+            "process_seed_numpy": process_seed_numpy,
+            "process_seed_random": process_seed_random,
             "process_seed_all": process_seed_all,
             "process_shim_total": process_shim_total,
             "thread_seed_no_draw": thread_seed_no_draw,
+            "thread_seed_torch": thread_seed_torch,
+            "thread_seed_numpy": thread_seed_numpy,
+            "thread_seed_random": thread_seed_random,
             "thread_seed_all": thread_seed_all,
             "thread_shim_total": thread_shim_total,
         },

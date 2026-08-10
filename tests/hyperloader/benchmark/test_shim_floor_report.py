@@ -30,6 +30,7 @@ def write_report(
     *,
     shim_total_ns: float = 1_500.0,
     seed_no_draw_ns: float = 500.0,
+    seed_component_ns: float = 1_000.0,
     seed_all_ns: float = 2_000.0,
 ) -> None:
     """Write one complete deterministic paired-core fixture."""
@@ -62,6 +63,8 @@ def write_report(
                 value = seed_no_draw_ns
             elif metric.endswith("seed_all"):
                 value = seed_all_ns
+            elif "_seed_" in metric:
+                value = seed_component_ns
             else:
                 value = shim_total_ns
             for trial in range(10):
@@ -93,6 +96,16 @@ class ShimFloorReportTest(unittest.TestCase):
                     "aggregate_eff_core_equivalents"
                 ],
                 MODULE.AGGREGATE_LIMIT,
+            )
+            self.assertEqual(
+                set(passing["performance"]["process"]["seed_components"]),
+                {"torch", "numpy", "random"},
+            )
+            self.assertEqual(
+                passing["performance"]["process"]["seed_components"]["torch"][
+                    "mean_ns"
+                ],
+                500.0,
             )
 
             write_report(performance, 19, shim_total_ns=3_000.0)
@@ -176,6 +189,9 @@ class ShimFloorReportTest(unittest.TestCase):
     def test_tier_vector_and_runtime_pairing_assumptions_are_checked(self) -> None:
         values = {
             "process_seed_no_draw": [1.0],
+            "process_seed_torch": [2.0],
+            "process_seed_numpy": [2.0],
+            "process_seed_random": [2.0],
             "process_seed_all": [2.0, 2.0],
             "process_shim_total": [3.0],
         }
