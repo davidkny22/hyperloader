@@ -36,9 +36,10 @@ def validate_report(report: dict[str, Any]) -> None:
     metadata = report.get("metadata", {})
     required = {
         "batch_size",
-        "batches_per_half",
+        "cpu_batches_per_half",
         "extension_path",
         "pair_count",
+        "pace_ns",
         "platform",
         "process_clock_resolution_ns",
         "public_path_verified",
@@ -46,6 +47,7 @@ def validate_report(report: dict[str, Any]) -> None:
         "target_sample_rate",
         "telemetry_summary_verified",
         "torch",
+        "wall_batches_per_half",
     }
     if set(metadata) != required:
         raise ValueError("measurement metadata fields do not match the required schema")
@@ -53,6 +55,8 @@ def validate_report(report: dict[str, Any]) -> None:
         raise ValueError("batch size does not match the shipped measurement configuration")
     if metadata["target_sample_rate"] != TARGET_SAMPLE_RATE:
         raise ValueError("target sample rate does not match the aggregate cost anchor")
+    if metadata["pace_ns"] != round(1e9 * BATCH_SIZE / TARGET_SAMPLE_RATE):
+        raise ValueError("wall-cell pacing does not match the aggregate cost anchor")
     if not metadata["public_path_verified"]:
         raise ValueError("measurement did not resolve through the expected installed artifact")
     if not metadata["telemetry_summary_verified"]:
@@ -60,16 +64,19 @@ def validate_report(report: dict[str, Any]) -> None:
     if metadata["process_clock_resolution_ns"] > 1_000:
         raise ValueError("process CPU clock resolution is too coarse for this measurement")
     pair_count = metadata["pair_count"]
-    telemetry_pairs = report.get("telemetry_pairs", [])
+    cpu_pairs = report.get("cpu_pairs", [])
+    wall_pairs = report.get("wall_pairs", [])
     noise_pairs = report.get("noise_pairs", [])
-    if pair_count < MINIMUM_PAIRS or len(telemetry_pairs) != pair_count:
+    if pair_count < MINIMUM_PAIRS or len(cpu_pairs) != pair_count:
         raise ValueError("telemetry pair count is below the measurement floor")
-    if len(noise_pairs) != pair_count:
-        raise ValueError("noise pair count does not match the telemetry cells")
+    if len(wall_pairs) != pair_count or len(noise_pairs) != pair_count:
+        raise ValueError("wall or noise pair count does not match the CPU cells")
     expected_orders = ["enabled-first" if index % 2 == 0 else "disabled-first" for index in range(pair_count)]
-    if [pair.get("order") for pair in telemetry_pairs] != expected_orders:
+    if [pair.get("order") for pair in cpu_pairs] != expected_orders:
         raise ValueError("telemetry feeder order did not alternate")
-    for pair in [*telemetry_pairs, *noise_pairs]:
+    if [pair.get("order") for pair in wall_pairs] != expected_orders:
+        raise ValueError("wall feeder order did not alternate")
+    for pair in [*cpu_pairs, *wall_pairs, *noise_pairs]:
         if pair["left_checksum"] != pair["right_checksum"]:
             raise ValueError("paired executions did not deliver identical values")
         if min(pair["left_wall_ns"], pair["right_wall_ns"]) < 10_000_000:
@@ -81,20 +88,25 @@ def evaluate_report(report: dict[str, Any]) -> dict[str, Any]:
     validate_report(report)
     wall_penalties = []
     cpu_cost_ns_per_batch = []
-    for pair in report["telemetry_pairs"]:
+    for cpu_pair, wall_pair in zip(report["cpu_pairs"], report["wall_pairs"], strict=True):
+        pair = wall_pair
         if pair["order"] == "enabled-first":
             enabled_wall = pair["left_wall_ns"]
-            enabled_cpu = pair["left_cpu_ns"]
             disabled_wall = pair["right_wall_ns"]
-            disabled_cpu = pair["right_cpu_ns"]
         else:
             disabled_wall = pair["left_wall_ns"]
-            disabled_cpu = pair["left_cpu_ns"]
             enabled_wall = pair["right_wall_ns"]
+        pair = cpu_pair
+        if pair["order"] == "enabled-first":
+            enabled_cpu = pair["left_cpu_ns"]
+            disabled_cpu = pair["right_cpu_ns"]
+        else:
+            disabled_cpu = pair["left_cpu_ns"]
             enabled_cpu = pair["right_cpu_ns"]
         wall_penalties.append((enabled_wall - disabled_wall) / disabled_wall)
         cpu_cost_ns_per_batch.append(
-            (enabled_cpu - disabled_cpu) / report["metadata"]["batches_per_half"]
+            (enabled_cpu - disabled_cpu)
+            / report["metadata"]["cpu_batches_per_half"]
         )
     noise_penalties = []
     for index, pair in enumerate(report["noise_pairs"]):

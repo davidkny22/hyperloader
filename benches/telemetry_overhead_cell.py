@@ -40,17 +40,27 @@ def _pin_process(cpu: int | None) -> None:
     raise OSError("process affinity is unavailable on this platform")
 
 
-def _run_half(dataset: torch.Tensor, enabled: bool) -> dict[str, Any]:
+def _run_half(
+    dataset: torch.Tensor, enabled: bool, pace_ns: int = 0
+) -> dict[str, Any]:
     config = HyperConfig(telemetry=TelemetryConfig(enabled=enabled))
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=2, config=config)
     checksum = 0
     batches = 0
     started_cpu = time.process_time_ns()
     started_wall = time.perf_counter_ns()
+    deadline_ns = started_wall
     try:
         for batch in loader:
             checksum += int(batch[0].item()) + int(batch[-1].item())
             batches += 1
+            if pace_ns:
+                deadline_ns += pace_ns
+                remaining_ns = deadline_ns - time.perf_counter_ns()
+                if remaining_ns > 200_000:
+                    time.sleep((remaining_ns - 100_000) / 1e9)
+                while time.perf_counter_ns() < deadline_ns:
+                    pass
         wall_ns = time.perf_counter_ns() - started_wall
         cpu_ns = time.process_time_ns() - started_cpu
         snapshot = loader.stats()
@@ -72,9 +82,15 @@ def _run_half(dataset: torch.Tensor, enabled: bool) -> dict[str, Any]:
     }
 
 
-def _pair(dataset: torch.Tensor, left_enabled: bool, right_enabled: bool, order: str) -> dict[str, Any]:
-    left = _run_half(dataset, left_enabled)
-    right = _run_half(dataset, right_enabled)
+def _pair(
+    dataset: torch.Tensor,
+    left_enabled: bool,
+    right_enabled: bool,
+    order: str,
+    pace_ns: int = 0,
+) -> dict[str, Any]:
+    left = _run_half(dataset, left_enabled, pace_ns)
+    right = _run_half(dataset, right_enabled, pace_ns)
     if left["batches"] != right["batches"]:
         raise AssertionError("paired executions delivered different batch counts")
     return {
@@ -88,39 +104,61 @@ def _pair(dataset: torch.Tensor, left_enabled: bool, right_enabled: bool, order:
     }
 
 
-def run_measurement(pair_count: int, batches: int, expected_root: Path, cpu: int | None) -> dict[str, Any]:
+def run_measurement(
+    pair_count: int,
+    cpu_batches: int,
+    wall_batches: int,
+    expected_root: Path,
+    cpu: int | None,
+) -> dict[str, Any]:
     """Run paired telemetry and null cells through an installed artifact."""
     if pair_count < MINIMUM_PAIRS:
         raise ValueError("pair count is below the measurement floor")
-    if batches <= 0:
-        raise ValueError("batches must be positive")
+    if cpu_batches <= 0 or wall_batches <= 0:
+        raise ValueError("CPU and wall batches must be positive")
     extension_path = Path(_hyperloader.__file__).resolve()
     if not extension_path.is_relative_to(expected_root.resolve()):
         raise RuntimeError("benchmark did not import the expected installed artifact")
     _pin_process(cpu)
     torch.set_num_threads(1)
-    dataset = torch.arange(batches * BATCH_SIZE, dtype=torch.int64)
-    _run_half(dataset, False)
-    _run_half(dataset, True)
-    telemetry_pairs = []
+    cpu_dataset = torch.arange(cpu_batches * BATCH_SIZE, dtype=torch.int64)
+    wall_dataset = torch.arange(wall_batches * BATCH_SIZE, dtype=torch.int64)
+    pace_ns = round(1e9 * BATCH_SIZE / TARGET_SAMPLE_RATE)
+    _run_half(cpu_dataset, False)
+    _run_half(cpu_dataset, True)
+    _run_half(wall_dataset, False, pace_ns)
+    _run_half(wall_dataset, True, pace_ns)
+    cpu_pairs = []
+    wall_pairs = []
     noise_pairs = []
     for index in range(pair_count):
         enabled_first = index % 2 == 0
-        telemetry_pairs.append(
+        order = "enabled-first" if enabled_first else "disabled-first"
+        cpu_pairs.append(
             _pair(
-                dataset,
+                cpu_dataset,
                 enabled_first,
                 not enabled_first,
-                "enabled-first" if enabled_first else "disabled-first",
+                order,
             )
         )
-        noise_pairs.append(_pair(dataset, False, False, "null"))
+        wall_pairs.append(
+            _pair(
+                wall_dataset,
+                enabled_first,
+                not enabled_first,
+                order,
+                pace_ns,
+            )
+        )
+        noise_pairs.append(_pair(wall_dataset, False, False, "null", pace_ns))
     return {
         "metadata": {
             "batch_size": BATCH_SIZE,
-            "batches_per_half": batches,
+            "cpu_batches_per_half": cpu_batches,
             "extension_path": str(extension_path),
             "pair_count": pair_count,
+            "pace_ns": pace_ns,
             "platform": platform.platform(),
             "process_clock_resolution_ns": round(time.get_clock_info("process_time").resolution * 1e9),
             "public_path_verified": True,
@@ -128,23 +166,27 @@ def run_measurement(pair_count: int, batches: int, expected_root: Path, cpu: int
             "target_sample_rate": TARGET_SAMPLE_RATE,
             "telemetry_summary_verified": True,
             "torch": torch.__version__,
+            "wall_batches_per_half": wall_batches,
         },
+        "cpu_pairs": cpu_pairs,
         "noise_pairs": noise_pairs,
-        "telemetry_pairs": telemetry_pairs,
+        "wall_pairs": wall_pairs,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pairs", type=int, default=MINIMUM_PAIRS)
-    parser.add_argument("--batches", type=int, default=4096)
+    parser.add_argument("--cpu-batches", type=int, default=65_536)
+    parser.add_argument("--wall-batches", type=int, default=512)
     parser.add_argument("--expected-install-root", type=Path, required=True)
     parser.add_argument("--cpu", type=int)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     report = run_measurement(
         arguments.pairs,
-        arguments.batches,
+        arguments.cpu_batches,
+        arguments.wall_batches,
         arguments.expected_install_root,
         arguments.cpu,
     )

@@ -72,9 +72,10 @@ def _report(*, telemetry_penalty: float = 0.0, cpu_ns_per_batch: float = 100.0) 
     return {
         "metadata": {
             "batch_size": 64,
-            "batches_per_half": batches,
+            "cpu_batches_per_half": batches,
             "extension_path": "/installed/hyperloader/_hyperloader.so",
             "pair_count": 20,
+            "pace_ns": 800_000,
             "platform": "test-platform",
             "process_clock_resolution_ns": 100,
             "public_path_verified": True,
@@ -82,9 +83,11 @@ def _report(*, telemetry_penalty: float = 0.0, cpu_ns_per_batch: float = 100.0) 
             "target_sample_rate": 80_000,
             "telemetry_summary_verified": True,
             "torch": "2.test",
+            "wall_batches_per_half": 128,
         },
+        "cpu_pairs": [dict(pair) for pair in telemetry_pairs],
         "noise_pairs": noise_pairs,
-        "telemetry_pairs": telemetry_pairs,
+        "wall_pairs": telemetry_pairs,
     }
 
 
@@ -112,6 +115,7 @@ class TelemetryOverheadReportTest(unittest.TestCase):
             ("pair_count", 19, "pair count"),
             ("batch_size", 32, "batch size"),
             ("target_sample_rate", 79_999, "sample rate"),
+            ("pace_ns", 799_999, "pacing"),
             ("public_path_verified", False, "installed artifact"),
             ("telemetry_summary_verified", False, "epoch summary"),
             ("process_clock_resolution_ns", 10_000, "clock resolution"),
@@ -125,13 +129,13 @@ class TelemetryOverheadReportTest(unittest.TestCase):
 
     def test_nonidentical_delivery_is_rejected(self) -> None:
         report = _report()
-        report["telemetry_pairs"][0]["right_checksum"] = 456
+        report["cpu_pairs"][0]["right_checksum"] = 456
         with self.assertRaisesRegex(ValueError, "identical values"):
             report_module.validate_report(report)
 
     def test_nonalternating_order_is_rejected(self) -> None:
         report = _report()
-        report["telemetry_pairs"][1]["order"] = "enabled-first"
+        report["cpu_pairs"][1]["order"] = "enabled-first"
         with self.assertRaisesRegex(ValueError, "alternate"):
             report_module.validate_report(report)
 
