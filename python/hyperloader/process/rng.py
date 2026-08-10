@@ -35,10 +35,9 @@ class WorkerRngContext:
 
     def install(self, root_seed: int, epoch: int, position: int) -> int:
         """Install the three seeded CPU globals and the current worker seed."""
-        torch_seed, key = _hyperloader._sample_rng_context(
-            root_seed, epoch, position
-        )
-        self._current.update(torch_seed, key, position)
+        sample = _hyperloader._sample_rng_context(root_seed, epoch, position)
+        self._current.value = sample
+        torch_seed = sample[0]
         if self._worker_info is None:
             raise RuntimeError("worker RNG context has no attached dataset")
         self._worker_info.begin_sample(torch_seed)

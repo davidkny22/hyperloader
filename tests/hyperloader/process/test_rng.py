@@ -34,7 +34,7 @@ class WorkerRngContextTest(unittest.TestCase):
         context = WorkerRngContext(2, 4)
         context.attach_dataset(dataset)
         try:
-            torch_seed, key = _hyperloader._sample_rng_context(17, 3, 11)
+            torch_seed, key, _ = _hyperloader._sample_rng_context(17, 3, 11)
             context.install(17, 3, 11)
             self.assertIsNone(worker_module._worker_info)
             info = get_worker_info()
@@ -116,7 +116,7 @@ class WorkerRngContextTest(unittest.TestCase):
         context = WorkerRngContext(0, 1)
         context.attach_dataset([0])
         try:
-            torch_seed, _ = _hyperloader._sample_rng_context(31, 2, 7)
+            torch_seed, _, _ = _hyperloader._sample_rng_context(31, 2, 7)
             context.install(31, 2, 7)
             sample = context._current.value
 
@@ -159,7 +159,7 @@ class WorkerRngContextTest(unittest.TestCase):
         context = WorkerRngContext(0, 1)
         context.attach_dataset([0])
         try:
-            _, key = _hyperloader._sample_rng_context(41, 7, 23)
+            _, key, _ = _hyperloader._sample_rng_context(41, 7, 23)
             words = _hyperloader._rng_block_from_key(key, 23, 0, 7)
             expected = ((words[0] >> 5) * 67_108_864.0 + (words[1] >> 6)) * (
                 2.0**-53
@@ -195,7 +195,7 @@ class WorkerRngContextTest(unittest.TestCase):
         context = WorkerRngContext(0, 1)
         context.attach_dataset([0])
         try:
-            _, key = _hyperloader._sample_rng_context(37, 6, 17)
+            _, key, _ = _hyperloader._sample_rng_context(37, 6, 17)
             context._numpy._buffer.fill(91)
             context._numpy._state["buffer_pos"] = 1
             context._numpy._state["has_uint32"] = 1
@@ -243,7 +243,7 @@ class WorkerRngContextTest(unittest.TestCase):
             random.gauss(0.0, 1.0)
             self.assertIsNotNone(context._random.generator.gauss_next)
 
-            _, key = _hyperloader._sample_rng_context(47, 3, 2)
+            _, key, _ = _hyperloader._sample_rng_context(47, 3, 2)
             reference = PhiloxRandom()
             reference.rekey(key, 2)
             context.install(47, 3, 2)

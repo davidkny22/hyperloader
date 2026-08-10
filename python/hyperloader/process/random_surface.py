@@ -7,7 +7,7 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
-from .sample_rng import CurrentSample, SampleRng
+from .sample_rng import COORD, KEY, CurrentSample, SampleRng
 
 _STATE_RANDOM = 7
 _UINT32_BITS = 32
@@ -69,7 +69,7 @@ class PhiloxRandom(random.Random):
             return
         sample = self._current.value
         if sample is not None and self._armed is not sample:
-            self.rekey(sample.key, sample.coord)
+            self.rekey(sample[KEY], sample[COORD])
             self._armed = sample
 
     def seed(self, a: Any = None, version: int = 2) -> None:

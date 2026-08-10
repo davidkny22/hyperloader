@@ -42,10 +42,13 @@ class RngContractTest(unittest.TestCase):
 
         for arguments in cases:
             with self.subTest(arguments=arguments):
-                torch_seed, resolved_key = _hyperloader._sample_rng_context(*arguments)
+                torch_seed, resolved_key, resolved_coord = (
+                    _hyperloader._sample_rng_context(*arguments)
+                )
 
                 self.assertEqual(torch_seed, sample_torch_seed(*arguments))
                 self.assertEqual(resolved_key, key64(arguments[0], arguments[1]))
+                self.assertEqual(resolved_coord, arguments[2])
                 self.assertEqual(
                     _hyperloader._rng_block_from_key(resolved_key, arguments[2], 9, 7),
                     block(*arguments, 9, 7),

@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 
-from .sample_rng import CurrentSample, SampleRng
+from .sample_rng import TORCH_SEED, CurrentSample, SampleRng
 
 
 class TorchModuleSurface(TorchDispatchMode):
@@ -38,7 +38,7 @@ class TorchModuleSurface(TorchDispatchMode):
     def _ensure_armed(self) -> None:
         sample = self._current.value
         if sample is not None and self._armed is not sample:
-            self._generator.manual_seed(sample.torch_seed)
+            self._generator.manual_seed(sample[TORCH_SEED])
             self._armed = sample
 
     @staticmethod

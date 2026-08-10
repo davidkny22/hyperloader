@@ -59,24 +59,32 @@ def build_operations() -> InstallOperations:
     context = WorkerRngContext(0, 1)
     context.attach_dataset((0,))
     root_seed, epoch, position = 0x1234_5678_9ABC_DEF0, 17, 29
-    torch_seed, key = _hyperloader._sample_rng_context(root_seed, epoch, position)
+    sample = _hyperloader._sample_rng_context(root_seed, epoch, position)
+    torch_seed, key, _ = sample
 
     def native_context() -> Any:
         return _hyperloader._sample_rng_context(root_seed, epoch, position)
 
     def coordinate_update() -> Any:
-        return context._current.update(torch_seed, key, position)
+        context._current.value = sample
+        return sample
 
     def torch_rekey() -> None:
-        context._current.update(torch_seed, key, position)
+        context._current.value = _hyperloader._sample_rng_context(
+            root_seed, epoch, position
+        )
         context._torch._ensure_armed()
 
     def random_rekey() -> None:
-        context._current.update(torch_seed, key, position)
+        context._current.value = _hyperloader._sample_rng_context(
+            root_seed, epoch, position
+        )
         context._random.generator._ensure_armed()
 
     def numpy_rekey() -> None:
-        context._current.update(torch_seed, key, position)
+        context._current.value = _hyperloader._sample_rng_context(
+            root_seed, epoch, position
+        )
         context._numpy._ensure_armed()
 
     def worker_info_lazy() -> Any:
@@ -134,7 +142,7 @@ def measure_operations(
                     operation()
                 elapsed = time.perf_counter_ns() - started
                 sample = bound.context._current.value
-                checksum = 0 if sample is None else sample.torch_seed ^ sample.key
+                checksum = 0 if sample is None else sample[0] ^ sample[1]
                 checksum ^= int(bound.context._random.generator._key)
                 checksum ^= int(bound.context._numpy._key[0])
                 rows.append(

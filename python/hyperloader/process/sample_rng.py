@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True, slots=True)
-class SampleRng:
-    """Carry every value needed to arm one sample's seeded surfaces."""
-
-    torch_seed: int
-    key: int
-    coord: int
+SampleRng = tuple[int, int, int]
+TORCH_SEED = 0
+KEY = 1
+COORD = 2
 
 
 class CurrentSample:
@@ -19,9 +13,3 @@ class CurrentSample:
 
     def __init__(self) -> None:
         self.value: SampleRng | None = None
-
-    def update(self, torch_seed: int, key: int, coord: int) -> SampleRng:
-        """Publish one immutable sample token with one pointer assignment."""
-        sample = SampleRng(torch_seed, key, coord)
-        self.value = sample
-        return sample

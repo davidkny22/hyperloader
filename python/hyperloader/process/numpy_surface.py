@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .sample_rng import CurrentSample, SampleRng
+from .sample_rng import COORD, KEY, CurrentSample, SampleRng
 
 _STATE_NUMPY = 8
 _UINT64_MASK = (1 << 64) - 1
@@ -122,7 +122,7 @@ class NumpyModuleSurface:
     def _ensure_armed(self) -> None:
         sample = self._current.value
         if sample is not None and self._armed is not sample:
-            self.rekey(sample.key, sample.coord)
+            self.rekey(sample[KEY], sample[COORD])
             self._armed = sample
 
     def _bound_generator_method(self, name: str) -> Any:

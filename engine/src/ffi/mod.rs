@@ -40,8 +40,9 @@ fn rng_block_from_key(
 }
 
 #[pyfunction(name = "_sample_rng_context")]
-fn sample_rng_context(root_seed: u64, epoch: u64, coord: u64) -> (u64, u64) {
-    rng::sample_rng_context(root_seed, epoch, coord)
+fn sample_rng_context(root_seed: u64, epoch: u64, coord: u64) -> (u64, u64, u64) {
+    let (torch_seed, key) = rng::sample_rng_context(root_seed, epoch, coord);
+    (torch_seed, key, coord)
 }
 
 #[pyfunction(name = "_feistel_permute")]
