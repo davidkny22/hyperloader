@@ -43,8 +43,8 @@ impl WorkerCommand {
     }
 
     #[getter]
-    const fn batch_end(&self) -> bool {
-        self.message.batch_end
+    const fn batch_len(&self) -> u32 {
+        self.message.batch_len
     }
 }
 

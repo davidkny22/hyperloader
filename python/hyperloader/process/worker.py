@@ -10,7 +10,7 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
-from .batching import ArrayBatcher
+from .batching import encode_batch
 from .parent_watchdog import start_parent_watchdog
 from .rng import clear_worker_info, install_sample_rng, set_worker_info
 from .serialization import ResultEncoder
@@ -26,7 +26,6 @@ def worker_main(
     worker_count: int,
     root_seed: int,
     probe: tuple[int, int, int] | None,
-    batch_size: int | None,
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
     start_parent_watchdog()
@@ -67,9 +66,7 @@ def worker_main(
         if command[0] != "attach":
             raise RuntimeError("worker received an invalid control command")
         endpoint = _hyperloader._WorkerEndpoint(*command[1])
-        batcher = ArrayBatcher(batch_size, encoder)
-        if probe_value is not NO_PROBE_VALUE:
-            batcher.seed_probe(probe_value)
+        probe_values = [] if probe_value is NO_PROBE_VALUE else [probe_value]
         run_commands(
             control,
             endpoint,
@@ -78,7 +75,8 @@ def worker_main(
             worker_count,
             root_seed,
             startup_error,
-            batcher,
+            encoder,
+            probe_values,
         )
     finally:
         clear_worker_info()
@@ -93,7 +91,8 @@ def run_commands(
     worker_count: int,
     root_seed: int,
     startup_error: tuple[int, bytes] | None,
-    batcher: ArrayBatcher,
+    encoder: ResultEncoder,
+    probe_values: list[Any],
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -108,35 +107,69 @@ def run_commands(
             continue
         if startup_error is not None:
             status, payload = startup_error
-            completions = batcher.failure(dispatch, status, payload)
+            result = (status, payload)
         elif dispatch.stage_plan != BLACK_BOX_STAGE:
             status, payload = encode_exception(
                 RuntimeError(f"unknown stage plan {dispatch.stage_plan}")
             )
-            completions = batcher.failure(dispatch, status, payload)
+            result = (status, payload)
         else:
-            status, result = evaluate_sample(
+            result = evaluate_dispatch(
+                dispatch,
                 dataset,
                 worker_id,
                 worker_count,
                 root_seed,
-                dispatch.epoch,
-                dispatch.position,
-                dispatch.index,
+                encoder,
+                probe_values,
             )
-            completions = (
-                batcher.success(dispatch, result)
-                if status == 0
-                else batcher.failure(dispatch, status, result)
-            )
-        for completion in completions:
-            publish_completion(
-                control,
-                endpoint,
-                completion.dispatch,
-                completion.status,
-                completion.payload,
-            )
+        publish_completion(control, endpoint, dispatch, result[0], result[1])
+
+
+def evaluate_dispatch(
+    dispatch: Any,
+    dataset: Any,
+    worker_id: int,
+    worker_count: int,
+    root_seed: int,
+    encoder: ResultEncoder,
+    probe_values: list[Any],
+) -> tuple[int, bytes]:
+    """Evaluate one sample command or one contiguous default-collation batch."""
+    if dispatch.batch_len == 0:
+        status, value = evaluate_sample(
+            dataset,
+            worker_id,
+            worker_count,
+            root_seed,
+            dispatch.epoch,
+            dispatch.position,
+            dispatch.index,
+        )
+        return (0, encoder.encode(value)) if status == 0 else (status, value)
+
+    values = []
+    for offset in range(dispatch.batch_len):
+        position = dispatch.index + offset
+        if position == 0 and probe_values:
+            values.append(probe_values.pop())
+            continue
+        status, value = evaluate_sample(
+            dataset,
+            worker_id,
+            worker_count,
+            root_seed,
+            dispatch.epoch,
+            position,
+            position,
+        )
+        if status != 0:
+            return status, value
+        values.append(value)
+    try:
+        return 0, encode_batch(values, encoder)
+    except BaseException as error:
+        return encode_exception(error)
 
 
 def evaluate_sample(

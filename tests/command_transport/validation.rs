@@ -21,7 +21,7 @@ fn message_validation_rejects_inconsistent_fields() {
             stage_plan: 0,
             index: 0,
             worker: 0,
-            batch_end: true,
+            batch_len: 0,
             slot: invalid_slot,
             exception_slot: slot(1),
         }),

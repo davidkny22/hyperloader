@@ -8,7 +8,6 @@ from typing import Any
 
 from hyperloader import _hyperloader
 
-from .batching import unwrap_batch_payload
 from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .pool import POLL_SECONDS
@@ -27,15 +26,28 @@ class ProcessIterator(Iterator[Any]):
         self._valid = True
         self._ready: dict[int, tuple[int, bytes, int]] = {}
         self._schedule: Any = None
+        self._worker_batches = False
         if self._length:
             depth = frontier_depth(loader)
             prepare_process_pool(loader)
+            batch_size = loader._process_pool.batch_size
+            self._worker_batches = batch_size is not None
+            schedule_length = (
+                (self._length + batch_size - 1) // batch_size
+                if batch_size is not None
+                else self._length
+            )
+            schedule_depth = (
+                max(1, (depth + batch_size - 1) // batch_size)
+                if batch_size is not None
+                else depth
+            )
             self._schedule = _hyperloader._StaticSchedule(
                 0,
-                self._length,
-                depth,
+                schedule_length,
+                schedule_depth,
                 loader._process_pool.worker_count,
-                loader._process_pool.batch_size or 1,
+                1,
             )
             self._fill_frontier()
 
@@ -55,7 +67,11 @@ class ProcessIterator(Iterator[Any]):
                 self._position += 1
                 return self._next_sample(position)
             stop = min(self._position + batch_size, self._length)
-            batch = self._next_batch(self._position, stop)
+            batch = (
+                self._next_worker_batch(self._position // batch_size)
+                if self._worker_batches
+                else self._next_batch(self._position, stop)
+            )
             self._position = stop
             return batch
         except StopIteration:
@@ -73,33 +89,14 @@ class ProcessIterator(Iterator[Any]):
     def _next_batch(self, start: int, stop: int) -> Any:
         pool = self._loader._process_pool
         samples = []
-        saw_acknowledgement = False
-        materialized = None
-        saw_materialized = False
         for position in range(start, stop):
             status, payload, worker = self._next_completion(position)
-            if status != 0:
-                pool.decode(status, payload, worker)
-            if not payload:
-                saw_acknowledgement = True
-                continue
-            batch_payload = unwrap_batch_payload(payload)
-            if batch_payload is not None:
-                if position != stop - 1:
-                    raise RuntimeError(
-                        "worker batch payload arrived before its final position"
-                    )
-                materialized = pool.decode(status, batch_payload, worker)
-                saw_materialized = True
-                continue
-            if saw_acknowledgement:
-                raise RuntimeError("worker sample payload followed a batch acknowledgement")
             samples.append(pool.decode(status, payload, worker))
-        if saw_materialized:
-            return materialized
-        if saw_acknowledgement:
-            raise RuntimeError("worker batch payload is missing")
         return self._loader._collate_batch(samples)
+
+    def _next_worker_batch(self, ordinal: int) -> Any:
+        status, payload, worker = self._next_completion(ordinal)
+        return self._loader._process_pool.decode(status, payload, worker)
 
     def _next_completion(self, expected_position: int) -> tuple[int, bytes, int]:
         pool = self._loader._process_pool
@@ -122,19 +119,22 @@ class ProcessIterator(Iterator[Any]):
         pool = self._loader._process_pool
         while (dispatch := self._schedule.next_dispatch()) is not None:
             position, worker = dispatch
-            index = self._loader._plan.index(
-                self._loader.root_seed, self._epoch, position
-            )
             batch_size = pool.batch_size
-            batch_end = batch_size is None or (
-                (position + 1) % batch_size == 0 or position + 1 == self._length
+            sample_position = position * batch_size if batch_size is not None else position
+            index = self._loader._plan.index(
+                self._loader.root_seed, self._epoch, sample_position
+            )
+            batch_len = (
+                min(batch_size, self._length - sample_position)
+                if batch_size is not None
+                else 0
             )
             if not pool.try_submit(
                 self._epoch,
                 position,
                 index,
                 worker,
-                batch_end=batch_end,
+                batch_len=batch_len,
             ):
                 return
             self._schedule.mark_dispatched(position, worker)

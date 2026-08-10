@@ -39,7 +39,7 @@ pub(super) fn dispatch(position: u64, worker: u32) -> DispatchMessage {
         stage_plan: 5,
         index: position.saturating_add(1000),
         worker,
-        batch_end: true,
+        batch_len: 0,
         slot: slot(position),
         exception_slot: slot(position.saturating_add(10_000)),
     }

@@ -10,7 +10,7 @@ fn dispatch_decoder_rejects_corrupted_header_and_reserved_bytes() {
         stage_plan: 3,
         index: 19,
         worker: 2,
-        batch_end: true,
+        batch_len: 64,
         slot: slot(),
         exception_slot: SlotRef {
             slot_index: 3,
@@ -29,10 +29,6 @@ fn dispatch_decoder_rejects_corrupted_header_and_reserved_bytes() {
         decode_dispatch(&bad_reserved),
         Err("dispatch reserved fields")
     );
-
-    let mut bad_batch_end = encode_dispatch(message).expect("dispatch frame");
-    bad_batch_end[120] = 2;
-    assert_eq!(decode_dispatch(&bad_batch_end), Err("dispatch batch end"));
 }
 
 #[test]

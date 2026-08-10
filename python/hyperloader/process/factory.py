@@ -16,7 +16,12 @@ def prepare_process_pool(loader: Any) -> None:
     probe_index = loader._plan.index(loader.root_seed, loader._epoch, 0)
     batch_size = (
         loader.batch_size
-        if loader.config.executor.on_worker_death == "close"
+        if (
+            loader.config.executor.on_worker_death == "close"
+            and not loader._plan.shuffle
+            and loader.batch_size is not None
+            and loader.batch_size > 1
+        )
         else None
     )
     loader._process_pool = ProcessPool(

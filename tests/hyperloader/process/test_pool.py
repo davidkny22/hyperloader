@@ -163,6 +163,25 @@ class ProcessPoolTest(unittest.TestCase):
         self.assertEqual(len(batches), len(expected))
         self.assertTrue(all(torch.equal(left, right) for left, right in zip(batches, expected)))
 
+    def test_sequential_batch_uses_one_native_dispatch_per_result(self) -> None:
+        loader = DataLoader(NumpyDataset(5), batch_size=2, num_workers=2, seed=23)
+        try:
+            with mock.patch.object(
+                loader._process_pool,
+                "try_submit",
+                wraps=loader._process_pool.try_submit,
+            ) as submit:
+                batches = list(loader)
+        finally:
+            loader.close()
+
+        self.assertEqual(len(batches), 3)
+        self.assertEqual(submit.call_count, 3)
+        self.assertEqual([call.args[1] for call in submit.call_args_list], [0, 1, 2])
+        self.assertEqual(
+            [call.kwargs["batch_len"] for call in submit.call_args_list], [2, 2, 1]
+        )
+
     def test_numpy_batching_preserves_per_sample_rng(self) -> None:
         first = DataLoader(NumpyRandomDataset(), batch_size=2, num_workers=2, seed=29)
         second = DataLoader(NumpyRandomDataset(), batch_size=2, num_workers=2, seed=29)

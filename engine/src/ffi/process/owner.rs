@@ -111,7 +111,7 @@ impl ProcessResources {
     }
 
     /// Reserve payload and exception slots and attempt one targeted dispatch.
-    #[pyo3(signature = (epoch, position, index, stage_plan, worker, batch_end=true))]
+    #[pyo3(signature = (epoch, position, index, stage_plan, worker, batch_len=0))]
     fn try_submit(
         &mut self,
         epoch: u64,
@@ -119,7 +119,7 @@ impl ProcessResources {
         index: u64,
         stage_plan: u32,
         worker: u32,
-        batch_end: bool,
+        batch_len: u32,
     ) -> PyResult<bool> {
         if self.pending.contains_key(&(worker, position)) {
             return Err(PyValueError::new_err(
@@ -144,7 +144,7 @@ impl ProcessResources {
             stage_plan,
             index,
             worker,
-            batch_end,
+            batch_len,
             slot: primary,
             exception_slot: exception,
         };
