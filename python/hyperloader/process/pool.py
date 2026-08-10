@@ -6,7 +6,7 @@ import multiprocessing as mp
 import sys
 import time
 from collections import deque
-from multiprocessing.connection import Connection
+from multiprocessing.connection import Connection, wait
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +51,7 @@ class ProcessPool:
         self._resources: Any = None
         self._controls: list[Connection] = []
         self._workers: list[mp.Process] = []
+        self._completion_signals = [0] * worker_count
         self._probe_key = (probe_epoch, probe_position, probe_index)
         self._probe_status = 0
         self._probe_payload: bytes | None = None
@@ -88,7 +89,9 @@ class ProcessPool:
     @property
     def worker_pids(self) -> tuple[int, ...]:
         """Return stable process identifiers for liveness tests and diagnosis."""
-        return tuple(process.pid for process in self._workers if process.pid is not None)
+        return tuple(
+            process.pid for process in self._workers if process.pid is not None
+        )
 
     @property
     def worker_count(self) -> int:
@@ -115,7 +118,11 @@ class ProcessPool:
         key = (epoch, position, index)
         if batch_len < 0:
             raise ValueError("batch length cannot be negative")
-        if self._probe_payload is not None and key == self._probe_key and batch_len == 0:
+        if (
+            self._probe_payload is not None
+            and key == self._probe_key
+            and batch_len == 0
+        ):
             if worker != 0:
                 raise RuntimeError("construction probe must retain worker zero routing")
             self._immediate.append(
@@ -137,9 +144,13 @@ class ProcessPool:
         if self._immediate and self._immediate[0][0] == worker:
             _, position, status, payload = self._immediate.popleft()
             return position, status, payload
+        if self._completion_signals[worker] == 0:
+            return None
         completion = self._resources.try_receive(worker)
-        if completion is not None:
-            self._pending.pop((worker, completion[0]), None)
+        if completion is None:
+            raise RuntimeError("worker signaled a completion before publishing it")
+        self._completion_signals[worker] -= 1
+        self._pending.pop((worker, completion[0]), None)
         return completion
 
     def decode(self, status: int, payload: bytes, worker: int) -> Any:
@@ -163,10 +174,12 @@ class ProcessPool:
             if completion is not None:
                 received_position, status, payload = completion
                 if received_position != position:
-                    raise RuntimeError("process completion position does not match dispatch")
+                    raise RuntimeError(
+                        "process completion position does not match dispatch"
+                    )
                 return self.decode(status, payload, worker)
             self._check_worker(worker, deadline)
-            time.sleep(POLL_SECONDS)
+            self.wait_for_completion(deadline)
 
     def deadline(self) -> float | None:
         """Create the current request's timeout deadline."""
@@ -176,6 +189,27 @@ class ProcessPool:
         """Validate every process and the consumer timeout deadline."""
         for worker in range(len(self._workers)):
             self._check_worker(worker, deadline)
+
+    def wait_for_completion(self, deadline: float | None) -> bool:
+        """Wait for a worker completion signal while retaining liveness polls."""
+        timeout = POLL_SECONDS
+        if deadline is not None:
+            timeout = max(0.0, min(timeout, deadline - time.monotonic()))
+        ready = wait(self._controls, timeout)
+        observed = False
+        for worker, control in enumerate(self._controls):
+            if control not in ready:
+                continue
+            while control.poll():
+                try:
+                    message = control.recv()
+                except EOFError:
+                    break
+                if message != ("ready",):
+                    raise RuntimeError("worker returned an invalid completion signal")
+                self._completion_signals[worker] += 1
+                observed = True
+        return observed
 
     def close(self) -> None:
         """Stop workers, reclaim native resources, and make closure idempotent."""
@@ -212,6 +246,7 @@ class ProcessPool:
             control.close()
         self._controls.clear()
         self._workers.clear()
+        self._completion_signals.clear()
         self._pending.clear()
         self._resources = None
 
@@ -251,6 +286,7 @@ class ProcessPool:
         owner, process = self._launch_worker(worker, None)
         self._controls[worker] = owner
         self._workers[worker] = process
+        self._completion_signals[worker] = 0
         owner.send(("attach", self._resources.descriptor(worker)))
         for position in positions:
             epoch, index, batch_len = self._pending[(worker, position)]
@@ -262,7 +298,9 @@ class ProcessPool:
                 worker,
                 batch_len,
             ):
-                raise RuntimeError("replacement worker transport rejected recovered work")
+                raise RuntimeError(
+                    "replacement worker transport rejected recovered work"
+                )
         return positions
 
     def _check_worker(self, worker: int, deadline: float | None) -> None:

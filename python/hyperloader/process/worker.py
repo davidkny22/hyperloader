@@ -217,6 +217,7 @@ def publish_completion(
             else endpoint.try_complete_exception(dispatch, payload)
         )
         if complete:
+            control.send(("ready",))
             return
         if control.poll():
             command = control.recv()

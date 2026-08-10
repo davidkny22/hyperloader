@@ -130,7 +130,9 @@ class ProcessPoolTest(unittest.TestCase):
         first = ProcessPool(RandomDataset(), 2, 17, 0, 0, 0)
         second = ProcessPool(RandomDataset(), 2, 17, 0, 0, 0)
         try:
-            first_values = [first.execute(0, position, position) for position in range(4)]
+            first_values = [
+                first.execute(0, position, position) for position in range(4)
+            ]
             second_values = [
                 second.execute(0, position, position) for position in range(4)
             ]
@@ -161,7 +163,9 @@ class ProcessPoolTest(unittest.TestCase):
             torch.utils.data.default_collate([dataset[4]]),
         ]
         self.assertEqual(len(batches), len(expected))
-        self.assertTrue(all(torch.equal(left, right) for left, right in zip(batches, expected)))
+        self.assertTrue(
+            all(torch.equal(left, right) for left, right in zip(batches, expected))
+        )
 
     def test_sequential_batch_uses_one_native_dispatch_per_result(self) -> None:
         loader = DataLoader(NumpyDataset(5), batch_size=2, num_workers=2, seed=23)
@@ -182,6 +186,22 @@ class ProcessPoolTest(unittest.TestCase):
         self.assertEqual(
             [call.kwargs["batch_len"] for call in submit.call_args_list], [2, 2, 1]
         )
+
+    def test_native_completion_wakes_the_owner_control_pipe(self) -> None:
+        pool = ProcessPool(NumpyDataset(2), 1, 23, 0, 0, 0, batch_size=2)
+        try:
+            self.assertTrue(pool.try_submit(0, 0, 0, 0, batch_len=2))
+            self.assertTrue(pool.wait_for_completion(time.monotonic() + 1.0))
+            completion = pool.try_receive(0)
+            self.assertIsNotNone(completion)
+            position, status, payload = completion
+            value = pool.decode(status, payload, 0)
+        finally:
+            pool.close()
+
+        self.assertEqual(position, 0)
+        self.assertEqual(status, 0)
+        self.assertTrue(torch.equal(value, torch.arange(8).reshape(2, 4)))
 
     def test_non_array_probe_retains_scalar_storage_transport(self) -> None:
         loader = DataLoader(PublicDataset(), batch_size=2, num_workers=2, seed=29)
@@ -294,11 +314,15 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
         self.assertEqual(int(first_sample["index"].item()), 0)
-        self.assertEqual([int(batch["index"].item()) for batch in replayed], [0, 1, 2, 3])
+        self.assertEqual(
+            [int(batch["index"].item()) for batch in replayed], [0, 1, 2, 3]
+        )
         self.assertEqual(first_sample["torch"], replayed[0]["torch"])
 
     def test_construction_prepares_workers_and_retains_shuffled_probe(self) -> None:
-        loader = DataLoader(list(range(8)), batch_size=2, shuffle=True, num_workers=2, seed=43)
+        loader = DataLoader(
+            list(range(8)), batch_size=2, shuffle=True, num_workers=2, seed=43
+        )
         try:
             self.assertEqual(len(loader._process_pool.worker_pids), 2)
             first = [int(value) for batch in loader for value in batch]
@@ -307,12 +331,10 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
         expected_first = [
-            _hyperloader._permutation_index(43, 0, 8, position)
-            for position in range(8)
+            _hyperloader._permutation_index(43, 0, 8, position) for position in range(8)
         ]
         expected_second = [
-            _hyperloader._permutation_index(43, 1, 8, position)
-            for position in range(8)
+            _hyperloader._permutation_index(43, 1, 8, position) for position in range(8)
         ]
         self.assertEqual(first, expected_first)
         self.assertEqual(second, expected_second)
@@ -329,7 +351,9 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
     def test_drop_last_excludes_tail_from_reusable_frontier(self) -> None:
-        loader = DataLoader(list(range(5)), batch_size=2, drop_last=True, num_workers=2, seed=53)
+        loader = DataLoader(
+            list(range(5)), batch_size=2, drop_last=True, num_workers=2, seed=53
+        )
         try:
             first = [[int(value) for value in batch] for batch in loader]
             second = [[int(value) for value in batch] for batch in loader]

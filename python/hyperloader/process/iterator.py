@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -10,7 +9,6 @@ from hyperloader import _hyperloader
 
 from .exceptions import WorkerDied
 from .factory import prepare_process_pool
-from .pool import POLL_SECONDS
 from .sizing import delivery_length, frontier_depth
 
 
@@ -113,14 +111,16 @@ class ProcessIterator(Iterator[Any]):
             progressed = self._poll_completions()
             if not progressed:
                 pool.check_workers(deadline)
-                time.sleep(POLL_SECONDS)
+                pool.wait_for_completion(deadline)
 
     def _fill_frontier(self) -> None:
         pool = self._loader._process_pool
         while (dispatch := self._schedule.next_dispatch()) is not None:
             position, worker = dispatch
             batch_size = pool.batch_size
-            sample_position = position * batch_size if batch_size is not None else position
+            sample_position = (
+                position * batch_size if batch_size is not None else position
+            )
             index = self._loader._plan.index(
                 self._loader.root_seed, self._epoch, sample_position
             )
