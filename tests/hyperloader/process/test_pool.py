@@ -7,6 +7,7 @@ import random
 import tempfile
 import time
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -103,11 +104,10 @@ class DelayedDataset:
         return index
 
 
-def record_worker_init(_worker_id: int) -> None:
+def record_worker_init(directory: str, _worker_id: int) -> None:
     """Record the once-per-process initialization view."""
     info = get_worker_info()
-    directory = Path(os.environ["HYPERLOADER_INIT_LOG"])
-    (directory / f"worker-{info.id}.log").write_text(
+    (Path(directory) / f"worker-{info.id}.log").write_text(
         f"{os.getpid()}:{info.seed}\n", encoding="utf-8"
     )
 
@@ -266,8 +266,6 @@ class ProcessPoolTest(unittest.TestCase):
 
     def test_worker_init_runs_once_with_no_sample_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            previous = os.environ.get("HYPERLOADER_INIT_LOG")
-            os.environ["HYPERLOADER_INIT_LOG"] = directory
             pool = ProcessPool(
                 RandomDataset(),
                 2,
@@ -275,7 +273,7 @@ class ProcessPoolTest(unittest.TestCase):
                 0,
                 0,
                 0,
-                worker_init_fn=record_worker_init,
+                worker_init_fn=partial(record_worker_init, directory),
             )
             try:
                 for position in range(4):
@@ -283,10 +281,6 @@ class ProcessPoolTest(unittest.TestCase):
                 expected_pids = set(pool.worker_pids)
             finally:
                 pool.close()
-                if previous is None:
-                    os.environ.pop("HYPERLOADER_INIT_LOG", None)
-                else:
-                    os.environ["HYPERLOADER_INIT_LOG"] = previous
 
             records = [
                 path.read_text(encoding="utf-8").strip()
