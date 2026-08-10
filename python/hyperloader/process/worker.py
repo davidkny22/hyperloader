@@ -25,6 +25,7 @@ def worker_main(
     worker_id: int,
     worker_count: int,
     root_seed: int,
+    completion_stride: int | None,
     probe: tuple[int, int, int] | None,
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
@@ -80,6 +81,7 @@ def worker_main(
             encoder,
             probe_values,
             rng_context,
+            completion_stride,
         )
     finally:
         rng_context.clear()
@@ -97,6 +99,7 @@ def run_commands(
     encoder: ResultEncoder,
     probe_values: list[Any],
     rng_context: WorkerRngContext,
+    completion_stride: int | None,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -128,7 +131,14 @@ def run_commands(
                 probe_values,
                 rng_context,
             )
-        publish_completion(control, endpoint, dispatch, result[0], result[1])
+        publish_completion(
+            control,
+            endpoint,
+            dispatch,
+            result[0],
+            result[1],
+            completion_stride,
+        )
 
 
 def evaluate_dispatch(
@@ -215,6 +225,7 @@ def publish_completion(
     dispatch: Any,
     status: int,
     payload: bytes,
+    completion_stride: int | None,
 ) -> None:
     """Retry bounded completion publication while preserving shutdown."""
     while True:
@@ -224,7 +235,11 @@ def publish_completion(
             else endpoint.try_complete_exception(dispatch, payload)
         )
         if complete:
-            if dispatch.batch_len:
+            batch_boundary = (
+                completion_stride is not None
+                and (dispatch.position + 1) % completion_stride == 0
+            )
+            if dispatch.batch_len or batch_boundary:
                 control.send(("ready",))
             return
         if control.poll():

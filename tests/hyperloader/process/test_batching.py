@@ -26,17 +26,15 @@ class WorkerBatchTest(unittest.TestCase):
             torch.equal(batch, torch.arange(8, dtype=torch.int64).reshape(2, 4))
         )
 
-    def test_probe_accepts_only_exact_contiguous_base_arrays(self) -> None:
+    def test_default_collation_retains_scalar_transport(self) -> None:
         base = np.arange(8, dtype=np.int64)
 
-        self.assertTrue(supports_worker_batch(base))
+        self.assertFalse(supports_worker_batch(base))
         self.assertFalse(supports_worker_batch(base[::2]))
         self.assertFalse(supports_worker_batch(torch.arange(8)))
 
     def test_tensor_rows_preserve_default_collation(self) -> None:
-        payload = encode_batch(
-            [torch.arange(4), torch.arange(4, 8)], ResultEncoder()
-        )
+        payload = encode_batch([torch.arange(4), torch.arange(4, 8)], ResultEncoder())
 
         batch = ResultDecoder().decode(payload, worker=0)
 

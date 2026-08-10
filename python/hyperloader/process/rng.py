@@ -19,6 +19,8 @@ class WorkerRngContext:
         self._torch_generator = torch.default_generator
         self._random_seed = random.seed
         self._numpy_seed = np.random.seed
+        self._numpy_asarray = np.asarray
+        self._numpy_uint32 = np.uint32
         self._worker_module = worker_module
         self._worker_info_type = worker_module.WorkerInfo
         self._worker_id = worker_id
@@ -33,7 +35,7 @@ class WorkerRngContext:
         )
         self._torch_generator.manual_seed(torch_seed)
         self._random_seed(random_seed)
-        self._numpy_seed(numpy_words)
+        self._numpy_seed(self._numpy_asarray(numpy_words, dtype=self._numpy_uint32))
         self._install_worker_info(torch_seed)
         return torch_seed
 

@@ -10,16 +10,8 @@ from .serialization import ResultEncoder
 
 
 def supports_worker_batch(value: Any) -> bool:
-    """Return whether one probe proves the exact NumPy batch transport contract."""
-    try:
-        import numpy as np
-    except ImportError:
-        return False
-    return (
-        type(value) is np.ndarray
-        and value.flags.c_contiguous
-        and not value.dtype.hasobject
-    )
+    """Return whether one probe selects worker-collated transport."""
+    return False
 
 
 def encode_batch(values: list[Any], encoder: ResultEncoder) -> bytes:

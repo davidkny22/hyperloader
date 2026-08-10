@@ -47,6 +47,7 @@ class ProcessPool:
         self._on_worker_death = on_worker_death
         self._root_seed = root_seed
         self._worker_total = worker_count
+        self._completion_stride = batch_size
         self._batch_size = batch_size
         self._resources: Any = None
         self._controls: list[Connection] = []
@@ -211,7 +212,8 @@ class ProcessPool:
                     break
                 if message != ("ready",):
                     raise RuntimeError("worker returned an invalid completion signal")
-                self._completion_signals[worker] += 1
+                if self._batch_size is not None:
+                    self._completion_signals[worker] += 1
                 observed = True
         return observed
 
@@ -275,6 +277,7 @@ class ProcessPool:
                 worker,
                 self._worker_total,
                 self._root_seed,
+                self._completion_stride,
                 probe,
             ),
             daemon=True,

@@ -167,10 +167,10 @@ class ProcessPoolTest(unittest.TestCase):
             all(torch.equal(left, right) for left, right in zip(batches, expected))
         )
 
-    def test_sequential_batch_uses_one_native_dispatch_per_result(self) -> None:
+    def test_numpy_rows_retain_scalar_native_dispatch(self) -> None:
         loader = DataLoader(NumpyDataset(5), batch_size=2, num_workers=2, seed=23)
         try:
-            self.assertEqual(loader._process_pool.batch_size, 2)
+            self.assertIsNone(loader._process_pool.batch_size)
             with mock.patch.object(
                 loader._process_pool,
                 "try_submit",
@@ -181,11 +181,30 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
         self.assertEqual(len(batches), 3)
-        self.assertEqual(submit.call_count, 3)
-        self.assertEqual([call.args[1] for call in submit.call_args_list], [0, 1, 2])
+        self.assertEqual(submit.call_count, 5)
         self.assertEqual(
-            [call.kwargs["batch_len"] for call in submit.call_args_list], [2, 2, 1]
+            [call.args[1] for call in submit.call_args_list], [0, 1, 2, 3, 4]
         )
+        self.assertEqual(
+            [call.kwargs["batch_len"] for call in submit.call_args_list],
+            [0, 0, 0, 0, 0],
+        )
+
+    def test_scalar_batch_boundary_wakes_the_owner_control_pipe(self) -> None:
+        pool = ProcessPool(PublicDataset(), 1, 23, 0, 0, 0, batch_size=2)
+        try:
+            self.assertTrue(pool.try_submit(0, 0, 0, 0))
+            self.assertTrue(pool.try_submit(0, 1, 1, 0))
+            self.assertTrue(pool.wait_for_completion(time.monotonic() + 1.0))
+            completions = []
+            while len(completions) < 2:
+                completion = pool.try_receive(0)
+                if completion is not None:
+                    completions.append(completion)
+        finally:
+            pool.close()
+
+        self.assertEqual([item[0] for item in completions], [0, 1])
 
     def test_native_completion_wakes_the_owner_control_pipe(self) -> None:
         pool = ProcessPool(NumpyDataset(2), 1, 23, 0, 0, 0, batch_size=2)
