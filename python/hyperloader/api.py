@@ -8,33 +8,14 @@ from collections.abc import Iterator
 from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
+from .constructor import validate_constructor
 from .epoch import EpochState
-from .planner import BlackBoxPlan, StagePlan, TensorPlan, build_plan
+from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
 from .profile import build_cost_profile
 from .telemetry import build_telemetry, telemetry_snapshot
 from .stages import Pipeline
-
-
-def _require_nonnegative_workers(num_workers: int | Auto) -> None:
-    if num_workers is AUTO:
-        return
-    if isinstance(num_workers, bool) or not isinstance(num_workers, int):
-        raise TypeError("num_workers must be auto or an integer")
-    if num_workers < 0:
-        raise ValueError("num_workers must be nonnegative")
-
-
-def _resolve_delivery(in_order: bool, delivery: str | Auto) -> str:
-    expected = "in-order" if in_order else "on-completion"
-    if delivery is AUTO or delivery == "auto":
-        return expected
-    if delivery not in {"in-order", "on-completion"}:
-        raise ValueError("delivery must be auto, in-order, or on-completion")
-    if delivery != expected:
-        raise ValueError(f"delivery={delivery!r} conflicts with in_order={in_order!r}")
-    return delivery
 
 
 class DataLoader:
@@ -71,85 +52,28 @@ class DataLoader:
         telemetry = build_telemetry(
             True if config is None else config.telemetry.enabled
         )
-        if sampler is not None and shuffle:
-            raise ValueError("sampler option is mutually exclusive with shuffle")
-        if batch_sampler is not None and (
-            batch_size != 1 or shuffle or sampler is not None or drop_last
-        ):
-            raise ValueError(
-                "batch_sampler is mutually exclusive with batch_size, shuffle, sampler, "
-                "and drop_last"
-            )
-        if batch_size is not None and (
-            isinstance(batch_size, bool)
-            or not isinstance(batch_size, int)
-            or batch_size <= 0
-        ):
-            raise ValueError("batch_size must be a positive integer or None")
-        if batch_size is None and drop_last:
-            raise ValueError("batch_size=None is mutually exclusive with drop_last")
-        if isinstance(dataset, Pipeline) and collate_fn is not None:
-            raise ValueError("pipeline Collate is mutually exclusive with collate_fn")
-
-        _require_nonnegative_workers(num_workers)
-        if timeout < 0:
-            raise ValueError("timeout must be nonnegative")
-        if prefetch_factor is not AUTO and prefetch_factor is not None:
-            if isinstance(prefetch_factor, bool) or prefetch_factor <= 0:
-                raise ValueError("prefetch_factor must be auto, None, or positive")
-            if num_workers == 0:
-                raise ValueError(
-                    "prefetch_factor can only be specified when num_workers is positive"
-                )
-        if mode not in {"native", "torch-compat"}:
-            raise ValueError("mode must be native or torch-compat")
-        if not isinstance(thread_safe, bool):
-            raise TypeError("thread_safe must be a boolean declaration")
-
-        resolved_config = config if config is not None else HyperConfig()
-        if (
-            seed is not None
-            and resolved_config.seed is not None
-            and seed != resolved_config.seed
-        ):
-            raise ValueError("seed conflicts with config.seed")
-        resolved_seed = seed if seed is not None else resolved_config.seed
-
-        process_ceiling = resolved_config.executor.process_ceiling
-        if (
-            process_ceiling is not AUTO
-            and num_workers is not AUTO
-            and process_ceiling != num_workers
-        ):
-            raise ValueError(
-                "num_workers conflicts with config.executor.process_ceiling"
-            )
-        if (
-            mode == "torch-compat"
-            and resolved_config.executor.on_worker_death == "restart"
-        ):
-            raise ValueError("worker restart is unavailable in torch-compat mode")
-
-        resolved_delivery = _resolve_delivery(in_order, delivery)
-        configured_memory = resolved_config.memory.delivery_memory
-        requested_memory = (
-            "device" if device is not None else "pinned" if pin_memory else None
+        resolved = validate_constructor(
+            dataset,
+            batch_size,
+            shuffle,
+            sampler,
+            batch_sampler,
+            num_workers,
+            collate_fn,
+            pin_memory,
+            drop_last,
+            timeout,
+            prefetch_factor,
+            thread_safe,
+            mode,
+            in_order,
+            delivery,
+            seed,
+            device,
+            config,
         )
-        if (
-            configured_memory != "auto"
-            and requested_memory is not None
-            and configured_memory != requested_memory
-        ):
-            raise ValueError(
-                "memory.delivery_memory conflicts with pin_memory or device"
-            )
-        resolved_memory = (
-            configured_memory
-            if configured_memory != "auto"
-            else requested_memory
-            if requested_memory is not None
-            else "auto"
-        )
+        resolved_config = resolved.config
+        resolved_seed = resolved.seed
 
         self.dataset = dataset
         self.batch_size = None if batch_sampler is not None else batch_size
@@ -171,10 +95,10 @@ class DataLoader:
         self.seed = resolved_seed
         self.thread_safe = thread_safe
         self.mode = mode
-        self.delivery = resolved_delivery
+        self.delivery = resolved.delivery
         self.device = device
         self.config = resolved_config
-        self.delivery_memory = resolved_memory
+        self.delivery_memory = resolved.delivery_memory
         self.root_seed = resolve_root_seed(resolved_seed, generator)
         self._epoch_state = EpochState()
         self._abandon_notice_emitted = False
@@ -182,6 +106,11 @@ class DataLoader:
         self._thread_pool: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
+        self._execution_dataset = (
+            self._plan.execution_dataset
+            if isinstance(self._plan, StructurePlan)
+            else dataset
+        )
         if (
             thread_safe
             and isinstance(self._plan, StagePlan)
@@ -204,7 +133,7 @@ class DataLoader:
             dict[str, int | float | str | bool | None] | None
         ) = None
         if (
-            isinstance(self._plan, (BlackBoxPlan, StagePlan))
+            isinstance(self._plan, (BlackBoxPlan, StagePlan, StructurePlan))
             and num_workers is not AUTO
             and num_workers > 0
             and sampler is None

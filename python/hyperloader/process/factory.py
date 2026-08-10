@@ -31,7 +31,7 @@ def prepare_process_pool(loader: Any) -> None:
         else None
     )
     loader._process_pool = ProcessPool(
-        loader.dataset,
+        loader._execution_dataset,
         loader.num_workers,
         loader.root_seed,
         loader._epoch,

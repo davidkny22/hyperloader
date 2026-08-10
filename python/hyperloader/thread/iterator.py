@@ -29,7 +29,7 @@ class ThreadIterator(Iterator[Any]):
         if self._length:
             if loader._thread_pool is None:
                 loader._thread_pool = ThreadPool(
-                    loader.dataset,
+                    loader._execution_dataset,
                     loader.num_workers,
                     loader.root_seed,
                     loader.worker_init_fn,

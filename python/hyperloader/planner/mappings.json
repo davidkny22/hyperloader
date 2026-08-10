@@ -1,7 +1,47 @@
-[
-  {
-    "dataset_module": "torch",
-    "dataset_type": "Tensor",
-    "plan": "contiguous_tensor"
-  }
-]
+{
+  "schema_version": 1,
+  "mappings": [
+    {
+      "id": "contiguous-torch-tensor",
+      "dataset_module": "torch",
+      "dataset_type": "Tensor",
+      "match": "exact",
+      "builder": "hyperloader.planner.tensor:build_tensor_plan"
+    },
+    {
+      "id": "torch-tensor-dataset",
+      "dataset_module": "torch.utils.data.dataset",
+      "dataset_type": "TensorDataset",
+      "match": "exact",
+      "builder": "hyperloader.planner.structured.tensor_dataset:build_plan"
+    },
+    {
+      "id": "torchvision-dataset-folder",
+      "dataset_module": "torchvision.datasets.folder",
+      "dataset_type": "DatasetFolder",
+      "match": "subclass",
+      "builder": "hyperloader.planner.structured.torchvision:build_plan"
+    },
+    {
+      "id": "huggingface-arrow-dataset",
+      "dataset_module": "datasets.arrow_dataset",
+      "dataset_type": "Dataset",
+      "match": "exact",
+      "builder": "hyperloader.planner.structured.huggingface:build_plan"
+    },
+    {
+      "id": "numpy-memmap",
+      "dataset_module": "numpy",
+      "dataset_type": "memmap",
+      "match": "exact",
+      "builder": "hyperloader.planner.structured.numpy_memmap:build_plan"
+    },
+    {
+      "id": "pyarrow-parquet-dataset",
+      "dataset_module": "pyarrow._dataset",
+      "dataset_type": "FileSystemDataset",
+      "match": "exact",
+      "builder": "hyperloader.planner.structured.parquet:build_plan"
+    }
+  ]
+}

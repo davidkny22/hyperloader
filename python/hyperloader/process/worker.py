@@ -33,7 +33,7 @@ def worker_main(
     start_parent_watchdog()
     rng_context = WorkerRngContext(worker_id, worker_count)
     dataset, worker_init_fn = pickle.loads(dataset_payload)
-    rng_context.attach_dataset(dataset)
+    rng_context.attach_dataset(getattr(dataset, "worker_dataset", dataset))
     encoder = ResultEncoder()
     probe_value: Any = NO_PROBE_VALUE
     try:
