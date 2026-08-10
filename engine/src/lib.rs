@@ -15,7 +15,7 @@ pub mod telemetry;
 use pyo3::prelude::*;
 
 /// Initialize the native hyperloader extension.
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn _hyperloader(module: &Bound<'_, PyModule>) -> PyResult<()> {
     ffi::register(module)
 }

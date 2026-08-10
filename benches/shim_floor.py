@@ -8,6 +8,7 @@ import os
 import platform
 import random
 import sys
+import sysconfig
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -242,6 +243,8 @@ def main() -> None:
         "python_executable": sys.executable,
         "torch": torch.__version__,
         "numpy": np.__version__,
+        "gil_disabled_build": str(bool(sysconfig.get_config_var("Py_GIL_DISABLED"))),
+        "gil_enabled": str(getattr(sys, "_is_gil_enabled", lambda: True)()),
         "iterations": str(arguments.iterations),
         "warmup_iterations": str(arguments.warmup_iterations),
         "trials": str(arguments.trials),

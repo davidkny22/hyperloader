@@ -11,7 +11,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 /// One decoded dispatch retained while Python executes user code.
-#[pyclass(name = "_WorkerCommand", frozen)]
+#[pyclass(name = "_WorkerCommand", frozen, from_py_object)]
 #[derive(Clone)]
 pub(crate) struct WorkerCommand {
     message: DispatchMessage,

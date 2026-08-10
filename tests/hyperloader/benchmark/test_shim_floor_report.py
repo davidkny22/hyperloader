@@ -42,6 +42,8 @@ def write_report(
             "python": "3.12.3",
             "torch": "2.10.0",
             "numpy": "2.2.0",
+            "gil_disabled_build": "False",
+            "gil_enabled": "True",
             "iterations": 100,
             "warmup_iterations": 10,
             "trials": 10,
@@ -211,6 +213,36 @@ class ShimFloorReportTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "disagree on numpy"):
+                MODULE.evaluate_pair(performance, efficiency, 19, 0)
+
+            write_report(performance, 19)
+            write_report(efficiency, 0)
+            for path in (performance, efficiency):
+                path.write_text(
+                    path.read_text(encoding="utf-8")
+                    .replace("meta,gil_disabled_build,False", "meta,gil_disabled_build,True")
+                    .replace("meta,gil_enabled,True", "meta,gil_enabled,False"),
+                    encoding="utf-8",
+                )
+            self.assertEqual(
+                MODULE.evaluate_pair(performance, efficiency, 19, 0)["runtime"][
+                    "gil_enabled"
+                ],
+                "False",
+            )
+            performance.write_text(
+                performance.read_text(encoding="utf-8").replace(
+                    "meta,gil_enabled,False", "meta,gil_enabled,True"
+                ),
+                encoding="utf-8",
+            )
+            efficiency.write_text(
+                efficiency.read_text(encoding="utf-8").replace(
+                    "meta,gil_enabled,False", "meta,gil_enabled,True"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "restored the GIL"):
                 MODULE.evaluate_pair(performance, efficiency, 19, 0)
 
     def test_planted_cost_inflation_turns_the_decision_red(self) -> None:

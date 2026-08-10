@@ -138,12 +138,19 @@ def evaluate_pair(
         "python",
         "torch",
         "numpy",
+        "gil_disabled_build",
+        "gil_enabled",
         "iterations",
         "warmup_iterations",
         "trials",
     ):
         if performance_meta.get(key) != efficiency_meta.get(key):
             raise ValueError(f"reports disagree on {key}")
+    if (
+        performance_meta["gil_disabled_build"] == "True"
+        and performance_meta["gil_enabled"] != "False"
+    ):
+        raise ValueError("free-threaded runtime restored the GIL before measurement")
     performance = {
         tier: tier_statistics(performance_values, tier)
         for tier in ("process", "thread")
@@ -187,7 +194,14 @@ def evaluate_pair(
         "performance": performance,
         "performance_core": performance_core,
         "runtime": {
-            key: performance_meta[key] for key in ("python", "torch", "numpy")
+            key: performance_meta[key]
+            for key in (
+                "python",
+                "torch",
+                "numpy",
+                "gil_disabled_build",
+                "gil_enabled",
+            )
         },
         "seed_limit_ns": SEED_LIMIT_NS,
         "shim_limit_ns": SHIM_LIMIT_NS,
