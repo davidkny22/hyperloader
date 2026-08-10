@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import contextvars
 import threading
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any, Literal, overload
 
 from hyperloader import _hyperloader
@@ -21,6 +19,26 @@ _ACTIVE_SAMPLE: contextvars.ContextVar[SampleRng | None] = contextvars.ContextVa
     "hyperloader_active_sample", default=None
 )
 _LOCAL = threading.local()
+
+
+class _UserCodeContext:
+    """Bind one sample without allocating a generator-based context manager."""
+
+    __slots__ = ("_sample", "_token")
+
+    def __init__(self, sample: SampleRng) -> None:
+        self._sample = sample
+        self._token: contextvars.Token[SampleRng | None] | None = None
+
+    def __enter__(self) -> None:
+        self._token = _ACTIVE_SAMPLE.set(self._sample)
+
+    def __exit__(self, _kind: object, _value: object, _traceback: object) -> None:
+        token = self._token
+        if token is None:
+            raise RuntimeError("user-code RNG context was not entered")
+        _ACTIVE_SAMPLE.reset(token)
+        self._token = None
 
 
 class _GeneratorCache:
@@ -137,11 +155,6 @@ def rng(kind: str = "torch") -> Any:
     return _cache().resolve(kind, sample)
 
 
-@contextmanager
-def _user_code_context(sample: SampleRng) -> Iterator[None]:
+def _user_code_context(sample: SampleRng) -> _UserCodeContext:
     """Expose accessors only for the dynamic extent of one user-code stage."""
-    token = _ACTIVE_SAMPLE.set(sample)
-    try:
-        yield
-    finally:
-        _ACTIVE_SAMPLE.reset(token)
+    return _UserCodeContext(sample)

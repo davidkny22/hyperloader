@@ -90,6 +90,20 @@ class RngAccessorTest(unittest.TestCase):
             [4, 0, 0, 0],
         )
 
+    def test_nested_and_exceptional_scopes_restore_the_prior_sample(self) -> None:
+        outer = _hyperloader._sample_rng_context(73, 2, 5)
+        inner = _hyperloader._sample_rng_context(73, 2, 6)
+        with _user_code_context(outer):
+            outer_generator = rng("random")
+            with self.assertRaisesRegex(
+                RuntimeError, "sentinel"
+            ), _user_code_context(inner):
+                self.assertIs(rng("random"), outer_generator)
+                raise RuntimeError("sentinel")
+            self.assertIs(rng("random"), outer_generator)
+        with self.assertRaisesRegex(RuntimeError, "only while user code"):
+            rng("random")
+
 
 if __name__ == "__main__":
     unittest.main()
