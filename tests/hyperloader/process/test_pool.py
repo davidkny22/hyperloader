@@ -54,6 +54,19 @@ class PublicDataset:
         }
 
 
+class NumpyDataset:
+    """Return contiguous NumPy rows through the black-box public path."""
+
+    def __init__(self) -> None:
+        self.values = np.arange(32, dtype=np.int64).reshape(8, 4)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __getitem__(self, index: int) -> np.ndarray:
+        return self.values[index]
+
+
 class DelayedDataset:
     """Record worker execution order while delaying one frontier head."""
 
@@ -114,6 +127,15 @@ class ProcessPoolTest(unittest.TestCase):
         for position, value in enumerate(first_values):
             expected_seed = _hyperloader._sample_seed_words(17, 0, position)[0]
             self.assertEqual(value["seed"], expected_seed)
+
+    def test_public_loader_collates_contiguous_numpy_rows(self) -> None:
+        dataset = NumpyDataset()
+        loader = DataLoader(dataset, batch_size=2, num_workers=2, seed=19)
+        try:
+            expected = torch.utils.data.default_collate([dataset[0], dataset[1]])
+            self.assertTrue(torch.equal(next(iter(loader)), expected))
+        finally:
+            loader.close()
 
     def test_worker_init_runs_once_with_no_sample_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

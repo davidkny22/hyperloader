@@ -10,6 +10,7 @@ MAGIC = b"HLRES\x00"
 PICKLE_VALUE = 0
 TENSOR_BASE = 1
 TENSOR_VIEW = 2
+NUMPY_ARRAY = 3
 
 
 def encode_multiprocessing(value: Any) -> bytes:
@@ -43,6 +44,9 @@ class ResultEncoder:
                 value.requires_grad,
             )
             return _envelope(TENSOR_VIEW, pickle.dumps(coordinates, protocol=5))
+        numpy_payload = _encode_numpy(value)
+        if numpy_payload is not None:
+            return numpy_payload
         return _envelope(PICKLE_VALUE, ForkingPickler.dumps(value, protocol=5))
 
 
@@ -57,6 +61,8 @@ class ResultDecoder:
         if not payload.startswith(MAGIC) or len(payload) == len(MAGIC):
             raise RuntimeError("Worker result envelope is invalid.")
         kind = payload[len(MAGIC)]
+        if kind == NUMPY_ARRAY:
+            return _decode_numpy(payload)
         body = payload[len(MAGIC) + 1 :]
         if kind == PICKLE_VALUE:
             return pickle.loads(body)
@@ -88,6 +94,54 @@ def _shareable_tensor(value: Any) -> bool:
         and not value.is_conj()
         and not value.is_neg()
     )
+
+
+def _encode_numpy(value: Any) -> bytes | None:
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    if (
+        type(value) is not np.ndarray
+        or not value.flags.c_contiguous
+        or value.dtype.hasobject
+    ):
+        return None
+    header = pickle.dumps((value.dtype, value.shape), protocol=5)
+    return (
+        MAGIC
+        + bytes((NUMPY_ARRAY,))
+        + len(header).to_bytes(4, "little")
+        + header
+        + value.tobytes(order="C")
+    )
+
+
+def _decode_numpy(payload: bytes) -> Any:
+    import numpy as np
+
+    header_start = len(MAGIC) + 5
+    if len(payload) < header_start:
+        raise RuntimeError("Worker NumPy envelope is truncated.")
+    header_length = int.from_bytes(
+        payload[len(MAGIC) + 1 : header_start], "little"
+    )
+    header_stop = header_start + header_length
+    if header_length == 0 or header_stop > len(payload):
+        raise RuntimeError("Worker NumPy envelope header is invalid.")
+    dtype, shape = pickle.loads(payload[header_start:header_stop])
+    dtype = np.dtype(dtype)
+    if not isinstance(shape, tuple) or any(
+        type(dimension) is not int or dimension < 0 for dimension in shape
+    ):
+        raise RuntimeError("Worker NumPy envelope shape is invalid.")
+    elements = 1
+    for dimension in shape:
+        elements *= dimension
+    raw = bytearray(memoryview(payload)[header_stop:])
+    if len(raw) != elements * dtype.itemsize:
+        raise RuntimeError("Worker NumPy envelope payload size is invalid.")
+    return np.frombuffer(raw, dtype=dtype, count=elements).reshape(shape)
 
 
 def _envelope(kind: int, body: bytes | memoryview) -> bytes:

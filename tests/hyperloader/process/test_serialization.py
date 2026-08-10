@@ -5,10 +5,13 @@ from __future__ import annotations
 import pickle
 import unittest
 
+import numpy as np
 import torch
 
 from hyperloader.process.serialization import (
     MAGIC,
+    NUMPY_ARRAY,
+    PICKLE_VALUE,
     TENSOR_VIEW,
     ResultDecoder,
     ResultEncoder,
@@ -49,6 +52,35 @@ class ProcessSerializationTest(unittest.TestCase):
         value = {"items": [1, "two", b"three"]}
 
         self.assertEqual(ResultDecoder().decode(ResultEncoder().encode(value), 0), value)
+
+    def test_contiguous_numpy_array_uses_typed_raw_payload(self) -> None:
+        value = np.arange(24, dtype=np.int64).reshape(3, 8)
+
+        payload = ResultEncoder().encode(value)
+        decoded = ResultDecoder().decode(payload, worker=0)
+
+        self.assertEqual(payload[len(MAGIC)], NUMPY_ARRAY)
+        self.assertIs(type(decoded), np.ndarray)
+        self.assertEqual(decoded.dtype, value.dtype)
+        self.assertEqual(decoded.shape, value.shape)
+        self.assertTrue(decoded.flags.writeable)
+        np.testing.assert_array_equal(decoded, value)
+
+    def test_noncontiguous_numpy_array_retains_pickle_fallback(self) -> None:
+        value = np.arange(24, dtype=np.int64).reshape(3, 8)[:, ::2]
+
+        payload = ResultEncoder().encode(value)
+        decoded = ResultDecoder().decode(payload, worker=0)
+
+        self.assertEqual(payload[len(MAGIC)], PICKLE_VALUE)
+        self.assertIs(type(decoded), np.ndarray)
+        np.testing.assert_array_equal(decoded, value)
+
+    def test_numpy_payload_size_mismatch_is_rejected(self) -> None:
+        payload = ResultEncoder().encode(np.arange(8, dtype=np.int64))
+
+        with self.assertRaisesRegex(RuntimeError, "payload size is invalid"):
+            ResultDecoder().decode(payload[:-1], worker=0)
 
     def test_dataset_reducer_creates_independent_transfer_tokens(self) -> None:
         tensor = torch.arange(8)
