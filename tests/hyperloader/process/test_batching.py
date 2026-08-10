@@ -11,6 +11,7 @@ from hyperloader.process.batching import (
     batch_layout,
     decode_batch,
     encode_batch,
+    matches_batch_layout,
     supports_worker_batch,
 )
 from hyperloader.process.serialization import ResultDecoder, ResultEncoder
@@ -48,6 +49,18 @@ class WorkerBatchTest(unittest.TestCase):
 
         self.assertEqual(np.frombuffer(payload, dtype=np.int64)[0], 19)
         self.assertTrue(torch.equal(batch[1], torch.arange(4, 8)))
+
+    def test_cached_layout_check_rejects_dtype_shape_and_strides(self) -> None:
+        layout = batch_layout(np.arange(8, dtype=np.int64))
+        self.assertIsNotNone(layout)
+        assert layout is not None
+
+        self.assertTrue(matches_batch_layout(np.arange(8, dtype=np.int64), layout))
+        self.assertFalse(matches_batch_layout(np.arange(8, dtype=np.float64), layout))
+        self.assertFalse(matches_batch_layout(np.arange(4, dtype=np.int64), layout))
+        self.assertFalse(
+            matches_batch_layout(np.arange(16, dtype=np.int64)[::2], layout)
+        )
 
     def test_tensor_rows_preserve_default_collation(self) -> None:
         payload = encode_batch([torch.arange(4), torch.arange(4, 8)], ResultEncoder())

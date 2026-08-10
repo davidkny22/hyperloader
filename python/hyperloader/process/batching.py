@@ -9,14 +9,22 @@ from hyperloader import _hyperloader
 from .serialization import ResultEncoder
 
 BatchLayout = tuple[str, tuple[int, ...], int]
+_NUMPY_ARRAY_TYPE: type[Any] | None = None
+
+
+def _numpy_array_type() -> type[Any]:
+    global _NUMPY_ARRAY_TYPE
+    if _NUMPY_ARRAY_TYPE is None:
+        import numpy as np
+
+        _NUMPY_ARRAY_TYPE = np.ndarray
+    return _NUMPY_ARRAY_TYPE
 
 
 def batch_layout(value: Any) -> BatchLayout | None:
     """Describe an exact contiguous NumPy row eligible for in-place batching."""
-    import numpy as np
-
     if (
-        type(value) is not np.ndarray
+        type(value) is not _numpy_array_type()
         or not value.flags.c_contiguous
         or value.dtype.hasobject
         or value.nbytes == 0
@@ -38,7 +46,14 @@ def supports_worker_batch(value: Any) -> bool:
 
 def matches_batch_layout(value: Any, layout: BatchLayout) -> bool:
     """Return whether one produced row matches the probed raw layout exactly."""
-    return batch_layout(value) == layout
+    dtype, shape, row_bytes = layout
+    return (
+        type(value) is _numpy_array_type()
+        and value.dtype.str == dtype
+        and tuple(value.shape) == shape
+        and value.nbytes == row_bytes
+        and value.flags.c_contiguous
+    )
 
 
 def decode_batch(payload: Any, layout: BatchLayout) -> Any:
