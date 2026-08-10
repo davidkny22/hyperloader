@@ -66,21 +66,6 @@ def sample_torch_seed(root_seed: int, epoch: int, coord: int) -> int:
     return globals_block[0] | (globals_block[1] << 32)
 
 
-def mt19937_state(
-    root_seed: int, epoch: int, coord: int, stream_id: int
-) -> tuple[int, ...]:
-    """Synthesize one complete MT19937 state from a dedicated stream."""
-    words = tuple(
-        word
-        for draw_index in range(156)
-        for word in block(root_seed, epoch, coord, draw_index, stream_id)
-    )
-    if any(words):
-        return words
-    regeneration = block(root_seed, epoch, coord, 156, stream_id)
-    return regeneration + words[4:]
-
-
 def feistel_permute(root_seed: int, epoch: int, domain: int, position: int) -> int:
     """Cycle-walk the specified eight-round unbalanced Feistel permutation."""
     if domain < FEISTEL_THRESHOLD or not 0 <= position < domain:

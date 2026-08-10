@@ -6,10 +6,7 @@ use std::hint::black_box;
 use std::process::Command;
 use std::time::Instant;
 
-use _hyperloader::rng::{
-    STATE_NUMPY_STREAM, STATE_RANDOM_STREAM, block, feistel_permute, mt19937_state,
-    sample_torch_seed,
-};
+use _hyperloader::rng::{block, feistel_permute, sample_torch_seed};
 
 const PERMUTATION_DOMAINS: [u64; 3] = [1 << 17, 300_000, 1_000_000_007];
 
@@ -127,27 +124,6 @@ fn run_sample_derivation(iterations: u64) -> u64 {
     black_box(checksum)
 }
 
-fn run_state_synthesis(iterations: u64) -> u64 {
-    let mut checksum = 0_u64;
-    for coordinate in 0..iterations {
-        let random = mt19937_state(
-            black_box(0x0123_4567_89AB_CDEF),
-            17,
-            black_box(coordinate),
-            STATE_RANDOM_STREAM,
-        );
-        let numpy = mt19937_state(
-            black_box(0x0123_4567_89AB_CDEF),
-            17,
-            black_box(coordinate),
-            STATE_NUMPY_STREAM,
-        );
-        checksum ^= u64::from(random[coordinate as usize % random.len()]);
-        checksum ^= u64::from(numpy[coordinate as usize % numpy.len()]);
-    }
-    black_box(checksum)
-}
-
 fn run_native_draw(iterations: u64) -> u64 {
     let mut checksum = 0_u64;
     for coordinate in 0..iterations {
@@ -225,12 +201,10 @@ fn main() -> Result<(), String> {
     println!("meta,iterations,{}", config.iterations);
     println!("meta,warmup_iterations,{}", config.warmup_iterations);
     println!("meta,sample_derivation_blocks,1");
-    println!("meta,state_synthesis_blocks,312");
     println!("meta,feistel_rounds,8");
     println!("kind,metric,trial,iterations,elapsed_ns,ns_per_op,checksum,freq_khz");
 
     black_box(run_sample_derivation(config.warmup_iterations));
-    black_box(run_state_synthesis(config.warmup_iterations));
     black_box(run_native_draw(config.warmup_iterations));
     for domain in PERMUTATION_DOMAINS {
         black_box(run_permutation(config.warmup_iterations, domain));
@@ -252,13 +226,6 @@ fn main() -> Result<(), String> {
             trial,
             config.iterations,
             measure(|| run_native_draw(config.iterations), config.iterations),
-            current_frequency(config.core)?,
-        );
-        emit_row(
-            "state_synthesis",
-            trial,
-            config.iterations,
-            measure(|| run_state_synthesis(config.iterations), config.iterations),
             current_frequency(config.core)?,
         );
         for domain in PERMUTATION_DOMAINS {

@@ -1,17 +1,16 @@
 """Cross-language tests for native sample RNG derivation."""
 
 import itertools
-import struct
 import unittest
 
 from hyperloader import _hyperloader
 from .rng_reference import (
     block,
     feistel_permute,
+    key64,
     materialized_permutation,
     permutation_index,
     philox4x32_10,
-    mt19937_state,
     sample_torch_seed,
 )
 
@@ -38,21 +37,19 @@ class RngContractTest(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 self.assertEqual(_hyperloader._rng_block(*arguments), block(*arguments))
 
-    def test_sample_rng_states_match_reference(self) -> None:
+    def test_sample_rng_context_matches_reference(self) -> None:
         cases = ((0, 0, 0), (1, 7, 19), ((1 << 64) - 1, (1 << 32) - 1, (1 << 64) - 1))
 
         for arguments in cases:
             with self.subTest(arguments=arguments):
-                torch_seed, random_bytes, numpy_bytes = _hyperloader._sample_rng_states(
-                    *arguments
-                )
-                random_state = struct.unpack("=625I", random_bytes)
-                numpy_state = struct.unpack("=624I", numpy_bytes)
+                torch_seed, resolved_key = _hyperloader._sample_rng_context(*arguments)
 
                 self.assertEqual(torch_seed, sample_torch_seed(*arguments))
-                self.assertEqual(random_state[:-1], mt19937_state(*arguments, 7))
-                self.assertEqual(random_state[-1], 624)
-                self.assertEqual(numpy_state, mt19937_state(*arguments, 8))
+                self.assertEqual(resolved_key, key64(arguments[0], arguments[1]))
+                self.assertEqual(
+                    _hyperloader._rng_block_from_key(resolved_key, arguments[2], 9, 7),
+                    block(*arguments, 9, 7),
+                )
 
     def test_named_streams_are_separated(self) -> None:
         blocks = {

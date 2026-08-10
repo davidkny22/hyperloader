@@ -17,6 +17,7 @@ from torch.utils.data import get_worker_info
 
 from hyperloader import DataLoader, _hyperloader
 from hyperloader.process import ProcessPool
+from hyperloader.process.random_surface import PhiloxRandom
 
 
 class RandomDataset:
@@ -87,6 +88,24 @@ class NumpyFailureDataset(NumpyDataset):
         return super().__getitem__(index)
 
 
+class BootBindingDataset:
+    """Record whether dataset unpickling observes rebound RNG callables."""
+
+    def __init__(self) -> None:
+        self.marker = True
+
+    def __len__(self) -> int:
+        return 1
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        self.__dict__.update(state)
+        self.random_bound = isinstance(random.random.__self__, PhiloxRandom)
+        self.numpy_bound = isinstance(np.random.random.__self__, np.random.Generator)
+
+    def __getitem__(self, _index: int) -> tuple[bool, bool]:
+        return self.random_bound, self.numpy_bound
+
+
 class DelayedDataset:
     """Record worker execution order while delaying one frontier head."""
 
@@ -155,8 +174,15 @@ class ProcessPoolTest(unittest.TestCase):
         )
         self.assertEqual(len({value["seed"] for value in first_values}), 4)
         for position, value in enumerate(first_values):
-            expected_seed = _hyperloader._sample_rng_states(17, 0, position)[0]
+            expected_seed = _hyperloader._sample_rng_context(17, 0, position)[0]
             self.assertEqual(value["seed"], expected_seed)
+
+    def test_dataset_unpickling_observes_rebound_rng_callables(self) -> None:
+        pool = ProcessPool(BootBindingDataset(), 1, 31, 0, 0, 0)
+        try:
+            self.assertEqual(pool.execute(0, 0, 0), (True, True))
+        finally:
+            pool.close()
 
     def test_public_loader_batches_numpy_rows_and_partial_tail(self) -> None:
         dataset = NumpyDataset(5)

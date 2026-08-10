@@ -1,10 +1,8 @@
 //! Python extension registration is centralized in this module.
 
+use crate::{collate, rng};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
-
-use crate::{collate, rng};
 
 mod process;
 mod schedule;
@@ -30,29 +28,20 @@ fn rng_block(
     (words[0], words[1], words[2], words[3])
 }
 
-#[pyfunction(name = "_sample_rng_states")]
-fn sample_rng_states(
-    py: Python<'_>,
-    root_seed: u64,
-    epoch: u64,
+#[pyfunction(name = "_rng_block_from_key")]
+fn rng_block_from_key(
+    key: u64,
     coord: u64,
-) -> (u64, Py<PyBytes>, Py<PyBytes>) {
-    let (torch_seed, random, numpy) = rng::sample_rng_states(root_seed, epoch, coord);
-    let mut random_bytes = words_to_bytes(&random);
-    random_bytes.extend_from_slice(&624_u32.to_ne_bytes());
-    (
-        torch_seed,
-        PyBytes::new(py, &random_bytes).unbind(),
-        PyBytes::new(py, &words_to_bytes(&numpy)).unbind(),
-    )
+    draw_index: u32,
+    stream_id: u32,
+) -> (u32, u32, u32, u32) {
+    let words = rng::block_from_key(key, coord, draw_index, stream_id);
+    (words[0], words[1], words[2], words[3])
 }
 
-fn words_to_bytes(words: &[u32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(std::mem::size_of_val(words));
-    for word in words {
-        bytes.extend_from_slice(&word.to_ne_bytes());
-    }
-    bytes
+#[pyfunction(name = "_sample_rng_context")]
+fn sample_rng_context(root_seed: u64, epoch: u64, coord: u64) -> (u64, u64) {
+    rng::sample_rng_context(root_seed, epoch, coord)
 }
 
 #[pyfunction(name = "_feistel_permute")]
@@ -124,7 +113,8 @@ fn default_collate<'py>(py: Python<'py>, batch: &Bound<'py, PyAny>) -> PyResult<
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(package_version, module)?)?;
     module.add_function(wrap_pyfunction!(rng_block, module)?)?;
-    module.add_function(wrap_pyfunction!(sample_rng_states, module)?)?;
+    module.add_function(wrap_pyfunction!(rng_block_from_key, module)?)?;
+    module.add_function(wrap_pyfunction!(sample_rng_context, module)?)?;
     module.add_function(wrap_pyfunction!(feistel_permute, module)?)?;
     module.add_function(wrap_pyfunction!(materialized_permutation, module)?)?;
     module.add_function(wrap_pyfunction!(permutation_index, module)?)?;

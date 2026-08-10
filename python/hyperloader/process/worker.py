@@ -30,10 +30,11 @@ def worker_main(
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
     start_parent_watchdog()
+    rng_context = WorkerRngContext(worker_id, worker_count)
     dataset, worker_init_fn = pickle.loads(dataset_payload)
+    rng_context.attach_dataset(dataset)
     encoder = ResultEncoder()
     probe_value: Any = NO_PROBE_VALUE
-    rng_context = WorkerRngContext(worker_id, worker_count, dataset)
     try:
         startup_error = None
         try:

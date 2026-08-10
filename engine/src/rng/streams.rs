@@ -12,12 +12,10 @@ pub const ACCESSOR_TORCH_STREAM: u32 = 4;
 pub const ACCESSOR_NUMPY_STREAM: u32 = 5;
 /// The stream used by the provided Python random accessor.
 pub const ACCESSOR_RANDOM_STREAM: u32 = 6;
-/// The stream used to synthesize the Python random MT19937 state.
+/// The stream used by the installed Python random surface.
 pub const STATE_RANDOM_STREAM: u32 = 7;
-/// The stream used to synthesize the NumPy legacy MT19937 state.
+/// The stream used to key the installed NumPy Philox surface.
 pub const STATE_NUMPY_STREAM: u32 = 8;
-
-const MT19937_WORDS: usize = 624;
 
 /// Apply the stateless SplitMix64 finalizer without a gamma increment.
 pub const fn splitmix64(mut value: u64) -> u64 {
@@ -44,6 +42,11 @@ pub const fn block(
     stream_id: u32,
 ) -> [u32; 4] {
     let key = key64(root_seed, epoch);
+    block_from_key(key, coord, draw_index, stream_id)
+}
+
+/// Derive one stream-separated block from an already resolved epoch key.
+pub const fn block_from_key(key: u64, coord: u64, draw_index: u32, stream_id: u32) -> [u32; 4] {
     philox4x32_10(
         [coord as u32, draw_index, stream_id, (coord >> 32) as u32],
         [key as u32, (key >> 32) as u32],
@@ -52,49 +55,13 @@ pub const fn block(
 
 /// Return the CPU torch seed reserved for one sample.
 pub const fn sample_torch_seed(root_seed: u64, epoch: u64, coord: u64) -> u64 {
-    let globals = block(root_seed, epoch, coord, 0, SAMPLE_STREAM);
-    globals[0] as u64 | ((globals[1] as u64) << 32)
+    sample_rng_context(root_seed, epoch, coord).0
 }
 
-/// Synthesize one complete MT19937 state from its dedicated Philox stream.
-pub fn mt19937_state(
-    root_seed: u64,
-    epoch: u64,
-    coord: u64,
-    stream_id: u32,
-) -> [u32; MT19937_WORDS] {
-    assert!(
-        stream_id == STATE_RANDOM_STREAM || stream_id == STATE_NUMPY_STREAM,
-        "MT19937 state requires a dedicated state stream"
-    );
-    let mut state = [0_u32; MT19937_WORDS];
-    for draw_index in 0..156_u32 {
-        let words = block(root_seed, epoch, coord, draw_index, stream_id);
-        let start = draw_index as usize * 4;
-        state[start..start + 4].copy_from_slice(&words);
-    }
-    repair_zero_state(&mut state, block(root_seed, epoch, coord, 156, stream_id));
-    state
+/// Return the CPU torch seed and the epoch key used by installed RNG surfaces.
+pub const fn sample_rng_context(root_seed: u64, epoch: u64, coord: u64) -> (u64, u64) {
+    let key = key64(root_seed, epoch);
+    let globals = block_from_key(key, coord, 0, SAMPLE_STREAM);
+    let seed = globals[0] as u64 | ((globals[1] as u64) << 32);
+    (seed, key)
 }
-
-/// Return torch's seed and both whole legacy MT19937 states for one sample.
-pub fn sample_rng_states(
-    root_seed: u64,
-    epoch: u64,
-    coord: u64,
-) -> (u64, [u32; MT19937_WORDS], [u32; MT19937_WORDS]) {
-    (
-        sample_torch_seed(root_seed, epoch, coord),
-        mt19937_state(root_seed, epoch, coord, STATE_RANDOM_STREAM),
-        mt19937_state(root_seed, epoch, coord, STATE_NUMPY_STREAM),
-    )
-}
-
-fn repair_zero_state(state: &mut [u32; MT19937_WORDS], regeneration: [u32; 4]) {
-    if state.iter().all(|word| *word == 0) {
-        state[..4].copy_from_slice(&regeneration);
-    }
-}
-
-#[cfg(test)]
-mod tests;

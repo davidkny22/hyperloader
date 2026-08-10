@@ -7,7 +7,6 @@ import csv
 import os
 import platform
 import random
-import struct
 import sys
 import time
 from collections.abc import Callable
@@ -23,10 +22,10 @@ from hyperloader import _hyperloader
 from hyperloader.process.rng import WorkerRngContext
 
 METRICS = (
-    "native_states",
+    "native_context",
     "torch_application",
-    "random_application",
-    "numpy_application",
+    "random_rekey",
+    "numpy_rekey",
     "worker_info_lazy",
     "full_install",
 )
@@ -55,27 +54,26 @@ def build_operations() -> InstallOperations:
     saved_random = random.getstate()
     saved_numpy = np.random.get_state()
     saved_torch = torch.get_rng_state()
-    context = WorkerRngContext(0, 1, (0,))
+    context = WorkerRngContext(0, 1)
+    context.attach_dataset((0,))
     root_seed, epoch, position = 0x1234_5678_9ABC_DEF0, 17, 29
-    torch_seed, random_bytes, numpy_bytes = _hyperloader._sample_rng_states(
-        root_seed, epoch, position
-    )
-    random_unpack = struct.Struct("=625I").unpack
+    torch_seed, key = _hyperloader._sample_rng_context(root_seed, epoch, position)
 
-    def native_states() -> Any:
-        return _hyperloader._sample_rng_states(root_seed, epoch, position)
+    def native_context() -> Any:
+        return _hyperloader._sample_rng_context(root_seed, epoch, position)
 
     def torch_application() -> Any:
         return torch.default_generator.manual_seed(torch_seed)
 
-    def random_application() -> None:
-        random.setstate((3, random_unpack(random_bytes), None))
+    def random_rekey() -> None:
+        context._random.rekey(key, position)
 
-    def numpy_application() -> None:
-        words = np.frombuffer(numpy_bytes, dtype=np.uint32)
-        np.random.set_state(("MT19937", words, 624, 0, 0.0))
+    def numpy_rekey() -> None:
+        context._numpy.rekey(key, position)
 
     def worker_info_lazy() -> Any:
+        if context._worker_info is None:
+            raise RuntimeError("benchmark context has no worker identity")
         context._worker_info.begin_sample(torch_seed)
         return get_worker_info()
 
@@ -85,10 +83,10 @@ def build_operations() -> InstallOperations:
     return InstallOperations(
         context,
         {
-            "native_states": native_states,
+            "native_context": native_context,
             "torch_application": torch_application,
-            "random_application": random_application,
-            "numpy_application": numpy_application,
+            "random_rekey": random_rekey,
+            "numpy_rekey": numpy_rekey,
             "worker_info_lazy": worker_info_lazy,
             "full_install": full_install,
         },
@@ -120,8 +118,10 @@ def measure_operations(
                 elapsed = time.perf_counter_ns() - started
                 checksum = (
                     torch.default_generator.initial_seed()
-                    ^ int(random.getstate()[1][0])
-                    ^ int(np.random.get_state()[1][0])
+                    ^ int(bound.context._random.generator.getstate()[1])
+                    ^ int(
+                        bound.context._numpy._bit_generator.state["state"]["key"][0]
+                    )
                 )
                 rows.append(
                     (metric, trial, iterations, elapsed, elapsed / iterations, checksum)

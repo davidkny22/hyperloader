@@ -46,7 +46,6 @@ def _write_report(
         "iterations": "100000",
         "warmup_iterations": "10000",
         "sample_derivation_blocks": "1",
-        "state_synthesis_blocks": "312",
         "feistel_rounds": "8",
     }
     with path.open("w", newline="", encoding="utf-8") as stream:
@@ -153,7 +152,6 @@ class RngFloorHarnessTest(unittest.TestCase):
         report = analyzer.parse_report(self.performance_path)
         cases = (
             ("sample_derivation_blocks", "2", "one Philox block"),
-            ("state_synthesis_blocks", "311", "312 Philox blocks"),
             ("feistel_rounds", "7", "eight Feistel rounds"),
             ("iterations", "99999", "repetition count"),
         )
