@@ -83,3 +83,91 @@ class AluSpinner:
         )
         record["stopped_seconds"] = time.perf_counter() - self._started_at
         self._records.append(record)
+
+
+class DutyCycleAluSpinner:
+    """Run one native periodic ALU pulse inside the consumer process."""
+
+    def __init__(
+        self,
+        library: Path,
+        core: int,
+        *,
+        active_microseconds: int,
+        period_microseconds: int,
+    ) -> None:
+        if active_microseconds <= 0 or active_microseconds > period_microseconds:
+            raise ValueError("active time must be positive and no longer than the period")
+        native = ctypes.CDLL(str(library))
+        native.hyperloader_alu_pulse.argtypes = [
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+        ]
+        native.hyperloader_alu_pulse.restype = ctypes.c_uint64
+        native.hyperloader_alu_store_stop.argtypes = [
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_uint32,
+        ]
+        native.hyperloader_alu_store_stop.restype = None
+        self._native = native
+        self._core = core
+        self._active_nanoseconds = active_microseconds * 1_000
+        self._period_nanoseconds = period_microseconds * 1_000
+        self._stop = ctypes.c_uint32(0)
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._record: dict[str, int | float] = {}
+        self._started_at = 0.0
+
+    def start(self) -> None:
+        """Start the native pulse and wait until its thread is pinned."""
+        if self._thread is not None:
+            raise RuntimeError("duty-cycle spinner has already started")
+        self._native.hyperloader_alu_store_stop(ctypes.byref(self._stop), 0)
+        self._started_at = time.perf_counter()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"alu-pulse-{self._core}",
+        )
+        self._thread.start()
+        if not self._ready.wait(timeout=5.0):
+            self.stop()
+            raise RuntimeError("native ALU pulse did not start within five seconds")
+
+    def stop(self) -> dict[str, object]:
+        """Stop the native pulse and return its exact duty and placement record."""
+        if self._thread is None:
+            raise RuntimeError("duty-cycle spinner has not started")
+        self._native.hyperloader_alu_store_stop(ctypes.byref(self._stop), 1)
+        self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise RuntimeError("native ALU pulse did not stop")
+        stopped_at = time.perf_counter()
+        return {
+            "process_id": os.getpid(),
+            "core": self._core,
+            "active_microseconds": self._active_nanoseconds / 1_000,
+            "period_microseconds": self._period_nanoseconds / 1_000,
+            "duty_percent": 100.0
+            * self._active_nanoseconds
+            / self._period_nanoseconds,
+            "active_seconds": stopped_at - self._started_at,
+            "thread": self._record,
+        }
+
+    def _run(self) -> None:
+        os.sched_setaffinity(0, {self._core})
+        self._record = {
+            "native_thread_id": threading.get_native_id(),
+            "started_seconds": time.perf_counter() - self._started_at,
+        }
+        self._ready.set()
+        self._record["result"] = int(
+            self._native.hyperloader_alu_pulse(
+                ctypes.byref(self._stop),
+                self._active_nanoseconds,
+                self._period_nanoseconds,
+            )
+        )
+        self._record["stopped_seconds"] = time.perf_counter() - self._started_at
