@@ -62,6 +62,41 @@ fn out_of_order_completion_commits_every_position_once() {
 }
 
 #[test]
+fn completion_order_commit_retains_a_bounded_delivered_set() {
+    let mut schedule = StaticSchedule::new(0, 6, 4, 2).expect("valid schedule");
+    let mut dispatches = Vec::new();
+    while let Some(dispatch) = schedule.next_dispatch() {
+        schedule
+            .mark_dispatched(dispatch)
+            .expect("dispatch accepted");
+        dispatches.push(dispatch);
+    }
+    for index in [2, 0, 3] {
+        schedule
+            .mark_completed(dispatches[index])
+            .expect("completion accepted");
+    }
+
+    assert_eq!(schedule.try_commit_ready(2), Some(2));
+    assert_eq!(schedule.delivered_positions().collect::<Vec<_>>(), vec![2]);
+    assert_eq!(schedule.next_dispatch(), None);
+
+    assert_eq!(schedule.try_commit_ready(0), Some(0));
+    assert_eq!(schedule.next_dispatch().map(|item| item.position), Some(4));
+    assert_eq!(schedule.try_commit_ready(3), Some(3));
+    let mut delivered = schedule.delivered_positions().collect::<Vec<_>>();
+    delivered.sort_unstable();
+    assert_eq!(delivered, vec![2, 3]);
+
+    schedule
+        .mark_completed(dispatches[1])
+        .expect("head completion accepted");
+    assert_eq!(schedule.try_commit_ready(1), Some(1));
+    assert_eq!(schedule.delivered_positions().count(), 0);
+    assert_eq!(schedule.next_dispatch().map(|item| item.position), Some(4));
+}
+
+#[test]
 fn invalid_transitions_are_rejected() {
     assert!(StaticSchedule::new(1, 0, 1, 1).is_err());
     assert!(StaticSchedule::new(0, 1, 0, 1).is_err());

@@ -1,6 +1,6 @@
 //! Bounded dispatch selection with out-of-order completion buffering.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -41,6 +41,7 @@ pub struct StaticSchedule {
     next_commit: u64,
     dispatch_ordinal: u64,
     positions: HashMap<u64, PositionState>,
+    delivered: HashSet<u64>,
 }
 
 impl StaticSchedule {
@@ -70,6 +71,7 @@ impl StaticSchedule {
             next_commit: start,
             dispatch_ordinal: 0,
             positions: HashMap::with_capacity(depth as usize),
+            delivered: HashSet::with_capacity(depth as usize),
         })
     }
 
@@ -82,13 +84,18 @@ impl StaticSchedule {
     /// Return every unsubmitted position admitted by the current frontier.
     pub fn dispatch_candidates(&self) -> impl Iterator<Item = u64> + '_ {
         let stop = self.next_commit.saturating_add(self.depth).min(self.end);
-        (self.next_commit..stop).filter(|position| !self.positions.contains_key(position))
+        (self.next_commit..stop).filter(|position| {
+            !self.positions.contains_key(position) && !self.delivered.contains(position)
+        })
     }
 
     /// Build the next worker route for one eligible frontier position.
     pub fn dispatch_at(&self, position: u64) -> Option<Dispatch> {
         let stop = self.next_commit.saturating_add(self.depth).min(self.end);
-        if position < self.next_commit || position >= stop || self.positions.contains_key(&position)
+        if position < self.next_commit
+            || position >= stop
+            || self.positions.contains_key(&position)
+            || self.delivered.contains(&position)
         {
             return None;
         }
@@ -132,21 +139,34 @@ impl StaticSchedule {
 
     /// Commit the next sampler position only when that exact position is ready.
     pub fn try_commit(&mut self) -> Option<u64> {
-        if !matches!(
-            self.positions.get(&self.next_commit),
-            Some(PositionState::Ready(_))
-        ) {
+        self.try_commit_ready(self.next_commit)
+    }
+
+    /// Commit one ready position immediately and advance the contiguous base when possible.
+    pub fn try_commit_ready(&mut self, position: u64) -> Option<u64> {
+        if !matches!(self.positions.get(&position), Some(PositionState::Ready(_))) {
             return None;
         }
-        let position = self.next_commit;
         self.positions.remove(&position);
-        self.next_commit += 1;
+        if position == self.next_commit {
+            self.next_commit += 1;
+            while self.delivered.remove(&self.next_commit) {
+                self.next_commit += 1;
+            }
+        } else {
+            self.delivered.insert(position);
+        }
         Some(position)
+    }
+
+    /// Return committed positions beyond the contiguous delivery prefix.
+    pub fn delivered_positions(&self) -> impl Iterator<Item = u64> + '_ {
+        self.delivered.iter().copied()
     }
 
     /// Report whether every position has committed and the frontier is empty.
     pub fn is_complete(&self) -> bool {
-        self.next_commit == self.end && self.positions.is_empty()
+        self.next_commit == self.end && self.positions.is_empty() && self.delivered.is_empty()
     }
 
     /// Return the number of dispatched, uncommitted positions.

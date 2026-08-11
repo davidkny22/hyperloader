@@ -51,6 +51,16 @@ impl PyStaticSchedule {
         self.schedule.try_commit()
     }
 
+    fn try_commit_ready(&mut self, position: u64) -> Option<u64> {
+        self.schedule.try_commit_ready(position)
+    }
+
+    fn delivered_positions(&self) -> Vec<u64> {
+        let mut positions = self.schedule.delivered_positions().collect::<Vec<_>>();
+        positions.sort_unstable();
+        positions
+    }
+
     fn is_complete(&self) -> bool {
         self.schedule.is_complete()
     }
