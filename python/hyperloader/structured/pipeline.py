@@ -4,32 +4,50 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Any
-
-from hyperloader import _hyperloader
 
 from ..decoder.execution import PinnedDecoder
 from ..memory import ByteLedger
 from ..stages import Decode, Pipeline
 from .metrics import payload_bytes
+from .native_slots import NativeSlotCollator
+
+
+@dataclass(frozen=True, slots=True)
+class _ProducedBatch:
+    batch: Any
+    samples: int
+    sample_bytes: int
+    output_bytes: int
+    minimum_sample_bytes: int
+    maximum_sample_bytes: int
+    first_shape: object
+    variable_shape: bool
 
 
 @dataclass(slots=True)
 class NativePipelineAdapter:
-    """Run pinned decode or tokenized tensor stages in persistent native threads."""
+    """Run complete pinned batches in persistent native threads."""
 
     pipeline: Pipeline[Any, Any]
     worker_count: int
     source_class: str
     growth: str
     native_batch_enabled: bool = field(default=True, init=False)
-    _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
-    _futures: dict[int, Future[Any]] = field(
+    _sample_executor: ThreadPoolExecutor | None = field(
+        default=None, init=False, repr=False
+    )
+    _batch_executor: ThreadPoolExecutor | None = field(
+        default=None, init=False, repr=False
+    )
+    _futures: dict[int, Future[_ProducedBatch]] = field(
         default_factory=dict, init=False, repr=False
     )
     _epoch_length: int = field(default=0, init=False, repr=False)
-    _next_submit: int = field(default=0, init=False, repr=False)
-    _prefetch_depth: int = field(default=0, init=False, repr=False)
+    _next_batch_submit: int = field(default=0, init=False, repr=False)
+    _batch_size: int = field(default=1, init=False, repr=False)
+    _batch_prefetch: int = field(default=1, init=False, repr=False)
     _sample_shape: object = field(default=None, init=False, repr=False)
     _variable_shape: bool = field(default=False, init=False, repr=False)
     _produced_batches: int = field(default=0, init=False, repr=False)
@@ -38,42 +56,50 @@ class NativePipelineAdapter:
     _output_bytes: int = field(default=0, init=False, repr=False)
     _minimum_sample_bytes: int | None = field(default=None, init=False, repr=False)
     _maximum_sample_bytes: int = field(default=0, init=False, repr=False)
-    _slot_capacity_bytes: int = field(default=0, init=False, repr=False)
-    _arena: Any = field(default=None, init=False, repr=False)
-    _closed_arena_stats: tuple[int, int, int, int] = field(
-        default=(0, 0, 0, 0), init=False, repr=False
-    )
     _memory: ByteLedger = field(init=False, repr=False)
+    _slots: NativeSlotCollator = field(init=False, repr=False)
+    _record_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._memory = ByteLedger(self.source_class, "single-write")
+        self._slots = NativeSlotCollator(self.worker_count, self.growth)
 
     def __len__(self) -> int:
         return len(self.pipeline)
 
     def native_batch(self, start: int, stop: int) -> Any:
-        """Produce one final batch with no transport or reconstruction copy."""
-        values = (
-            list(self._pool().map(self.pipeline.__getitem__, range(start, stop)))
-            if self._epoch_length == 0
-            else [self._value(index) for index in range(start, stop)]
-        )
-        self._fill_frontier()
-        value = self._collate_into_slot(values)
-        self._record(values, value)
-        return value
+        """Return one ordered batch whose final write ran off the owner thread."""
+        if self._epoch_length == 0:
+            values = list(
+                self._sample_pool().map(self.pipeline.__getitem__, range(start, stop))
+            )
+            produced = self._finish_batch(values)
+        else:
+            future = self._futures.pop(start, None)
+            if future is None:
+                future = self._batch_pool().submit(self._produce_batch, start, stop)
+            produced = future.result()
+            self._fill_frontier()
+        self._record(produced)
+        return produced.batch
 
-    def begin_native_epoch(self, length: int, depth: int, start: int) -> None:
-        """Start a bounded decode frontier after any retained probe batch."""
+    def begin_native_epoch(
+        self, length: int, depth: int, start: int, batch_size: int
+    ) -> None:
+        """Start a bounded complete-batch frontier after a retained probe."""
+        if self._sample_executor is not None:
+            self._sample_executor.shutdown(wait=True, cancel_futures=True)
+            self._sample_executor = None
         self._futures.clear()
         self._epoch_length = length
-        self._next_submit = start
-        self._prefetch_depth = max(1, depth)
+        self._next_batch_submit = start
+        self._batch_size = batch_size
+        self._batch_prefetch = max(1, (depth + batch_size - 1) // batch_size)
         self._fill_frontier()
 
     def memory_report(self) -> dict[str, object]:
         """Return measured byte ownership for delivered native batches."""
-        regions, growth_events, hold_events, overflow_events = self._arena_stats()
+        regions, growth_events, hold_events, overflow_events = self._slots.stats()
         return {
             **self._memory.report(),
             "loader_written_bytes": self._output_bytes,
@@ -84,147 +110,99 @@ class NativePipelineAdapter:
             "hold_events": hold_events,
             "overflow_events": overflow_events,
             "regions": regions,
-            "slot_capacity_bytes": self._slot_capacity_bytes,
+            "slot_capacity_bytes": self._slots.capacity_bytes,
             "variable_shape": self._variable_shape,
         }
 
     def close(self) -> None:
         """Join native workers while permitting a later iterator to reopen them."""
-        if self._executor is not None:
-            self._executor.shutdown(wait=True, cancel_futures=True)
-            self._executor = None
+        if self._sample_executor is not None:
+            self._sample_executor.shutdown(wait=True, cancel_futures=True)
+            self._sample_executor = None
+        if self._batch_executor is not None:
+            self._batch_executor.shutdown(wait=True, cancel_futures=True)
+            self._batch_executor = None
         self._futures.clear()
         self._epoch_length = 0
-        self._next_submit = 0
-        self._prefetch_depth = 0
-        if self._arena is not None:
-            self._closed_arena_stats = self._arena.stats()
-            self._arena = None
+        self._next_batch_submit = 0
+        self._batch_prefetch = 1
+        self._slots.close()
 
-    def _pool(self) -> ThreadPoolExecutor:
-        if self._executor is None:
-            self._executor = ThreadPoolExecutor(
+    def _sample_pool(self) -> ThreadPoolExecutor:
+        if self._sample_executor is None:
+            self._sample_executor = ThreadPoolExecutor(
                 max_workers=self.worker_count,
-                thread_name_prefix="hyperloader-native",
+                thread_name_prefix="hyperloader-native-probe",
             )
-        return self._executor
+        return self._sample_executor
 
-    def _value(self, index: int) -> Any:
-        future = self._futures.pop(index, None)
-        if future is None:
-            future = self._pool().submit(self.pipeline.__getitem__, index)
-        return future.result()
+    def _batch_pool(self) -> ThreadPoolExecutor:
+        if self._batch_executor is None:
+            self._batch_executor = ThreadPoolExecutor(
+                max_workers=self.worker_count,
+                thread_name_prefix="hyperloader-native-batch",
+            )
+        return self._batch_executor
 
     def _fill_frontier(self) -> None:
         while (
-            self._next_submit < self._epoch_length
-            and len(self._futures) < self._prefetch_depth
+            self._next_batch_submit < self._epoch_length
+            and len(self._futures) < self._batch_prefetch
         ):
-            index = self._next_submit
-            self._futures[index] = self._pool().submit(self.pipeline.__getitem__, index)
-            self._next_submit += 1
-
-    def _record(self, values: list[Any], batch: Any) -> None:
-        output_size = payload_bytes(batch)
-        sample_bytes = 0
-        for value in values:
-            signature = _shape_signature(value)
-            if self._sample_shape is None:
-                self._sample_shape = signature
-            elif signature != self._sample_shape:
-                self._variable_shape = True
-            size = payload_bytes(value)
-            sample_bytes += size
-            self._sample_bytes += size
-            self._maximum_sample_bytes = max(self._maximum_sample_bytes, size)
-            self._minimum_sample_bytes = (
-                size
-                if self._minimum_sample_bytes is None
-                else min(self._minimum_sample_bytes, size)
+            start = self._next_batch_submit
+            stop = min(start + self._batch_size, self._epoch_length)
+            self._futures[start] = self._batch_pool().submit(
+                self._produce_batch, start, stop
             )
-        self._produced_batches += 1
-        self._produced_samples += len(values)
-        self._output_bytes += output_size
-        self._memory.record(
-            batch,
-            len(values),
-            pinned_stage_bytes=(
-                sample_bytes if self.source_class == "pinned-decode" else 0
-            ),
-            arena_write_bytes=output_size,
+            self._next_batch_submit = stop
+
+    def _produce_batch(self, start: int, stop: int) -> _ProducedBatch:
+        values = [self.pipeline[index] for index in range(start, stop)]
+        return self._finish_batch(values)
+
+    def _finish_batch(self, values: list[Any]) -> _ProducedBatch:
+        batch = self._slots.collate(values, self.pipeline.collate_stage.fn)
+        shapes = [_shape_signature(value) for value in values]
+        sizes = [payload_bytes(value) for value in values]
+        return _ProducedBatch(
+            batch=batch,
+            samples=len(values),
+            sample_bytes=sum(sizes),
+            output_bytes=payload_bytes(batch),
+            minimum_sample_bytes=min(sizes, default=0),
+            maximum_sample_bytes=max(sizes, default=0),
+            first_shape=shapes[0] if shapes else None,
+            variable_shape=len(set(shapes)) > 1,
         )
 
-    def _collate_into_slot(self, values: list[Any]) -> Any:
-        import torch
-        from torch.nn.utils.rnn import pad_sequence
-
-        if not values:
-            return self.pipeline.collate(values)
-        first = values[0]
-        if not isinstance(first, torch.Tensor) or first.device.type != "cpu":
-            return self.pipeline.collate(values)
-        if self.pipeline.collate_stage.fn is pad_sequence:
-            return self._pad_into_slot(values)
-        return self._stack_into_slot(values)
-
-    def _stack_into_slot(self, values: list[Any]) -> Any:
-        import torch
-
-        first = values[0]
-        shape = (len(values), *first.shape)
-        output, slot, required = self._allocate_slot(shape, first)
-        try:
-            torch.stack(values, out=output)
-            slot.publish(required)
-            return output
-        except BaseException:
-            del output
-            del slot
-            raise
-
-    def _pad_into_slot(self, values: list[Any]) -> Any:
-        first = values[0]
-        maximum = max(int(value.size(0)) for value in values)
-        shape = (maximum, len(values), *first.shape[1:])
-        output, slot, required = self._allocate_slot(shape, first)
-        try:
-            output.zero_()
-            for column, value in enumerate(values):
-                output[: value.size(0), column, ...].copy_(value)
-            slot.publish(required)
-            return output
-        except BaseException:
-            del output
-            del slot
-            raise
-
-    def _allocate_slot(
-        self, shape: tuple[int, ...], template: Any
-    ) -> tuple[Any, Any, int]:
-        import math
-        import torch
-
-        elements = math.prod(shape)
-        required = elements * template.element_size()
-        reserved = max(required, template.element_size())
-        if self._arena is None:
-            initial = _size_class(reserved, template.element_size())
-            self._arena = _hyperloader._NativeArena(
-                initial,
-                max(2, self.worker_count),
-                self.growth,
+    def _record(self, produced: _ProducedBatch) -> None:
+        with self._record_lock:
+            if self._sample_shape is None:
+                self._sample_shape = produced.first_shape
+            elif produced.first_shape != self._sample_shape:
+                self._variable_shape = True
+            self._variable_shape = self._variable_shape or produced.variable_shape
+            self._sample_bytes += produced.sample_bytes
+            self._maximum_sample_bytes = max(
+                self._maximum_sample_bytes, produced.maximum_sample_bytes
             )
-        slot = self._arena.reserve(reserved)
-        self._slot_capacity_bytes = max(self._slot_capacity_bytes, slot.capacity)
-        output = torch.frombuffer(
-            slot,
-            dtype=template.dtype,
-            count=elements,
-        ).view(shape)
-        return output, slot, required
-
-    def _arena_stats(self) -> tuple[int, int, int, int]:
-        return self._closed_arena_stats if self._arena is None else self._arena.stats()
+            if produced.samples:
+                self._minimum_sample_bytes = (
+                    produced.minimum_sample_bytes
+                    if self._minimum_sample_bytes is None
+                    else min(self._minimum_sample_bytes, produced.minimum_sample_bytes)
+                )
+            self._produced_batches += 1
+            self._produced_samples += produced.samples
+            self._output_bytes += produced.output_bytes
+            self._memory.record(
+                produced.batch,
+                produced.samples,
+                pinned_stage_bytes=(
+                    produced.sample_bytes if self.source_class == "pinned-decode" else 0
+                ),
+                arena_write_bytes=produced.output_bytes,
+            )
 
 
 def bind_native_pipeline(
@@ -297,8 +275,3 @@ def _shape_signature(value: Any) -> object:
     if value_type.__module__ == "torch" and value_type.__name__ == "Tensor":
         return (str(value.dtype), tuple(int(size) for size in value.shape))
     return value_type.__module__, value_type.__qualname__
-
-
-def _size_class(size: int, element_size: int) -> int:
-    minimum = max(size, element_size)
-    return 1 << (minimum - 1).bit_length()

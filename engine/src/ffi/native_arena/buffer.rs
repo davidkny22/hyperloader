@@ -9,7 +9,7 @@ use std::ptr::{self, NonNull};
 
 const OWNER: u32 = 0;
 
-#[pyclass(name = "_NativeSlot", unsendable)]
+#[pyclass(name = "_NativeSlot")]
 pub(super) struct NativeSlot {
     allocator: ArenaAllocator,
     slot: SlotRef,
@@ -17,6 +17,14 @@ pub(super) struct NativeSlot {
     capacity: usize,
     delivery: Option<DeliveryView>,
 }
+
+// SAFETY: the pointer addresses an allocator-owned mapping whose address remains stable for
+// the slot lifetime. Publication completes before Python transfers the owning reference, and
+// all mutable Python access remains serialized by the interpreter lock.
+unsafe impl Send for NativeSlot {}
+// SAFETY: Python method borrows are synchronized by PyO3, and the pointed-to bytes follow an
+// exclusive-fill-then-publish lifecycle. Rust never dereferences the pointer after handoff.
+unsafe impl Sync for NativeSlot {}
 
 impl NativeSlot {
     pub(super) fn reserve(allocator: ArenaAllocator, required: usize) -> PyResult<Self> {
@@ -127,3 +135,6 @@ impl Drop for NativeSlot {
 fn runtime_error(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
+
+#[cfg(test)]
+mod tests;

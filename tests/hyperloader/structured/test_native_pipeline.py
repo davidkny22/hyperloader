@@ -58,7 +58,9 @@ class NativePipelineTest(unittest.TestCase):
         loader = DataLoader(dataset, batch_size=2, num_workers=2, seed=23)
         try:
             iterator = iter(loader)
-            self.assertEqual(set(loader._execution_dataset._futures), {2, 3})
+            self.assertEqual(set(loader._execution_dataset._futures), {2})
+            prefetched = loader._execution_dataset._futures[2].result(timeout=5.0)
+            self.assertEqual(tuple(prefetched.batch.shape), (2, 3, 4, 5))
             actual = next(iterator)
             self.assertTrue(torch.equal(actual, expected))
             self.assertIsNone(loader._process_pool)

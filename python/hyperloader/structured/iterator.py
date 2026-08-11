@@ -30,7 +30,7 @@ class StructuredIterator(Iterator[Any]):
             retained_stop = (
                 min(batch_size, length) if loader._native_batch_probe is not None else 0
             )
-            begin_epoch(length, frontier_depth(loader), retained_stop)
+            begin_epoch(length, frontier_depth(loader), retained_stop, batch_size)
 
     def __iter__(self) -> StructuredIterator:
         return self
