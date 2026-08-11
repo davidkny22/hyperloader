@@ -24,6 +24,17 @@ fn tuner_never_exceeds_the_configured_cap() {
 }
 
 #[test]
+fn tuner_reopens_after_a_late_powered_down_entry() {
+    let mut tuner = DutyTuner::new(20_000, 50_000);
+
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(1), 20_000);
+    assert_eq!(tuner.observe(1), 30_000);
+}
+
+#[test]
 fn gap_gate_parks_and_activates_the_native_thread() {
     let cpu = current_cpu();
     let mut keeper = MachineKeeper::new(vec![cpu], 0.05, 0.05, 2_000_000)

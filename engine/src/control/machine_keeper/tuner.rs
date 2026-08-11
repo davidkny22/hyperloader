@@ -21,6 +21,12 @@ impl DutyTuner {
 
     pub(super) fn observe(&mut self, powered_down_entries: u64) -> u32 {
         if self.settled {
+            if powered_down_entries == 0 {
+                return self.current;
+            }
+            self.lowest_zero = None;
+            self.settled = false;
+            self.current = (self.current + DUTY_STEP).min(self.maximum);
             return self.current;
         }
         if powered_down_entries == 0 {
