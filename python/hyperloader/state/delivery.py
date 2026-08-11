@@ -6,9 +6,9 @@ from __future__ import annotations
 class DeliveredBatchState:
     """Track a contiguous prefix and delivered batches beyond its first gap."""
 
-    def __init__(self, base: int = 0) -> None:
+    def __init__(self, base: int = 0, ahead: set[int] | None = None) -> None:
         self.base = base
-        self._ahead: set[int] = set()
+        self._ahead = set() if ahead is None else set(ahead)
 
     def mark(self, ordinal: int) -> None:
         """Record one newly delivered batch ordinal."""
@@ -32,3 +32,25 @@ class DeliveredBatchState:
             offset = ordinal - self.base
             bitmap[offset // 8] |= 1 << (offset % 8)
         return bytes(bitmap)
+
+    @property
+    def ahead(self) -> frozenset[int]:
+        """Return delivered ordinals beyond the contiguous prefix."""
+        return frozenset(self._ahead)
+
+
+def decode_delivered_bitmap(base: int, bitmap: bytes, total_batches: int) -> set[int]:
+    """Decode and validate delivered ordinals relative to a resume gap."""
+    delivered = {
+        base + byte_index * 8 + bit
+        for byte_index, byte in enumerate(bitmap)
+        for bit in range(8)
+        if byte & (1 << bit)
+    }
+    if base > total_batches:
+        raise ValueError("loader state cursor exceeds the delivery batch count")
+    if base in delivered:
+        raise ValueError("delivered_bitmap bit zero must name the first open gap")
+    if any(ordinal >= total_batches for ordinal in delivered):
+        raise ValueError("delivered_bitmap exceeds the delivery batch count")
+    return delivered

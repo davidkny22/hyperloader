@@ -164,6 +164,19 @@ impl StaticSchedule {
         self.delivered.iter().copied()
     }
 
+    /// Seed one previously delivered position beyond the contiguous resume base.
+    pub fn seed_delivered(&mut self, position: u64) -> Result<(), ScheduleError> {
+        if position <= self.next_commit || position >= self.end {
+            return Err(ScheduleError(
+                "restored delivery is outside the open position range",
+            ));
+        }
+        if self.positions.contains_key(&position) || !self.delivered.insert(position) {
+            return Err(ScheduleError("restored position was delivered twice"));
+        }
+        Ok(())
+    }
+
     /// Report whether every position has committed and the frontier is empty.
     pub fn is_complete(&self) -> bool {
         self.next_commit == self.end && self.positions.is_empty() && self.delivered.is_empty()

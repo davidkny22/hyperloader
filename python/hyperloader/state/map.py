@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..fingerprint import ContractFingerprint, require_fingerprint_match
+from .delivery import decode_delivered_bitmap
 
 MAX_U64 = (1 << 64) - 1
 
@@ -107,11 +108,18 @@ def restore_map_state(loader: Any, payload: dict[str, object]) -> None:
         raise ValueError(
             "loader state batch_shape does not match the current fingerprint"
         )
-    if loader.sampler is None and loader.batch_sampler is None:
-        if state.sampler_checksum != 0:
-            raise ValueError("native sampler state requires sampler_checksum=0")
+    if (
+        loader.sampler is None
+        and loader.batch_sampler is None
+        and state.sampler_checksum != 0
+    ):
+        raise ValueError("native sampler state requires sampler_checksum=0")
     if loader.delivery == "in-order" and state.delivered_bitmap:
         raise ValueError("in-order loader state requires an empty delivered_bitmap")
+    if loader.delivery == "on-completion" and state.delivered_bitmap:
+        width = loader.batch_size or 1
+        total_batches = (loader._plan.length + width - 1) // width
+        decode_delivered_bitmap(state.cursor, state.delivered_bitmap, total_batches)
     loader.close()
     loader.root_seed = state.root_seed
     loader._epoch_state.restore(state.epoch)

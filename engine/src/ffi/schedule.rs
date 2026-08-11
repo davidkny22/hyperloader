@@ -61,6 +61,10 @@ impl PyStaticSchedule {
         positions
     }
 
+    fn seed_delivered(&mut self, position: u64) -> PyResult<()> {
+        self.schedule.seed_delivered(position).map_err(value_error)
+    }
+
     fn is_complete(&self) -> bool {
         self.schedule.is_complete()
     }

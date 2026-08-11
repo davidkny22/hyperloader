@@ -97,6 +97,20 @@ fn completion_order_commit_retains_a_bounded_delivered_set() {
 }
 
 #[test]
+fn restored_deliveries_are_not_dispatched_again() {
+    let mut schedule = StaticSchedule::new(2, 8, 4, 2).expect("valid schedule");
+    schedule.seed_delivered(3).expect("restore position 3");
+    schedule.seed_delivered(5).expect("restore position 5");
+    assert_eq!(
+        schedule.dispatch_candidates().collect::<Vec<_>>(),
+        vec![2, 4]
+    );
+    assert!(schedule.seed_delivered(2).is_err());
+    assert!(schedule.seed_delivered(3).is_err());
+    assert!(schedule.seed_delivered(8).is_err());
+}
+
+#[test]
 fn invalid_transitions_are_rejected() {
     assert!(StaticSchedule::new(1, 0, 1, 1).is_err());
     assert!(StaticSchedule::new(0, 1, 0, 1).is_err());

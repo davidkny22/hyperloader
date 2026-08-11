@@ -103,6 +103,10 @@ class FrontierRuntime:
         """Return delivered positions beyond the contiguous frontier base."""
         return tuple(self._schedule.delivered_positions())
 
+    def seed_delivered(self, position: int) -> None:
+        """Seed one previously delivered position into a restored frontier."""
+        self._schedule.seed_delivered(position)
+
     def record_wait(self, wait_ns: int) -> None:
         """Record a delivery stall and grow a saturated frontier within its ceiling."""
         self._wait_ns += wait_ns

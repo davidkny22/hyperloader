@@ -6,13 +6,17 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+from ..state import (
+    DeliveredBatchState,
+    decode_delivered_bitmap,
+    resume_sample_position,
+)
+from ..telemetry.delivery import build_delivery_telemetry
 from .completion import CompletionBatchDelivery
 from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .frontier import FrontierRuntime, binding_cause
 from .sizing import delivery_length, frontier_ceiling, frontier_depth
-from ..state import DeliveredBatchState, resume_sample_position
-from ..telemetry.delivery import build_delivery_telemetry
 
 
 class ProcessIterator(Iterator[Any]):
@@ -22,12 +26,29 @@ class ProcessIterator(Iterator[Any]):
         self._loader = loader
         self._epoch = loader._epoch
         self._length = delivery_length(loader)
-        self._position = resume_sample_position(loader, self._length)
+        resume_position = resume_sample_position(loader, self._length)
         self._on_completion = loader.delivery == "on-completion"
+        width = loader.batch_size or 1
+        total_batches = (self._length + width - 1) // width
+        restored_batches = (
+            decode_delivered_bitmap(
+                loader._resume_cursor_batches,
+                loader._resume_delivered_bitmap,
+                total_batches,
+            )
+            if self._on_completion
+            else set()
+        )
+        restored_samples = sum(
+            min(width, self._length - ordinal * width) for ordinal in restored_batches
+        )
+        self._position = resume_position + restored_samples
         self._complete = False
         self._valid = True
         self._ready: dict[int, tuple[int, bytes, int]] = {}
-        self._delivered = DeliveredBatchState(loader._resume_cursor_batches)
+        self._delivered = DeliveredBatchState(
+            loader._resume_cursor_batches, restored_batches
+        )
         self._completion = (
             CompletionBatchDelivery(self) if self._on_completion else None
         )
@@ -41,9 +62,9 @@ class ProcessIterator(Iterator[Any]):
             batch_size = loader._process_pool.batch_size
             self._worker_batches = batch_size is not None
             schedule_start = (
-                self._position // batch_size
+                resume_position // batch_size
                 if batch_size is not None
-                else self._position
+                else resume_position
             )
             schedule_length = (
                 (self._length + batch_size - 1) // batch_size
@@ -61,6 +82,22 @@ class ProcessIterator(Iterator[Any]):
                 if batch_size is not None
                 else ceiling
             )
+            restored_positions = (
+                set(restored_batches)
+                if batch_size is not None
+                else {
+                    position
+                    for ordinal in restored_batches
+                    for position in range(
+                        ordinal * width,
+                        min((ordinal + 1) * width, self._length),
+                    )
+                }
+            )
+            if restored_positions:
+                restored_span = max(restored_positions) - schedule_start + 1
+                schedule_depth = max(schedule_depth, restored_span)
+                schedule_ceiling = max(schedule_ceiling, restored_span)
             self._schedule = FrontierRuntime(
                 schedule_length,
                 schedule_depth,
@@ -71,6 +108,8 @@ class ProcessIterator(Iterator[Any]):
                 self._dispatch_cost,
                 start=schedule_start,
             )
+            for position in sorted(restored_positions):
+                self._schedule.seed_delivered(position)
             self._schedule.set_worker_count(loader._controller.width)
             self._fill_frontier()
 

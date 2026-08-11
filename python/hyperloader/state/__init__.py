@@ -1,6 +1,6 @@
 """Map-style coordinate capture and restoration."""
 
-from .delivery import DeliveredBatchState
+from .delivery import DeliveredBatchState, decode_delivered_bitmap
 from .map import capture_map_state, restore_map_state
 from .runtime import resume_sample_position
 from .sampler import BatchSamplerRuntime, SamplerRuntime, build_sampler_runtime
@@ -15,6 +15,7 @@ __all__ = [
     "UserBatchSamplerIterator",
     "build_sampler_runtime",
     "capture_map_state",
+    "decode_delivered_bitmap",
     "restore_map_state",
     "resume_sample_position",
 ]

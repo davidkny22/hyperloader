@@ -10,7 +10,11 @@ from queue import Empty, SimpleQueue
 from typing import Any
 
 from ..process.sizing import delivery_length, frontier_depth
-from ..state import DeliveredBatchState, resume_sample_position
+from ..state import (
+    DeliveredBatchState,
+    decode_delivered_bitmap,
+    resume_sample_position,
+)
 from ..telemetry.delivery import build_delivery_telemetry
 from .pool import ThreadPool
 
@@ -22,17 +26,43 @@ class ThreadIterator(Iterator[Any]):
         self._loader = loader
         self._epoch = loader._epoch
         self._length = delivery_length(loader)
-        self._position = resume_sample_position(loader, self._length)
+        resume_position = resume_sample_position(loader, self._length)
         self._on_completion = loader.delivery == "on-completion"
-        self._next_submit = self._position
-        self._depth = min(self._length - self._position, frontier_depth(loader))
+        width = loader.batch_size or 1
+        total_batches = (self._length + width - 1) // width
+        self._restored_batches = (
+            decode_delivered_bitmap(
+                loader._resume_cursor_batches,
+                loader._resume_delivered_bitmap,
+                total_batches,
+            )
+            if self._on_completion
+            else set()
+        )
+        restored_samples = sum(
+            min(width, self._length - ordinal * width)
+            for ordinal in self._restored_batches
+        )
+        self._position = resume_position + restored_samples
+        self._next_submit = resume_position
+        restored_span = (
+            max(self._restored_batches) * width + width - resume_position
+            if self._restored_batches
+            else 0
+        )
+        self._depth = min(
+            self._length - resume_position,
+            max(frontier_depth(loader), restored_span),
+        )
         self._complete = False
         self._valid = True
         self._futures: dict[int, Future[tuple[Any, int]]] = {}
         self._completed: SimpleQueue[int] = SimpleQueue()
         self._ready_batches: deque[int] = deque()
         self._queued_batches: set[int] = set()
-        self._delivered = DeliveredBatchState(loader._resume_cursor_batches)
+        self._delivered = DeliveredBatchState(
+            loader._resume_cursor_batches, self._restored_batches
+        )
         self._delivery_telemetry = build_delivery_telemetry(loader)
         if self._length:
             if loader._thread_pool is None:
@@ -139,6 +169,10 @@ class ThreadIterator(Iterator[Any]):
         pool = self._loader._thread_pool
         while self._next_submit < self._length and len(self._futures) < self._depth:
             position = self._next_submit
+            width = self._loader.batch_size or 1
+            if position // width in self._restored_batches:
+                self._next_submit += 1
+                continue
             index = self._loader._plan.index(
                 self._loader.root_seed, self._epoch, position
             )

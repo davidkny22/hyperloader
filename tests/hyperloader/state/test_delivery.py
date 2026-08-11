@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from hyperloader.state import DeliveredBatchState
+from hyperloader.state import DeliveredBatchState, decode_delivered_bitmap
 
 
 class DeliveredBatchStateTest(unittest.TestCase):
@@ -32,6 +32,13 @@ class DeliveredBatchStateTest(unittest.TestCase):
         state.mark(4)
         with self.assertRaisesRegex(RuntimeError, "repeated"):
             state.mark(4)
+
+    def test_bitmap_decode_rejects_the_gap_and_out_of_range_bits(self) -> None:
+        self.assertEqual(decode_delivered_bitmap(2, b"\x0a", 8), {3, 5})
+        with self.assertRaisesRegex(ValueError, "bit zero"):
+            decode_delivered_bitmap(2, b"\x01", 8)
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            decode_delivered_bitmap(7, b"\x02", 8)
 
 
 if __name__ == "__main__":

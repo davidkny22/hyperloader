@@ -88,6 +88,30 @@ class CompletionDeliveryTest(unittest.TestCase):
         self.assertNotEqual(completion_batches, strict_batches)
         self.assertEqual(completion_batches[0], (2, 3))
 
+    def test_open_bitmap_resume_skips_every_delivered_batch(self) -> None:
+        expected = {(0, 1), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11)}
+        for thread_safe in (False, True):
+            with self.subTest(thread_safe=thread_safe):
+                source = _loader(in_order=False, thread_safe=thread_safe)
+                iterator = iter(source)
+                try:
+                    delivered = _batch_tuple(next(iterator))
+                    state = source.state_dict()
+                finally:
+                    source.close()
+
+                resumed = _loader(in_order=False, thread_safe=thread_safe)
+                try:
+                    resumed.load_state_dict(state)
+                    remaining = {_batch_tuple(batch) for batch in resumed}
+                finally:
+                    resumed.close()
+
+                self.assertEqual(delivered, (2, 3))
+                self.assertNotIn(delivered, remaining)
+                self.assertEqual(remaining | {delivered}, expected)
+                self.assertEqual(len(remaining), 5)
+
     def test_strict_state_rejects_a_completion_bitmap(self) -> None:
         source = _loader(in_order=True)
         target = _loader(in_order=True)
