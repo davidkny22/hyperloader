@@ -26,9 +26,12 @@ class SparkMachineDeliveryTest(unittest.TestCase):
             first = next(iterator)
             time.sleep(0.003)
             second = next(iterator)
+            time.sleep(0.003)
+            third = next(iterator)
+            time.sleep(0.003)
             snapshot = loader.stats()
 
-            self.assertEqual(loader.delivery_memory, "host")
+            self.assertEqual(loader.delivery_memory, "pinned")
             self.assertEqual(source._version, source_version)
             self.assertEqual(
                 first.untyped_storage().data_ptr(), source.untyped_storage().data_ptr()
@@ -36,9 +39,16 @@ class SparkMachineDeliveryTest(unittest.TestCase):
             self.assertEqual(
                 second.untyped_storage().data_ptr(), source.untyped_storage().data_ptr()
             )
+            self.assertEqual(
+                third.untyped_storage().data_ptr(), source.untyped_storage().data_ptr()
+            )
             self.assertTrue(torch.equal(first, source[:64]))
             self.assertTrue(torch.equal(second, source[64:128]))
-            self.assertEqual(snapshot["memory"].get("pinned_registered_bytes", 0), 0)
+            self.assertTrue(torch.equal(third, source[128:192]))
+            self.assertEqual(
+                snapshot["memory"].get("pinned_registered_bytes", 0),
+                source.numel() * source.element_size(),
+            )
             self.assertEqual(snapshot["memory"].get("pinned_staged_bytes", 0), 0)
             self.assertGreater(snapshot["current"]["machine_keeping_duty"], 0.0)
             self.assertLessEqual(snapshot["current"]["machine_keeping_duty"], 0.05)

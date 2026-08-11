@@ -27,7 +27,8 @@ class SparkPriorTest(unittest.TestCase):
         self.assertEqual(prior.bandwidth_provenance, "derived-prior")
         self.assertEqual(prior.steal_curves[0].points[0].loss_fraction, 0.0204)
         self.assertEqual(prior.idle_state_tax.warm_duty_fraction, 0.05)
-        self.assertIsNone(prior.staged_copy_tax)
+        self.assertEqual(prior.staged_copy_tax.batch_bytes, 262_144)
+        self.assertEqual(prior.staged_copy_tax.loss_fraction, 0.1329)
 
     def test_unrelated_machine_receives_no_spark_prior(self) -> None:
         machine = MachineIdentity("generic x86", (CpuCluster("all", (0,)),), 1024)

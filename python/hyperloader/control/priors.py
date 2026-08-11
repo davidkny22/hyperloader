@@ -8,6 +8,7 @@ from .record import (
     CalibrationRecord,
     IdleStateTax,
     PinCost,
+    StagedCopyTax,
     StealCurve,
     StealPoint,
 )
@@ -81,5 +82,8 @@ def spark_prior(machine: MachineIdentity) -> CalibrationRecord | None:
             warm_duty_fraction=0.05,
             minimum_gap_nanoseconds=1_930_000,
         ),
-        staged_copy_tax=None,
+        staged_copy_tax=StagedCopyTax(
+            batch_bytes=262_144,
+            loss_fraction=0.1329,
+        ),
     )
