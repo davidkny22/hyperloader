@@ -13,6 +13,7 @@ sys.path.insert(0, str(BENCHES))
 cpu_idle = importlib.import_module("dominance_cpu_idle")
 wait_workload = importlib.import_module("dominance_wait_workload")
 alu_spinner = importlib.import_module("dominance_alu_spinner")
+wake_latency = importlib.import_module("dominance_wake_latency")
 
 
 class _SequencedEvent:
@@ -24,6 +25,12 @@ class _SequencedEvent:
 
 
 class DominanceWakeLatencyTest(unittest.TestCase):
+    def test_only_auto_controls_consumes_the_live_loader(self) -> None:
+        self.assertTrue(wake_latency.uses_live_hyperloader("auto-controls"))
+        for mode in ("blocking", "event-query", "consumer-warmth"):
+            with self.subTest(mode=mode):
+                self.assertFalse(wake_latency.uses_live_hyperloader(mode))
+
     def test_cpuidle_snapshot_and_diff_preserve_every_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -51,9 +58,7 @@ class DominanceWakeLatencyTest(unittest.TestCase):
 
         report = cpu_idle.diff_cpuidle(before, after, 1.0)
         row = next(
-            item
-            for item in report["rows"]
-            if item["cpu"] == 19 and item["state"] == 1
+            item for item in report["rows"] if item["cpu"] == 19 and item["state"] == 1
         )
         self.assertEqual(len(report["rows"]), 4)
         self.assertEqual(row["time_delta_us"], 120000)

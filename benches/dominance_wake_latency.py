@@ -63,7 +63,9 @@ def _measure_half(
     ) / 1_000_000_000.0
     summary = summarize_segments(observations)
     summary["cell_iterations_per_second"] = len(observations) / workload_duration
-    query_counts = [item["event_queries"] for item in observations if "event_queries" in item]
+    query_counts = [
+        item["event_queries"] for item in observations if "event_queries" in item
+    ]
     if query_counts:
         summary["event_queries"] = _summarize_values(query_counts)
     return {
@@ -112,13 +114,20 @@ def _clock_windows(
     return result
 
 
+def uses_live_hyperloader(mode: str) -> bool:
+    """Return whether a diagnostic mode consumes the installed loader directly."""
+    return mode == "auto-controls"
+
+
 def main() -> None:
     """Run one guarded fixed-text wait-attribution cell."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument(
-        "--mode", choices=("blocking", "event-query", "consumer-warmth"), required=True
+        "--mode",
+        choices=("blocking", "event-query", "consumer-warmth", "auto-controls"),
+        required=True,
     )
     parser.add_argument("--half-seconds", type=float, default=45.0)
     parser.add_argument("--spinner-library", type=Path)
@@ -148,8 +157,10 @@ def main() -> None:
             raise RuntimeError("fixed-text feeder banks differ")
     for _ in range(8):
         feeders["torch"].next_batch()
-    feeders["hyperloader"].close()
-    hyperloader_closed = True
+    hyperloader_closed = False
+    if not uses_live_hyperloader(arguments.mode):
+        feeders["hyperloader"].close()
+        hyperloader_closed = True
     bank_index = 0
 
     def next_bank() -> Any:
@@ -182,24 +193,48 @@ def main() -> None:
             if arguments.mode == "consumer-warmth"
             else None
         )
-        halves = [
-            _measure_half(
-                "closed-bank",
-                workload,
-                next_bank,
-                arguments.half_seconds,
-                sampler,
-                warmth,
-            ),
-            _measure_half(
-                "torch",
-                workload,
-                feeders["torch"].next_batch,
-                arguments.half_seconds,
-                sampler,
-                None,
-            ),
-        ]
+        if uses_live_hyperloader(arguments.mode):
+            halves = [
+                _measure_half(
+                    "hyperloader",
+                    workload,
+                    feeders["hyperloader"].next_batch,
+                    arguments.half_seconds,
+                    sampler,
+                    None,
+                )
+            ]
+            hyperloader_report = feeders["hyperloader"].report()
+            halves.append(
+                _measure_half(
+                    "torch",
+                    workload,
+                    feeders["torch"].next_batch,
+                    arguments.half_seconds,
+                    sampler,
+                    None,
+                )
+            )
+        else:
+            hyperloader_report = None
+            halves = [
+                _measure_half(
+                    "closed-bank",
+                    workload,
+                    next_bank,
+                    arguments.half_seconds,
+                    sampler,
+                    warmth,
+                ),
+                _measure_half(
+                    "torch",
+                    workload,
+                    feeders["torch"].next_batch,
+                    arguments.half_seconds,
+                    sampler,
+                    None,
+                ),
+            ]
     finally:
         clock_samples = sampler.stop() if sampler_started else []
         os.sched_setaffinity(0, original_affinity)
@@ -217,7 +252,9 @@ def main() -> None:
             "consumer_non_blocking": False,
         },
         "wait_mode": (
-            "bounded CUDA event query" if arguments.mode == "event-query" else "blocking torch.cuda.synchronize"
+            "bounded CUDA event query"
+            if arguments.mode == "event-query"
+            else "blocking torch.cuda.synchronize"
         ),
         "cpu_governor": cpu_governor(),
         "platform": platform_facts(),
@@ -226,6 +263,7 @@ def main() -> None:
         "clock_sampler_cpu": 14,
         "batch_bank_size": len(closed_bank),
         "batch": describe_batch(closed_bank[0]),
+        "hyperloader_report": hyperloader_report,
         "halves": halves,
         "clock_samples": clock_samples,
         "clock_summaries": _clock_windows(clock_samples, halves),
