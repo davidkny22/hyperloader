@@ -15,6 +15,7 @@ from .decoder import bind_decoder_selections, select_decoder_pins
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
 from .memory import ByteLedger
+from .memory.pinned import attach_pinned_delivery, configure_pinned_delivery
 from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
@@ -163,6 +164,7 @@ class DataLoader:
         self._calibration: Any = None
         self._machine_keeper: Any = None
         self._machine_keeper_cpus: tuple[int, ...] = ()
+        self._pinned_delivery: Any = None
         self._controller: Any = None
         self._telemetry = telemetry
         self._last_frontier_report: dict[str, int | float | str] | None = None
@@ -229,6 +231,8 @@ class DataLoader:
             iterator = ProcessIterator(self)
         if self._calibration is None:
             self._calibration = resolve_calibration(self._machine_identity)
+        pinned_delivery = configure_pinned_delivery(self)
+        iterator = attach_pinned_delivery(pinned_delivery, iterator)
         iterator = attach_machine_keeping(self, iterator)
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
@@ -254,6 +258,9 @@ class DataLoader:
             active.invalidate()
         self._active_iterator_ref = None
         self._native_batch_probe = None
+        if getattr(self, "_pinned_delivery", None) is not None:
+            self._pinned_delivery.close()
+            self._pinned_delivery = None
         if getattr(self, "_machine_keeper", None) is not None:
             self._machine_keeper.close()
             self._machine_keeper = None
@@ -282,6 +289,14 @@ class DataLoader:
             snapshot["memory"] = memory_report()
         elif self._memory_ledger is not None:
             snapshot["memory"] = self._memory_ledger.report()
+        if (
+            self._pinned_delivery is not None
+            and self._pinned_delivery.effective_memory == "pinned"
+        ):
+            delivery_report = self._pinned_delivery.report()
+            memory = snapshot.setdefault("memory", {})
+            if isinstance(memory, dict):
+                memory.update(delivery_report)
         current = snapshot.get("current")
         if isinstance(current, dict):
             keeper = getattr(self, "_machine_keeper", None)
