@@ -68,6 +68,37 @@ class DriftingSampler:
         return len(self.indices)
 
 
+class UnsizedSampler:
+    """Yield a finite sampler stream without declaring its endpoint."""
+
+    def __init__(self, indices: list[int]) -> None:
+        self.indices = indices
+
+    def __iter__(self) -> Any:
+        return iter(self.indices)
+
+
+class UnsizedBatchSampler:
+    """Yield finite variable batches without declaring their count."""
+
+    def __init__(self, batches: list[list[int]]) -> None:
+        self.batches = batches
+
+    def __iter__(self) -> Any:
+        return iter(self.batches)
+
+
+class MisreportedSampler(UnsizedSampler):
+    """Yield the real stream while declaring an unrelated length hint."""
+
+    def __init__(self, indices: list[int], declared_length: int) -> None:
+        super().__init__(indices)
+        self.declared_length = declared_length
+
+    def __len__(self) -> int:
+        return self.declared_length
+
+
 def _assert_batches_equal(
     case: unittest.TestCase, actual: list[Any], expected: list[Any]
 ) -> None:
@@ -324,6 +355,106 @@ class MapCoordinateStateTest(unittest.TestCase):
         _assert_batches_equal(self, list(hyper_batches), list(torch_batches))
         hyper_sampler.close()
         hyper_batches.close()
+
+    def test_unsized_sampler_streams_match_torch_and_resume(self) -> None:
+        dataset = RangeDataset(9)
+        indices = [7, 0, 5, 2, 8]
+        batches = [[6, 3], [1], [8, 0, 4]]
+        sampler = UnsizedSampler(indices)
+        loader = DataLoader(
+            dataset, batch_size=2, sampler=sampler, seed=89, num_workers=2
+        )
+        iterator = iter(loader)
+        next(iterator)
+        state = loader.state_dict()
+        expected = list(iterator)
+        resumed = DataLoader(
+            dataset,
+            batch_size=2,
+            sampler=UnsizedSampler(list(indices)),
+            seed=97,
+            num_workers=2,
+        )
+        resumed.load_state_dict(state)
+
+        torch_sampler = TorchDataLoader(
+            dataset,
+            batch_size=2,
+            sampler=UnsizedSampler(list(indices)),
+            num_workers=0,
+        )
+        complete = DataLoader(
+            dataset,
+            batch_size=2,
+            sampler=UnsizedSampler(list(indices)),
+            seed=89,
+            num_workers=2,
+        )
+        _assert_batches_equal(self, list(resumed), expected)
+        _assert_batches_equal(self, list(complete), list(torch_sampler))
+
+        hyper_batches = DataLoader(
+            dataset,
+            batch_sampler=UnsizedBatchSampler(copy.deepcopy(batches)),
+            seed=101,
+            num_workers=2,
+        )
+        torch_batches = TorchDataLoader(
+            dataset,
+            batch_sampler=UnsizedBatchSampler(copy.deepcopy(batches)),
+            num_workers=0,
+        )
+        _assert_batches_equal(self, list(hyper_batches), list(torch_batches))
+        loader.close()
+        resumed.close()
+        complete.close()
+        hyper_batches.close()
+
+    def test_sampler_iteration_uses_actual_exhaustion_and_short_tail_state(
+        self,
+    ) -> None:
+        dataset = RangeDataset(9)
+        indices = [7, 0, 5, 2, 8]
+        for declared_length in (2, 8):
+            hyper = DataLoader(
+                dataset,
+                batch_size=2,
+                sampler=MisreportedSampler(list(indices), declared_length),
+                seed=103,
+                num_workers=2,
+            )
+            torch_loader = TorchDataLoader(
+                dataset,
+                batch_size=2,
+                sampler=MisreportedSampler(list(indices), declared_length),
+                num_workers=0,
+            )
+            _assert_batches_equal(self, list(hyper), list(torch_loader))
+            hyper.close()
+
+        source = DataLoader(
+            dataset,
+            batch_size=2,
+            sampler=UnsizedSampler(list(indices)),
+            seed=107,
+            num_workers=1,
+        )
+        iterator = iter(source)
+        next(iterator)
+        next(iterator)
+        next(iterator)
+        state = source.state_dict()
+        resumed = DataLoader(
+            dataset,
+            batch_size=2,
+            sampler=UnsizedSampler(list(indices)),
+            seed=109,
+            num_workers=1,
+        )
+        resumed.load_state_dict(state)
+        self.assertEqual(list(resumed), [])
+        source.close()
+        resumed.close()
 
 
 if __name__ == "__main__":

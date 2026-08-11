@@ -228,13 +228,17 @@ class DataLoader:
         if active is not None and not active.complete:
             self.close()
         if self.sampler is not None or self.batch_sampler is not None:
-            from .state import UserBatchSamplerIterator, build_sampler_runtime
+            from .state import (
+                StreamingSamplerIterator,
+                UserBatchSamplerIterator,
+                build_sampler_runtime,
+            )
 
             self._sampler_runtime = build_sampler_runtime(self)
             iterator = (
                 UserBatchSamplerIterator(self)
                 if self.batch_sampler is not None
-                else ProcessIterator(self)
+                else StreamingSamplerIterator(self)
             )
         elif isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
