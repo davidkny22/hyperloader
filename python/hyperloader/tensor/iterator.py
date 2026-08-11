@@ -6,8 +6,9 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from ..telemetry.delivery import DELIVERY_GROUP
+from ..process.sizing import delivery_length
 from ..state import resume_sample_position
+from ..telemetry.delivery import DELIVERY_GROUP
 
 
 class TensorIterator(Iterator[Any]):
@@ -16,9 +17,7 @@ class TensorIterator(Iterator[Any]):
     def __init__(self, loader: Any) -> None:
         self._loader = loader
         self._epoch = loader._epoch
-        length = loader._plan.length
-        if loader.drop_last and loader.batch_size is not None:
-            length -= length % loader.batch_size
+        length = delivery_length(loader)
         self._length = length
         self._position = resume_sample_position(loader, length)
         self._complete = False
@@ -73,9 +72,7 @@ class TensorIterator(Iterator[Any]):
             raise StopIteration
         batch_size = self._loader.batch_size
         if batch_size is None:
-            index = self._loader._plan.index(
-                self._loader.root_seed, self._epoch, self._position
-            )
+            index = self._loader._map_index(self._epoch, self._position)
             self._position += 1
             sample = self._loader.dataset[index]
             if self._loader._memory_ledger is not None:
@@ -85,14 +82,14 @@ class TensorIterator(Iterator[Any]):
         start = self._position
         stop = min(start + batch_size, self._length)
         self._position = stop
-        if not self._loader._plan.shuffle:
+        if not self._loader._plan.shuffle and self._loader._map_placement.identity:
             batch = self._loader.dataset[start:stop]
             if self._loader._memory_ledger is not None:
                 self._loader._memory_ledger.record(batch, stop - start)
             self._loader._epoch_state.mark_delivered(self._epoch)
             return batch
         indices = [
-            self._loader._plan.index(self._loader.root_seed, self._epoch, position)
+            self._loader._map_index(self._epoch, position)
             for position in range(start, stop)
         ]
         batch = self._loader.dataset[indices]

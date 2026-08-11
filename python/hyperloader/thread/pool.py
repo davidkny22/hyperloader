@@ -42,11 +42,18 @@ class ThreadPool:
         """Return the fixed number of shared-address-space workers."""
         return self._worker_count
 
-    def submit(self, epoch: int, position: int, index: int) -> Future[tuple[Any, int]]:
+    def submit(
+        self, epoch: int, position: int, index: int, coordinate: int | None = None
+    ) -> Future[tuple[Any, int]]:
         """Submit one coordinate-bound dataset call."""
         if self._closed:
             raise RuntimeError("thread pool is closed")
-        return self._executor.submit(self._evaluate, epoch, position, index)
+        return self._executor.submit(
+            self._evaluate,
+            epoch,
+            position if coordinate is None else coordinate,
+            index,
+        )
 
     def _evaluate(self, epoch: int, position: int, index: int) -> tuple[Any, int]:
         self._initialize_worker()

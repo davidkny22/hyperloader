@@ -32,6 +32,7 @@ class ProcessPool:
         probe_position: int,
         probe_index: int,
         *,
+        probe_coordinate: int | None = None,
         worker_init_fn: Any = None,
         multiprocessing_context: Any = None,
         timeout: float = 0,
@@ -63,12 +64,17 @@ class ProcessPool:
             delivery_batch_size,
         )
         self._completion_signals = [0] * worker_count
-        self._probe_key = (probe_epoch, probe_position, probe_index)
+        self._probe_position = probe_position
+        self._probe_key = (
+            probe_epoch,
+            probe_position if probe_coordinate is None else probe_coordinate,
+            probe_index,
+        )
         self._probe_status = 0
         self._probe_payload: bytes | None = None
         self._probe_cost_ns = 1
         self._immediate: deque[tuple[int, int, int, bytes, int]] = deque()
-        self._pending: dict[tuple[int, int], tuple[int, int, int]] = {}
+        self._pending: dict[tuple[int, int], tuple[int, int, int, int]] = {}
         self._decoder = ResultDecoder()
         try:
             self._worker_set.launch_all(self._probe_key)
@@ -171,9 +177,10 @@ class ProcessPool:
         """Return the command position that must retain worker-zero routing."""
         if self._probe_payload is None:
             return None
-        position = self._probe_key[1]
         return (
-            position // self._batch_size if self._batch_size is not None else position
+            self._probe_position // self._batch_size
+            if self._batch_size is not None
+            else self._probe_position
         )
 
     def try_submit(
@@ -184,11 +191,13 @@ class ProcessPool:
         worker: int,
         *,
         batch_len: int = 0,
+        coordinate: int | None = None,
     ) -> bool:
         """Attempt one targeted black-box dispatch without waiting for capacity."""
         if self._closed:
             raise RuntimeError("process pool is closed")
-        key = (epoch, position, index)
+        command_position = position if coordinate is None else coordinate
+        key = (epoch, command_position, index)
         if batch_len < 0:
             raise ValueError("batch length cannot be negative")
         if (
@@ -212,10 +221,15 @@ class ProcessPool:
         if self._probe_payload is not None and key == self._probe_key:
             self._probe_payload = None
         accepted = self._resources.try_submit(
-            epoch, position, index, BLACK_BOX_STAGE, worker, batch_len
+            epoch, command_position, index, BLACK_BOX_STAGE, worker, batch_len
         )
         if accepted:
-            self._pending[(worker, position)] = (epoch, index, batch_len)
+            self._pending[(worker, command_position)] = (
+                epoch,
+                index,
+                batch_len,
+                position,
+            )
         return accepted
 
     def try_receive(self, worker: int) -> tuple[int, int, bytes, int] | None:
@@ -233,8 +247,10 @@ class ProcessPool:
             return None
         if uses_completion_signals:
             self._completion_signals[worker] -= 1
-        self._pending.pop((worker, completion[0]), None)
-        return completion
+        pending = self._pending.pop((worker, completion[0]), None)
+        if pending is None:
+            raise RuntimeError("worker completed an unknown command coordinate")
+        return pending[3], completion[1], completion[2], completion[3]
 
     def decode(self, status: int, payload: bytes, worker: int) -> Any:
         """Reconstruct a successful sample or re-raise its worker exception."""

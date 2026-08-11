@@ -71,6 +71,9 @@ def delivery_length(loader: Any) -> int:
     sampler_runtime = getattr(loader, "_sampler_runtime", None)
     if sampler_runtime is not None:
         return sampler_runtime.length
+    placement = getattr(loader, "_map_placement", None)
+    if placement is not None and placement.enabled:
+        return placement.length
     length = loader._plan.length
     if not loader.drop_last or loader.batch_size is None:
         return length

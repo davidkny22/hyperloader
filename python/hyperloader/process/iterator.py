@@ -229,10 +229,13 @@ class ProcessIterator(Iterator[Any]):
                 position * batch_size if batch_size is not None else position
             )
             sampler_runtime = self._loader._sampler_runtime
+            coordinate = (
+                self._loader._map_coordinate(sample_position)
+                if sampler_runtime is None
+                else sample_position
+            )
             index = (
-                self._loader._plan.index(
-                    self._loader.root_seed, self._epoch, sample_position
-                )
+                self._loader._map_index(self._epoch, sample_position)
                 if sampler_runtime is None
                 else sampler_runtime.index(sample_position)
             )
@@ -247,6 +250,7 @@ class ProcessIterator(Iterator[Any]):
                 index,
                 worker,
                 batch_len=batch_len,
+                coordinate=coordinate,
             ):
                 return
             self._schedule.mark_dispatched(position, worker)

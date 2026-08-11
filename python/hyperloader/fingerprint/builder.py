@@ -62,13 +62,17 @@ def build_contract_fingerprint(loader: Any) -> ContractFingerprint:
     seeded_libs = loader.config.determinism.seeded_libs
     if seeded_libs is not AUTO:
         elements.append(FingerprintElement("seeded_libs", stable_value(seeded_libs)))
+    batch_shape = _batch_shape(loader)
+    placement = getattr(loader, "_map_placement", None)
+    if map_style and sampler is None and placement is not None and placement.enabled:
+        batch_shape = _elastic_batch_shape(batch_shape, loader.batch_size or 1)
     elements.extend(
         [
             FingerprintElement("mode", loader.mode),
             FingerprintElement("delivery", loader.delivery),
             FingerprintElement("drop_last", loader.drop_last),
             FingerprintElement("collate.identity", _collate_identity(loader)),
-            FingerprintElement("batch_shape", _batch_shape(loader)),
+            FingerprintElement("batch_shape", batch_shape),
         ]
     )
     return ContractFingerprint(tuple(elements))
@@ -108,3 +112,22 @@ def _batch_shape(loader: Any) -> Any:
             shape.insert(0, loader.batch_size)
         return {"dtype": str(sample.dtype), "shape": shape, "source": "derived"}
     return {"source": "probe-pending"}
+
+
+def _elastic_batch_shape(value: Any, batch_size: int) -> Any:
+    """Replace topology-derived batch extents with a stable placement marker."""
+    if isinstance(value, list):
+        return [_elastic_batch_shape(item, batch_size) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {
+        key: _elastic_batch_shape(item, batch_size) for key, item in value.items()
+    }
+    shape = normalized.get("shape")
+    if isinstance(shape, list) and shape and shape[0] == batch_size:
+        normalized["shape"] = [{"placement": "per-rank-batch"}, *shape[1:]]
+    if normalized.get("length") == batch_size:
+        normalized["length"] = {"placement": "per-rank-batch"}
+    if normalized.get("batch_size") == batch_size:
+        normalized["batch_size"] = {"placement": "per-rank-batch"}
+    return normalized

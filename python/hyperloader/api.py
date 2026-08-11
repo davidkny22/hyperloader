@@ -12,6 +12,7 @@ from .constructor import validate_constructor
 from .control.machine_keeping import attach_machine_keeping
 from .control.runtime import resolve_calibration
 from .decoder import bind_decoder_selections, select_decoder_pins
+from .distributed import build_map_placement
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
 from .memory import ByteLedger
@@ -118,9 +119,18 @@ class DataLoader:
         self._native_batch_shape: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
+        self._map_placement = (
+            None
+            if self._plan is None or sampler is not None or batch_sampler is not None
+            else build_map_placement(self)
+        )
         self._memory_ledger = (
             ByteLedger("contiguous-tensor", "view")
-            if isinstance(self._plan, TensorPlan) and not self._plan.shuffle
+            if (
+                isinstance(self._plan, TensorPlan)
+                and not self._plan.shuffle
+                and self._map_placement.identity
+            )
             else None
         )
         self._execution_dataset = (
@@ -163,7 +173,7 @@ class DataLoader:
         self._machine_identity: Any = None
         self._calibration: Any = None
         self._pinned_delivery: Any = None
-        if is_native_batch_path(self):
+        if is_native_batch_path(self) and self._map_placement.identity:
             self._calibration = resolve_calibration(self._machine_identity)
             configure_pinned_delivery(self)
             prepare_native_batch(self)
@@ -191,7 +201,7 @@ class DataLoader:
             and collate_fn is None
             and mode == "native"
             and not self._sample_thread_safe
-            and not is_native_batch_path(self)
+            and not (is_native_batch_path(self) and self._map_placement.identity)
         ):
             prepare_process_pool(self)
             self._fingerprint = build_contract_fingerprint(self)
@@ -243,7 +253,7 @@ class DataLoader:
             )
         elif isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
-        elif is_native_batch_path(self):
+        elif is_native_batch_path(self) and self._map_placement.identity:
             iterator = StructuredIterator(self)
         elif self._sample_thread_safe:
             from .thread import ThreadIterator
@@ -362,6 +372,14 @@ class DataLoader:
         from . import _hyperloader
 
         return _hyperloader._default_collate(batch)
+
+    def _map_coordinate(self, position: int) -> int:
+        """Map one rank-local native position to its global RNG coordinate."""
+        return self._map_placement.coordinate(position)
+
+    def _map_index(self, epoch: int, position: int) -> int:
+        """Map one rank-local native position to its dataset index."""
+        return self._map_placement.index(self._plan, self.root_seed, epoch, position)
 
     def __del__(self) -> None:
         self.close()

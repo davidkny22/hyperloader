@@ -11,20 +11,22 @@ from .worker import BLACK_BOX_STAGE
 
 def restart_worker(pool: Any, worker: int) -> list[int]:
     """Replace one dead process and replay every reclaimed reservation."""
-    positions = sorted(pool._resources.restart_worker(worker))
+    coordinates = sorted(pool._resources.restart_worker(worker))
     pool._worker_set.replace(worker, pool._resources, pool._batch_layout)
     pool._completion_signals[worker] = 0
-    for position in positions:
-        epoch, index, batch_len = pool._pending[(worker, position)]
+    positions = []
+    for coordinate in coordinates:
+        epoch, index, batch_len, position = pool._pending[(worker, coordinate)]
         if not pool._resources.try_submit(
             epoch,
-            position,
+            coordinate,
             index,
             BLACK_BOX_STAGE,
             worker,
             batch_len,
         ):
             raise RuntimeError("replacement worker transport rejected recovered work")
+        positions.append(position)
     return positions
 
 

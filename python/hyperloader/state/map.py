@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..distributed import validate_elastic_restore
 from ..fingerprint import ContractFingerprint, require_fingerprint_match
+from ..process.sizing import delivery_length
 from .delivery import decode_delivered_bitmap
 
 MAX_U64 = (1 << 64) - 1
@@ -97,6 +99,7 @@ def capture_map_state(loader: Any) -> dict[str, object]:
 def restore_map_state(loader: Any, payload: dict[str, object]) -> None:
     """Validate and install one coordinate for the next iterator."""
     state = MapCoordinateState.from_dict(payload)
+    validate_elastic_restore(loader, state.global_batch)
     require_fingerprint_match(state.fingerprint, loader._fingerprint)
     current_batch = int(_fingerprint_value(loader._fingerprint, "placement.B_g"))
     if state.global_batch != current_batch:
@@ -118,7 +121,7 @@ def restore_map_state(loader: Any, payload: dict[str, object]) -> None:
         raise ValueError("in-order loader state requires an empty delivered_bitmap")
     if loader.delivery == "on-completion" and state.delivered_bitmap:
         width = loader.batch_size or 1
-        total_batches = (loader._plan.length + width - 1) // width
+        total_batches = (delivery_length(loader) + width - 1) // width
         decode_delivered_bitmap(state.cursor, state.delivered_bitmap, total_batches)
     loader.close()
     loader.root_seed = state.root_seed

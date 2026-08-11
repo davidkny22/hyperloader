@@ -8,9 +8,8 @@ from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader as TorchDataLoader
-
 from hyperloader import DataLoader
+from torch.utils.data import DataLoader as TorchDataLoader
 
 
 class RangeDataset:
@@ -227,7 +226,9 @@ class MapCoordinateStateTest(unittest.TestCase):
         state = source.state_dict()
         changed = DataLoader(dataset, batch_size=3, seed=43, num_workers=1)
 
-        with self.assertRaisesRegex(ValueError, "placement.B_g"):
+        with self.assertRaisesRegex(
+            ValueError, "requires per-rank batch_size=2, not 3"
+        ):
             changed.load_state_dict(state)
 
     def test_state_rejects_tampered_fingerprint_and_native_checksum(self) -> None:

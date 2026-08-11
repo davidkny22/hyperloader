@@ -173,10 +173,11 @@ class ThreadIterator(Iterator[Any]):
             if position // width in self._restored_batches:
                 self._next_submit += 1
                 continue
-            index = self._loader._plan.index(
-                self._loader.root_seed, self._epoch, position
+            coordinate = self._loader._map_coordinate(position)
+            index = self._loader._map_index(self._epoch, position)
+            self._futures[position] = pool.submit(
+                self._epoch, position, index, coordinate
             )
-            self._futures[position] = pool.submit(self._epoch, position, index)
             if self._on_completion:
                 self._futures[position].add_done_callback(
                     lambda _future, completed=position: self._completed.put(completed)
