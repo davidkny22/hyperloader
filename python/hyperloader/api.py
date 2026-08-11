@@ -9,6 +9,8 @@ from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
 from .constructor import validate_constructor
+from .control.machine_keeping import attach_machine_keeping
+from .control.runtime import resolve_calibration
 from .decoder import bind_decoder_selections, select_decoder_pins
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
@@ -17,8 +19,8 @@ from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_p
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
 from .profile import build_cost_profile, save_cost_profile
-from .telemetry import build_telemetry, telemetry_snapshot
 from .stages import Pipeline
+from .telemetry import build_telemetry, telemetry_snapshot
 
 
 class DataLoader:
@@ -159,6 +161,8 @@ class DataLoader:
         self._machine_identity: Any = None
         self._cost_profile = build_cost_profile(self)
         self._calibration: Any = None
+        self._machine_keeper: Any = None
+        self._machine_keeper_cpus: tuple[int, ...] = ()
         self._controller: Any = None
         self._telemetry = telemetry
         self._last_frontier_report: dict[str, int | float | str] | None = None
@@ -223,6 +227,9 @@ class DataLoader:
             iterator = ThreadIterator(self)
         else:
             iterator = ProcessIterator(self)
+        if self._calibration is None:
+            self._calibration = resolve_calibration(self._machine_identity)
+        iterator = attach_machine_keeping(self, iterator)
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
 
@@ -247,6 +254,10 @@ class DataLoader:
             active.invalidate()
         self._active_iterator_ref = None
         self._native_batch_probe = None
+        if getattr(self, "_machine_keeper", None) is not None:
+            self._machine_keeper.close()
+            self._machine_keeper = None
+            self._machine_keeper_cpus = ()
         if getattr(self, "_process_pool", None) is not None:
             self._process_pool.close()
             self._process_pool = None
@@ -271,6 +282,12 @@ class DataLoader:
             snapshot["memory"] = memory_report()
         elif self._memory_ledger is not None:
             snapshot["memory"] = self._memory_ledger.report()
+        current = snapshot.get("current")
+        if isinstance(current, dict):
+            keeper = getattr(self, "_machine_keeper", None)
+            current["machine_keeping_duty"] = (
+                0.0 if keeper is None else float(keeper.duty())
+            )
         return snapshot
 
     @property

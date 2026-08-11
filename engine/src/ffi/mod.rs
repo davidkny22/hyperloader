@@ -4,6 +4,7 @@ use crate::{collate, rng};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+mod machine_keeper;
 mod native_arena;
 mod process;
 mod profile;
@@ -129,5 +130,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<profile::PyCostProfile>()?;
     module.add_class::<schedule::PyStaticSchedule>()?;
     module.add_class::<telemetry::PyTelemetry>()?;
+    module.add_class::<machine_keeper::PyMachineKeeper>()?;
     Ok(())
 }

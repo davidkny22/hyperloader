@@ -76,6 +76,11 @@ pub const INSTRUMENTS: &[InstrumentDefinition] = &[
         "events",
         "Inspectable controller decisions.",
     ),
+    instrument(
+        "machine_keeping_duty",
+        "ratio",
+        "Current native consumer keep-warm duty.",
+    ),
 ];
 
 const fn instrument(

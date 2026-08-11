@@ -1,0 +1,52 @@
+use super::tuner::DutyTuner;
+use super::{DUTY_SCALE, MachineKeeper};
+use std::thread;
+use std::time::Duration;
+
+#[test]
+fn tuner_restores_the_lowest_zero_entry_duty() {
+    let mut tuner = DutyTuner::new(50_000, 50_000);
+
+    assert_eq!(tuner.observe(0), 40_000);
+    assert_eq!(tuner.observe(0), 30_000);
+    assert_eq!(tuner.observe(1), 40_000);
+    assert_eq!(tuner.observe(0), 40_000);
+}
+
+#[test]
+fn tuner_never_exceeds_the_configured_cap() {
+    let mut tuner = DutyTuner::new(30_000, 50_000);
+
+    assert_eq!(tuner.observe(1), 40_000);
+    assert_eq!(tuner.observe(1), 50_000);
+    assert_eq!(tuner.observe(1), 50_000);
+    assert_eq!(DUTY_SCALE, 1_000_000);
+}
+
+#[test]
+fn gap_gate_parks_and_activates_the_native_thread() {
+    let cpu = current_cpu();
+    let mut keeper = MachineKeeper::new(vec![cpu], 0.05, 0.05, 2_000_000)
+        .expect("machine keeper should start on the current CPU");
+
+    keeper.observe_gap(1_999_999);
+    assert_eq!(keeper.duty(), 0.0);
+    keeper.observe_gap(2_000_000);
+    thread::sleep(Duration::from_millis(2));
+    assert!(keeper.duty() > 0.0);
+    assert!(keeper.duty() <= 0.05);
+    keeper.park();
+    assert_eq!(keeper.duty(), 0.0);
+    keeper.close();
+}
+
+#[cfg(target_os = "linux")]
+fn current_cpu() -> usize {
+    // SAFETY: sched_getcpu takes no pointers and reports the calling thread's CPU.
+    unsafe { libc::sched_getcpu().max(0) as usize }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_cpu() -> usize {
+    0
+}
