@@ -97,7 +97,14 @@ class DominanceCampaignTest(unittest.TestCase):
             _cpuidle_snapshot(2_000_000_000, 13),
             _cpuidle_snapshot(3_000_000_000, 18),
         ]
-        with patch.object(cpu_idle, "snapshot_cpuidle", side_effect=snapshots):
+        with (
+            patch.object(cpu_idle, "snapshot_cpuidle", side_effect=snapshots),
+            patch.object(
+                cpu_idle,
+                "snapshot_named_thread_cpu_seconds",
+                side_effect=(0.0, 0.05, 0.15),
+            ),
+        ):
             sampler = cpu_idle.HalfBoundaryCpuIdleSampler()
             sampler.start(0.0)
             report = sampler.stop()
@@ -108,6 +115,8 @@ class DominanceCampaignTest(unittest.TestCase):
         self.assertEqual(second["usage_delta"], 5)
         self.assertEqual(report["first"]["duration_seconds"], 1.0)
         self.assertEqual(report["second"]["duration_seconds"], 1.0)
+        self.assertEqual(report["first"]["machine_keeper_cpu_seconds"], 0.05)
+        self.assertAlmostEqual(report["second"]["machine_keeper_cpu_seconds"], 0.1)
 
 
 def _cpuidle_snapshot(captured_ns: int, usage: int) -> dict[str, object]:

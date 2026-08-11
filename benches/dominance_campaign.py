@@ -84,13 +84,14 @@ def _compare(
     output: Path,
     smoke: bool,
     capture_cpuidle: bool,
+    smoke_ordinal: int,
 ) -> dict[str, Any]:
     path = output / f"{workload.name}-{reference}-cells.jsonl"
     observations = []
-    pairs = 1 if smoke else 5
+    ordinals = (smoke_ordinal,) if smoke else range(5)
     half_seconds = 2.0 if smoke else 45.0
     budget = tuning_budget(smoke=smoke)
-    for ordinal in range(pairs):
+    for ordinal in ordinals:
         cell = run_dominance_cell(
             ordinal=ordinal,
             reference=reference,
@@ -157,7 +158,10 @@ def main() -> None:
     parser.add_argument("--reference", action="append", choices=("torch", "spdl"))
     parser.add_argument("--capture-cpuidle", action="store_true")
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke-ordinal", type=int, choices=(0, 1), default=0)
     arguments = parser.parse_args()
+    if not arguments.smoke and arguments.smoke_ordinal != 0:
+        parser.error("--smoke-ordinal requires --smoke")
     arguments.output.mkdir(parents=True, exist_ok=False)
     workspace = arguments.output / "workloads"
     workspace.mkdir()
@@ -197,6 +201,7 @@ def main() -> None:
                     output=arguments.output,
                     smoke=arguments.smoke,
                     capture_cpuidle=arguments.capture_cpuidle,
+                    smoke_ordinal=arguments.smoke_ordinal,
                 )
                 for reference in references
             }

@@ -15,7 +15,9 @@ class HalfBoundaryCpuIdleSampler:
         self._affinity_cpu = affinity_cpu
         self._before: dict[str, object] | None = None
         self._midpoint: dict[str, object] | None = None
-        self._error: BaseException | None = None
+        self._thread_cpu_before = 0.0
+        self._thread_cpu_midpoint = 0.0
+        self._error: Exception | None = None
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -24,6 +26,7 @@ class HalfBoundaryCpuIdleSampler:
         if self._thread is not None:
             raise RuntimeError("CPU-idle boundary sampler is already running")
         self._before = snapshot_cpuidle()
+        self._thread_cpu_before = snapshot_named_thread_cpu_seconds()
         self._thread = threading.Thread(
             target=self._capture_midpoint,
             args=(midpoint_seconds,),
@@ -43,12 +46,18 @@ class HalfBoundaryCpuIdleSampler:
         if self._midpoint is None:
             raise RuntimeError("CPU-idle midpoint capture was cancelled")
         after = snapshot_cpuidle()
+        thread_cpu_after = snapshot_named_thread_cpu_seconds()
         first_seconds = _snapshot_interval_seconds(self._before, self._midpoint)
         second_seconds = _snapshot_interval_seconds(self._midpoint, after)
-        return {
-            "first": diff_cpuidle(self._before, self._midpoint, first_seconds),
-            "second": diff_cpuidle(self._midpoint, after, second_seconds),
-        }
+        first = diff_cpuidle(self._before, self._midpoint, first_seconds)
+        second = diff_cpuidle(self._midpoint, after, second_seconds)
+        first["machine_keeper_cpu_seconds"] = max(
+            0.0, self._thread_cpu_midpoint - self._thread_cpu_before
+        )
+        second["machine_keeper_cpu_seconds"] = max(
+            0.0, thread_cpu_after - self._thread_cpu_midpoint
+        )
+        return {"first": first, "second": second}
 
     def close(self) -> None:
         """Cancel an unfinished midpoint capture during exceptional cleanup."""
@@ -64,6 +73,7 @@ class HalfBoundaryCpuIdleSampler:
             if self._cancel.wait(remaining):
                 return
             self._midpoint = snapshot_cpuidle()
+            self._thread_cpu_midpoint = snapshot_named_thread_cpu_seconds()
         except (OSError, RuntimeError, ValueError) as error:
             self._error = error
 
@@ -228,6 +238,28 @@ def capture_kernel_counters() -> dict[str, object]:
         "cpuidle": cpuidle,
         "gpu_interrupts": interrupts,
     }
+
+
+def snapshot_named_thread_cpu_seconds(
+    task_root: Path = Path("/proc/self/task"),
+    *,
+    name_prefix: str = "hyperloader-mac",
+) -> float:
+    """Sum scheduled CPU time for native machine-keeper threads."""
+    if not task_root.is_dir():
+        return 0.0
+    ticks = 0
+    for task in task_root.iterdir():
+        try:
+            name = (task / "comm").read_text(encoding="utf-8").strip()
+            if not name.startswith(name_prefix):
+                continue
+            stat = (task / "stat").read_text(encoding="utf-8")
+            fields = stat[stat.rfind(")") + 2 :].split()
+            ticks += int(fields[11]) + int(fields[12])
+        except (FileNotFoundError, IndexError, ValueError):
+            continue
+    return ticks / float(os.sysconf("SC_CLK_TCK"))
 
 
 def _numeric_suffix(value: str, prefix: str) -> int:
