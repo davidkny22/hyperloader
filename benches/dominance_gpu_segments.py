@@ -23,6 +23,8 @@ def run_segmented_pair(
     feeders: dict[str, Callable[[], Any]],
     order: tuple[str, str],
     half_seconds: float,
+    *,
+    on_half_start: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     """Run one uninterrupted alternating pair with raw per-iteration segments."""
     if half_seconds <= 0 or set(feeders) != set(order):
@@ -34,8 +36,13 @@ def run_segmented_pair(
     started = time.perf_counter()
     midpoint = started + half_seconds
     finished = midpoint + half_seconds
+    active: str | None = None
     while (selected_at := time.perf_counter()) < finished:
         selected = order[0] if selected_at < midpoint else order[1]
+        if selected != active:
+            if on_half_start is not None:
+                on_half_start(selected)
+            active = selected
         batch = feeders[selected]()
         segments = workload.run_timed(batch)
         completed = time.perf_counter()
@@ -80,12 +87,12 @@ def summarize_segments(observations: list[dict[str, float]]) -> dict[str, object
 
 
 def split_clock_samples(
-    samples: list[dict[str, float | int]],
+    samples: list[dict[str, Any]],
     order: tuple[str, str],
     half_seconds: float,
 ) -> dict[str, object]:
     """Assign one continuous clock trace to named halves and five-second buckets."""
-    assigned: dict[str, list[dict[str, float | int]]] = {name: [] for name in order}
+    assigned: dict[str, list[dict[str, Any]]] = {name: [] for name in order}
     for sample in samples:
         elapsed = float(sample["elapsed_seconds"])
         index = 0 if elapsed < half_seconds else 1
@@ -98,12 +105,22 @@ def split_clock_samples(
 
 
 def summarize_clocks(
-    samples: list[dict[str, float | int]], half_seconds: float
+    samples: list[dict[str, Any]], half_seconds: float
 ) -> dict[str, object]:
     """Report frequency residency and time-bucket means for one named half."""
     if not samples:
         raise ValueError("clock summary requires samples")
     clocks = sorted(float(item["clock_mhz"]) for item in samples)
+    memory_clocks = [
+        float(value)
+        for item in samples
+        if (value := item.get("memory_clock_mhz")) is not None
+    ]
+    powers = [
+        float(value)
+        for item in samples
+        if (value := item.get("power_watts")) is not None
+    ]
     count = len(samples)
     bands = {
         "at_least_2390_percent": 100 * sum(value >= 2390 for value in clocks) / count,
@@ -135,6 +152,12 @@ def summarize_clocks(
                     "mean_utilization_percent": statistics.fmean(
                         float(item["utilization_percent"]) for item in selected
                     ),
+                    "mean_memory_clock_mhz": _optional_mean(
+                        item.get("memory_clock_mhz") for item in selected
+                    ),
+                    "mean_power_watts": _optional_mean(
+                        item.get("power_watts") for item in selected
+                    ),
                 }
             )
         start += 5.0
@@ -149,9 +172,28 @@ def summarize_clocks(
         "mean_utilization_percent": statistics.fmean(
             float(item["utilization_percent"]) for item in samples
         ),
+        "memory_clock_available": bool(memory_clocks),
+        "mean_memory_clock_mhz": (
+            statistics.fmean(memory_clocks) if memory_clocks else None
+        ),
+        "mean_power_watts": statistics.fmean(powers) if powers else None,
+        "spark_hwmon_means": _rail_means(samples),
         "residency": bands,
         "time_buckets": buckets,
     }
+
+
+def _optional_mean(values: Any) -> float | None:
+    selected = [float(value) for value in values if value is not None]
+    return statistics.fmean(selected) if selected else None
+
+
+def _rail_means(samples: list[dict[str, Any]]) -> dict[str, float]:
+    values: dict[str, list[float]] = {}
+    for sample in samples:
+        for label, value in dict(sample.get("spark_hwmon", {})).items():
+            values.setdefault(label, []).append(float(value))
+    return {label: statistics.fmean(readings) for label, readings in values.items()}
 
 
 def quantile(values: list[float], probability: float) -> float:

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import torch
 
@@ -16,6 +18,7 @@ sys.path.insert(0, str(BENCHES))
 clock_residency = importlib.import_module("dominance_clock_residency")
 segments = importlib.import_module("dominance_gpu_segments")
 workloads = importlib.import_module("overhead_workload")
+dynamic_guard = importlib.import_module("spark_dynamic_guard")
 
 
 class DominanceGpuTimelineTest(unittest.TestCase):
@@ -48,6 +51,34 @@ class DominanceGpuTimelineTest(unittest.TestCase):
         self.assertEqual(report["hyperloader"]["samples"], 2)
         self.assertEqual(report["torch"]["samples"], 2)
         self.assertEqual(report["torch"]["residency"]["below_2350_percent"], 100.0)
+
+    def test_clock_summary_preserves_optional_machine_state(self) -> None:
+        samples = [
+            {
+                "elapsed_seconds": 1.0,
+                "clock_mhz": 2380,
+                "memory_clock_mhz": None,
+                "utilization_percent": 50,
+                "power_watts": 31.5,
+                "spark_hwmon": {"soc:power1_input": 42.0},
+            },
+            {
+                "elapsed_seconds": 2.0,
+                "clock_mhz": 2360,
+                "memory_clock_mhz": None,
+                "utilization_percent": 55,
+                "power_watts": 32.5,
+                "spark_hwmon": {"soc:power1_input": 44.0},
+            },
+        ]
+
+        report = segments.split_clock_samples(samples, ("hyperloader", "torch"), 1.5)
+
+        self.assertFalse(report["hyperloader"]["memory_clock_available"])
+        self.assertEqual(report["hyperloader"]["mean_power_watts"], 31.5)
+        self.assertEqual(
+            report["hyperloader"]["spark_hwmon_means"]["soc:power1_input"], 42.0
+        )
 
     def test_existing_cell_extraction_respects_alternating_order(self) -> None:
         rows = []
@@ -84,6 +115,35 @@ class DominanceGpuTimelineTest(unittest.TestCase):
 
         self.assertEqual(report["aggregate"]["hyperloader"]["samples"], 2)
         self.assertEqual(report["aggregate"]["torch"]["samples"], 2)
+
+    def test_dynamic_guard_resets_before_and_after_command(self) -> None:
+        calls: list[list[str]] = []
+
+        def run(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            stdout = "" if "--query-compute-apps=pid" in command else "All done.\n"
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "guard.json"
+            with mock.patch.object(dynamic_guard.subprocess, "run", side_effect=run):
+                dynamic_guard.run_guard(
+                    evidence=evidence, command=["python", "cell.py"]
+                )
+            record = json.loads(evidence.read_text(encoding="utf-8"))
+
+        reset = ["sudo", "-n", "nvidia-smi", "-rgc"]
+        self.assertEqual(calls.count(reset), 2)
+        self.assertEqual(record["clock_mode"], "dynamic")
+        self.assertEqual(record["command_returncode"], 0)
+        self.assertFalse(
+            any(
+                command[:3] == ["sudo", "-n", "nvidia-smi"] and command != reset
+                for command in calls
+            )
+        )
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA timing events are required")
     def test_gpu_workload_reports_cuda_and_host_segments(self) -> None:
