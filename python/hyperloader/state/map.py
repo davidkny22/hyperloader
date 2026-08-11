@@ -19,6 +19,7 @@ class MapCoordinateState:
     cursor: int
     global_batch: int
     sampler_checksum: int
+    delivered_bitmap: bytes
     fingerprint: ContractFingerprint
     batch_shape: Any
 
@@ -30,6 +31,7 @@ class MapCoordinateState:
             "cursor": self.cursor,
             "B_g": self.global_batch,
             "sampler_checksum": self.sampler_checksum,
+            "delivered_bitmap": self.delivered_bitmap,
             "fingerprint": self.fingerprint.to_dict(),
             "batch_shape": self.batch_shape,
         }
@@ -48,6 +50,7 @@ class MapCoordinateState:
             cursor=_integer(payload, "cursor"),
             global_batch=_integer(payload, "B_g"),
             sampler_checksum=_integer(payload, "sampler_checksum", maximum=MAX_U64),
+            delivered_bitmap=_byte_string(payload, "delivered_bitmap"),
             fingerprint=ContractFingerprint.from_dict(fingerprint_payload),
             batch_shape=payload.get("batch_shape"),
         )
@@ -62,10 +65,12 @@ def capture_map_state(loader: Any) -> dict[str, object]:
         epoch = loader._epoch_state.current
         cursor = loader._resume_cursor_batches
         checksum = loader._resume_sampler_checksum
+        delivered_bitmap = loader._resume_delivered_bitmap
     elif active is None or active.complete:
         epoch = loader._epoch_state.current
         cursor = 0
         checksum = 0
+        delivered_bitmap = b""
     else:
         epoch = active.coordinate_epoch
         cursor = active.delivered_batches
@@ -74,6 +79,7 @@ def capture_map_state(loader: Any) -> dict[str, object]:
             if loader.sampler is not None or loader.batch_sampler is not None
             else 0
         )
+        delivered_bitmap = bytes(getattr(active, "delivered_bitmap", b""))
     fingerprint = loader._fingerprint
     return MapCoordinateState(
         root_seed=loader.root_seed,
@@ -81,6 +87,7 @@ def capture_map_state(loader: Any) -> dict[str, object]:
         cursor=cursor,
         global_batch=int(_fingerprint_value(fingerprint, "placement.B_g")),
         sampler_checksum=checksum,
+        delivered_bitmap=delivered_bitmap,
         fingerprint=fingerprint,
         batch_shape=_fingerprint_value(fingerprint, "batch_shape"),
     ).to_dict()
@@ -103,11 +110,14 @@ def restore_map_state(loader: Any, payload: dict[str, object]) -> None:
     if loader.sampler is None and loader.batch_sampler is None:
         if state.sampler_checksum != 0:
             raise ValueError("native sampler state requires sampler_checksum=0")
+    if loader.delivery == "in-order" and state.delivered_bitmap:
+        raise ValueError("in-order loader state requires an empty delivered_bitmap")
     loader.close()
     loader.root_seed = state.root_seed
     loader._epoch_state.restore(state.epoch)
     loader._resume_cursor_batches = state.cursor
     loader._resume_sampler_checksum = state.sampler_checksum
+    loader._resume_delivered_bitmap = state.delivered_bitmap
 
 
 def _fingerprint_value(fingerprint: ContractFingerprint, path: str) -> Any:
@@ -127,4 +137,11 @@ def _integer(
         raise ValueError(f"loader state {key} must be nonnegative")
     if maximum is not None and value > maximum:
         raise ValueError(f"loader state {key} exceeds its supported range")
+    return value
+
+
+def _byte_string(payload: dict[str, object], key: str) -> bytes:
+    value = payload.get(key, b"")
+    if not isinstance(value, bytes):
+        raise TypeError(f"loader state {key} must be bytes")
     return value

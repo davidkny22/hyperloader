@@ -44,6 +44,11 @@ class PinnedDeliveryIterator(Iterator[Any]):
         """Return the wrapped iterator's sampler-prefix checksum."""
         return int(self._iterator.sampler_checksum)
 
+    @property
+    def delivered_bitmap(self) -> bytes:
+        """Return the wrapped completion-order delivery bitmap."""
+        return bytes(self._iterator.delivered_bitmap)
+
     def invalidate(self) -> None:
         """Invalidate the wrapped execution iterator."""
         self._iterator.invalidate()

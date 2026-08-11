@@ -40,9 +40,7 @@ class MachineKeepingIterator(Iterator[Any]):
         self._consumer_cpu = _current_cpu()
         if self._consumer_cpu is None:
             self._consumer_cpu = getattr(loader, "_machine_keeper_consumer_cpu", None)
-        self._route_cadence_ns = int(
-            loader.config.factors.f_cad_s * 1_000_000_000
-        )
+        self._route_cadence_ns = int(loader.config.factors.f_cad_s * 1_000_000_000)
         self._route_cadence_batches = loader.config.factors.f_cad_b
 
     def __iter__(self) -> MachineKeepingIterator:
@@ -173,6 +171,11 @@ class MachineKeepingIterator(Iterator[Any]):
     def sampler_checksum(self) -> int:
         """Return the wrapped iterator's sampler-prefix checksum."""
         return int(self._iterator.sampler_checksum)
+
+    @property
+    def delivered_bitmap(self) -> bytes:
+        """Return the wrapped completion-order delivery bitmap."""
+        return bytes(self._iterator.delivered_bitmap)
 
     def invalidate(self) -> None:
         """Park machine keeping and invalidate the wrapped iterator."""

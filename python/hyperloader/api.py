@@ -109,6 +109,7 @@ class DataLoader:
         self._epoch_state = EpochState()
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
+        self._resume_delivered_bitmap = b""
         self._sampler_runtime: Any = None
         self._abandon_notice_emitted = False
         self._process_pool: Any = None
@@ -257,6 +258,7 @@ class DataLoader:
         iterator = attach_machine_keeping(self, iterator)
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
+        self._resume_delivered_bitmap = b""
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
 
@@ -270,6 +272,7 @@ class DataLoader:
         self._epoch_state.set_epoch(epoch)
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
+        self._resume_delivered_bitmap = b""
 
     def state_dict(self) -> dict[str, object]:
         """Capture the delivered map-style coordinate for exact continuation."""

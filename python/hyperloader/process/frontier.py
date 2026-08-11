@@ -94,6 +94,15 @@ class FrontierRuntime:
         """Commit only the next sampler-order position."""
         return self._schedule.try_commit()
 
+    def try_commit_ready(self, position: int) -> int | None:
+        """Commit one ready position without waiting for an earlier gap."""
+        return self._schedule.try_commit_ready(position)
+
+    @property
+    def delivered_positions(self) -> tuple[int, ...]:
+        """Return delivered positions beyond the contiguous frontier base."""
+        return tuple(self._schedule.delivered_positions())
+
     def record_wait(self, wait_ns: int) -> None:
         """Record a delivery stall and grow a saturated frontier within its ceiling."""
         self._wait_ns += wait_ns

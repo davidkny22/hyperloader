@@ -6,11 +6,12 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+from .completion import CompletionBatchDelivery
 from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .frontier import FrontierRuntime, binding_cause
 from .sizing import delivery_length, frontier_ceiling, frontier_depth
-from ..state import resume_sample_position
+from ..state import DeliveredBatchState, resume_sample_position
 from ..telemetry.delivery import build_delivery_telemetry
 
 
@@ -22,9 +23,14 @@ class ProcessIterator(Iterator[Any]):
         self._epoch = loader._epoch
         self._length = delivery_length(loader)
         self._position = resume_sample_position(loader, self._length)
+        self._on_completion = loader.delivery == "on-completion"
         self._complete = False
         self._valid = True
         self._ready: dict[int, tuple[int, bytes, int]] = {}
+        self._delivered = DeliveredBatchState(loader._resume_cursor_batches)
+        self._completion = (
+            CompletionBatchDelivery(self) if self._on_completion else None
+        )
         self._schedule: FrontierRuntime | None = None
         self._worker_batches = False
         self._last_delivery_ns = time.perf_counter_ns()
@@ -96,6 +102,13 @@ class ProcessIterator(Iterator[Any]):
             if self._position >= self._length:
                 self._finish_epoch()
                 raise StopIteration
+            if self._on_completion:
+                ordinal, value, delivered_samples = self._completion.next_batch()
+                self._position += delivered_samples
+                self._delivered.mark(ordinal)
+                self._loader._epoch_state.mark_delivered(self._epoch)
+                self._adapt_controller(delivered_samples)
+                return value
             batch_size = self._loader.batch_size
             if batch_size is None:
                 position = self._position
@@ -255,6 +268,8 @@ class ProcessIterator(Iterator[Any]):
             position, status, payload, cost_ns = completion
             self._schedule.mark_completed(position, worker)
             self._ready[position] = (status, payload, worker)
+            if self._on_completion:
+                self._completion.observe(position)
             if status in {0, 2}:
                 self._record_cost(position, cost_ns)
             progressed = True
@@ -303,8 +318,15 @@ class ProcessIterator(Iterator[Any]):
     @property
     def delivered_batches(self) -> int:
         """Return the strict delivered-batch prefix count."""
+        if self._on_completion:
+            return self._delivered.base
         batch_size = self._loader.batch_size or 1
         return (self._position + batch_size - 1) // batch_size
+
+    @property
+    def delivered_bitmap(self) -> bytes:
+        """Encode delivered batches beyond the contiguous prefix."""
+        return self._delivered.bitmap() if self._on_completion else b""
 
     @property
     def sampler_checksum(self) -> int:
