@@ -43,6 +43,44 @@ class DominanceTensorDiagnosticTest(unittest.TestCase):
         self.assertTrue(variants["hyper-shared-clone"][0].is_shared())
         self.assertTrue(variants["torch-shared"][0].is_shared())
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA host allocator is required")
+    def test_pinned_clone_bank_preserves_values(self) -> None:
+        batches = [torch.arange(16, dtype=torch.int64).reshape(2, 8)]
+
+        pinned = diagnostic.build_pinned_clone_bank(batches)
+
+        self.assertTrue(torch.equal(pinned[0], batches[0]))
+        self.assertTrue(pinned[0].is_pinned())
+        self.assertNotEqual(pinned[0].data_ptr(), batches[0].data_ptr())
+
+    @unittest.skipUnless(
+        torch.cuda.is_available(), "CUDA host registration is required"
+    )
+    def test_host_registration_pins_distinct_source_storage_once(self) -> None:
+        source = torch.arange(32, dtype=torch.int64)
+        batches = [source[:16], source[16:]]
+
+        with diagnostic.RegisteredHostStorages(batches) as registration:
+            self.assertEqual(registration.storage_count, 1)
+            self.assertEqual(
+                registration.total_bytes, source.untyped_storage().nbytes()
+            )
+            self.assertTrue(all(batch.is_pinned() for batch in batches))
+
+        self.assertTrue(all(not batch.is_pinned() for batch in batches))
+
+    def test_writeback_traffic_records_stores_and_preserves_values(self) -> None:
+        batch = torch.arange(32 * 512, dtype=torch.int64).reshape(32, 512)
+
+        report = diagnostic.measure_writeback_traffic(batch, iterations=16)
+
+        self.assertEqual(report["version_delta"], 16)
+        self.assertTrue(report["values_preserved"])
+        self.assertEqual(report["logical_bytes_per_iteration"], batch.nbytes)
+        self.assertGreater(report["add_seconds_per_iteration"], 0.0)
+        self.assertGreater(report["add_read_write_gb_per_second"], 0.0)
+        self.assertGreater(report["copy_read_write_gb_per_second"], 0.0)
+
     def test_prefetched_measurement_retains_identity_values(self) -> None:
         batches = [torch.arange(8, dtype=torch.int64)]
 
@@ -73,6 +111,11 @@ class DominanceTensorDiagnosticTest(unittest.TestCase):
                 self.assertEqual(workload.seen, report["iterations"])
                 self.assertTrue(torch.equal(batches[0], torch.arange(8)))
                 self.assertGreaterEqual(report["wait_seconds_per_iteration"], 0.0)
+                self.assertGreater(report["preparation_seconds_per_iteration"], 0.0)
+                self.assertGreater(report["preparation_effective_gb_per_second"], 0.0)
+                self.assertEqual(
+                    report["version_delta_per_iteration"], 1.0 if writeback else 0.0
+                )
 
 
 if __name__ == "__main__":

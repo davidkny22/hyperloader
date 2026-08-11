@@ -11,6 +11,11 @@ from pathlib import Path
 
 from dominance_feeders import build_feeder, native_thread_affinity
 from dominance_protocol import SelectedConfig
+from dominance_tensor_memory import (
+    RegisteredHostStorages,
+    build_pinned_clone_bank,
+    measure_writeback_traffic,
+)
 from dominance_tensor_measure import (
     build_variants,
     collect_batches,
@@ -57,6 +62,10 @@ def main() -> None:
         if not left.equal(right):
             raise RuntimeError("fixed-text batch banks differ")
     variants = build_variants(banks["hyperloader"], banks["torch"])
+    variants["hyper-pinned-clone"] = build_pinned_clone_bank(banks["hyperloader"])
+    registered_name = "hyper-registered-view"
+    registered_metadata = None
+    registration_summary = None
 
     original_affinity = os.sched_getaffinity(0)
     sampler = ClockSampler()
@@ -66,18 +75,46 @@ def main() -> None:
         gpu_workload = GpuWorkload("compute")
         for batches in variants.values():
             gpu_workload.warm(batches[0], iterations=4)
+        with RegisteredHostStorages(banks["hyperloader"]) as registration:
+            if not all(batch.is_pinned() for batch in banks["hyperloader"]):
+                raise RuntimeError(
+                    "CUDA host registration did not pin every identity view"
+                )
+            gpu_workload.warm(banks["hyperloader"][0], iterations=4)
+            registered_metadata = describe_batch(banks["hyperloader"][0])
+            registration_summary = {
+                "storage_count": registration.storage_count,
+                "registered_bytes": registration.total_bytes,
+            }
+        if any(batch.is_pinned() for batch in banks["hyperloader"]):
+            raise RuntimeError("identity-view source remained registered after cleanup")
         sampler.start()
-        names = tuple(variants)
+        names = (*variants, registered_name)
         for round_index in range(4):
             order = names if round_index % 2 == 0 else tuple(reversed(names))
             for name in order:
+                if name == registered_name:
+                    with RegisteredHostStorages(banks["hyperloader"]):
+                        if not all(batch.is_pinned() for batch in banks["hyperloader"]):
+                            raise RuntimeError(
+                                "registered identity view is not reported as pinned"
+                            )
+                        measurement = measure_static(
+                            gpu_workload, banks["hyperloader"], arguments.seconds
+                        )
+                    if any(batch.is_pinned() for batch in banks["hyperloader"]):
+                        raise RuntimeError(
+                            "identity-view source remained registered after measurement"
+                        )
+                else:
+                    measurement = measure_static(
+                        gpu_workload, variants[name], arguments.seconds
+                    )
                 observations.append(
                     {
                         "round": round_index,
                         "variant": name,
-                        **measure_static(
-                            gpu_workload, variants[name], arguments.seconds
-                        ),
+                        **measurement,
                     }
                 )
         clocks = sampler.stop()
@@ -94,7 +131,7 @@ def main() -> None:
             if item["variant"] == name
         )
         / 4
-        for name in variants
+        for name in (*variants, registered_name)
     }
 
     live_feeders = {
@@ -108,6 +145,9 @@ def main() -> None:
             max_workers=1, thread_name_prefix="hyperloader-tensor-prefetch"
         )
         prefetch_executor.submit(lambda: None).result()
+        writeback_validation = prefetch_executor.submit(
+            measure_writeback_traffic, banks["hyperloader"][0]
+        ).result()
     try:
         for feeder in live_feeders.values():
             for _ in range(8):
@@ -188,9 +228,16 @@ def main() -> None:
         "platform": platform_facts(),
         "batch_bank_size": 32,
         "seconds_per_observation": arguments.seconds,
-        "metadata": {
-            name: describe_batch(batches[0]) for name, batches in variants.items()
+        "campaign_transfer": {
+            "torch_pin_memory": False,
+            "consumer_non_blocking": False,
         },
+        "metadata": {
+            **{name: describe_batch(batches[0]) for name, batches in variants.items()},
+            registered_name: registered_metadata,
+        },
+        "host_registration": registration_summary,
+        "writeback_validation": writeback_validation,
         "static_observations": observations,
         "static_mean_iterations_per_second": static_means,
         "static_clock_samples": clocks,

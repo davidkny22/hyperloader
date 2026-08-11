@@ -109,13 +109,17 @@ def measure_live(
     }
 
 
-def _next_prepared(feeder: Any, writeback: bool) -> Any:
+def _next_prepared(feeder: Any, writeback: bool) -> tuple[Any, float, int, int]:
     batch = feeder.next_batch()
+    started = time.perf_counter()
+    version_before = int(batch._version)
     if writeback:
         batch.add_(0)
     else:
         int(batch.sum().item())
-    return batch
+    elapsed = time.perf_counter() - started
+    logical_bytes = int(batch.numel() * batch.element_size())
+    return batch, elapsed, logical_bytes, int(batch._version) - version_before
 
 
 def measure_prefetched(
@@ -130,25 +134,38 @@ def measure_prefetched(
     count = 0
     wait_seconds = 0.0
     gpu_seconds = 0.0
+    preparation_seconds = 0.0
+    prepared_bytes = 0
+    version_delta = 0
     future = executor.submit(_next_prepared, feeder, writeback)
     started = time.perf_counter()
     deadline = started + seconds
     while time.perf_counter() < deadline:
         before_wait = time.perf_counter()
-        batch = future.result()
+        batch, prepared_for, logical_bytes, prepared_version_delta = future.result()
         after_wait = time.perf_counter()
         future = executor.submit(_next_prepared, feeder, writeback)
         workload.run(batch)
         completed = time.perf_counter()
         wait_seconds += after_wait - before_wait
         gpu_seconds += completed - after_wait
+        preparation_seconds += prepared_for
+        prepared_bytes += logical_bytes
+        version_delta += prepared_version_delta
         count += 1
     future.result()
     elapsed = time.perf_counter() - started
+    traffic_multiplier = 2 if writeback else 1
     return {
         "iterations": count,
         "elapsed_seconds": elapsed,
         "iterations_per_second": count / elapsed,
         "wait_seconds_per_iteration": wait_seconds / count,
         "gpu_seconds_per_iteration": gpu_seconds / count,
+        "preparation_seconds_per_iteration": preparation_seconds / count,
+        "prepared_logical_bytes_per_iteration": prepared_bytes / count,
+        "preparation_effective_gb_per_second": (
+            traffic_multiplier * prepared_bytes / preparation_seconds / 1e9
+        ),
+        "version_delta_per_iteration": version_delta / count,
     }
