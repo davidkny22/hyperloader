@@ -44,7 +44,13 @@ def main() -> None:
     evidence = arguments.evidence_dir.resolve()
     evidence.mkdir(parents=True, exist_ok=False)
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(arguments.install_root.resolve())
+    install_root = str(arguments.install_root.resolve())
+    inherited_path = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        os.pathsep.join((install_root, inherited_path))
+        if inherited_path
+        else install_root
+    )
     environment["HYPERLOADER_EXPECTED_INSTALL_ROOT"] = str(
         arguments.install_root.resolve()
     )
