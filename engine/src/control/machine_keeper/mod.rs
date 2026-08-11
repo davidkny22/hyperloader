@@ -1,9 +1,11 @@
 //! Native consumer activity that prevents measured idle-state wake taxes.
 
 mod idle;
+mod pulse;
 mod tuner;
 
 use idle::IdleEntryMonitor;
+use pulse::PeriodicPulse;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
@@ -138,9 +140,9 @@ fn run_loop(
     monitor: &mut Option<IdleEntryMonitor>,
     tuner: &mut DutyTuner,
 ) {
-    let period = Duration::from_nanos(period_ns);
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
     let mut window_started = Instant::now();
+    let mut pulse = PeriodicPulse::new(period_ns);
     while !shared.stop.load(Ordering::Acquire) {
         if !shared.active.load(Ordering::Acquire) {
             let guard = shared
@@ -154,16 +156,16 @@ fn run_loop(
                 })
                 .expect("machine-keeping mutex poisoned");
             window_started = Instant::now();
+            pulse.reset();
             if let Some(entries) = monitor.as_mut() {
                 entries.reset();
             }
             continue;
         }
-        let period_started = Instant::now();
         let duty = shared.duty.load(Ordering::Relaxed);
         let active_ns = period_ns.saturating_mul(u64::from(duty)) / u64::from(DUTY_SCALE);
-        let active_until = period_started + Duration::from_nanos(active_ns.max(1));
-        while Instant::now() < active_until && shared.active.load(Ordering::Relaxed) {
+        let active_until = pulse.active_until(active_ns.max(1));
+        while pulse.before(active_until) && shared.active.load(Ordering::Relaxed) {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
@@ -176,9 +178,7 @@ fn run_loop(
             }
             window_started = Instant::now();
         }
-        if let Some(remaining) = period.checked_sub(period_started.elapsed()) {
-            thread::sleep(remaining);
-        }
+        pulse.wait_next();
     }
     black_box(state);
 }
