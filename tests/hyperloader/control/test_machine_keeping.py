@@ -100,6 +100,30 @@ class MachineKeepingTest(unittest.TestCase):
         self.assertEqual(keeper.gaps, [2_000_000, 4_000_000])
         self.assertEqual(loader._machine_keeping_last_delivery_ns, 4_000_030)
 
+    def test_gapless_cadence_parks_only_after_controller_hysteresis(self) -> None:
+        loader = _loader()
+        loader.config = SimpleNamespace(
+            factors=FactorConfig(f_cad_b=2, hysteresis=2),
+            control=ControlConfig(),
+        )
+        keeper = _Keeper()
+        loader._machine_keeper = keeper
+        clock = iter((10, 20, 120, 130, 230, 240, 340, 350, 450, 460))
+        with mock.patch(
+            "hyperloader.control.machine_keeping.time.perf_counter_ns",
+            side_effect=lambda: next(clock),
+        ):
+            iterator = MachineKeepingIterator(
+                loader,
+                iter(torch.tensor([index]) for index in range(5)),
+            )
+            for index in range(4):
+                self.assertEqual(next(iterator).item(), index)
+                self.assertFalse(keeper.parked)
+            self.assertEqual(next(iterator).item(), 4)
+
+        self.assertTrue(keeper.parked)
+
     def test_off_configuration_never_wraps_the_public_iterator(self) -> None:
         config = HyperConfig(control=ControlConfig(machine_keeping="off"))
         loader = DataLoader(torch.arange(8), batch_size=2, num_workers=1, config=config)

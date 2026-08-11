@@ -22,6 +22,10 @@ class MachineKeepingIterator(Iterator[Any]):
         tax = loader._calibration.idle_state_tax
         self._minimum_gap_ns = tax.minimum_gap_nanoseconds
         self._initial_duty = min(tax.warm_duty_fraction, loader.config.factors.f_warm)
+        self._gapless_batches = 0
+        self._gapless_limit = (
+            loader.config.factors.f_cad_b * loader.config.factors.hysteresis
+        )
 
     def __iter__(self) -> MachineKeepingIterator:
         return self
@@ -32,8 +36,13 @@ class MachineKeepingIterator(Iterator[Any]):
             gap_ns = now - self._gap_started_ns
             if gap_ns >= self._minimum_gap_ns:
                 self._ensure_keeper()
-            if self._loader._machine_keeper is not None:
-                self._loader._machine_keeper.observe_gap(gap_ns)
+                if self._loader._machine_keeper is not None:
+                    self._loader._machine_keeper.observe_gap(gap_ns)
+                self._gapless_batches = 0
+            elif self._loader._machine_keeper is not None:
+                self._gapless_batches += 1
+                if self._gapless_batches >= self._gapless_limit:
+                    self._park()
         try:
             value = next(self._iterator)
         except BaseException:
