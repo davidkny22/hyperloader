@@ -2,13 +2,15 @@
 
 mod idle;
 mod pulse;
+mod regime;
 mod tuner;
 
 use idle::IdleEntryMonitor;
 use pulse::PeriodicPulse;
+use regime::needs_activity;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tuner::DutyTuner;
@@ -18,11 +20,10 @@ const TUNING_WINDOW: Duration = Duration::from_millis(500);
 
 struct SharedState {
     active: AtomicBool,
+    probe: AtomicBool,
     stop: AtomicBool,
     duty: AtomicU32,
     park_deadline_ns: AtomicU64,
-    wake: Condvar,
-    parked: Mutex<()>,
 }
 
 /// One engine-owned low-duty thread for the consumer's active CPU set.
@@ -56,11 +57,10 @@ impl MachineKeeper {
         let maximum = duty_units(maximum_duty);
         let shared = Arc::new(SharedState {
             active: AtomicBool::new(false),
+            probe: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             duty: AtomicU32::new(initial),
             park_deadline_ns: AtomicU64::new(0),
-            wake: Condvar::new(),
-            parked: Mutex::new(()),
         });
         let worker_shared = Arc::clone(&shared);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -99,11 +99,18 @@ impl MachineKeeper {
 
     /// Activate only when the observed consumer gap reaches the calibrated regime.
     pub fn observe_gap(&self, nanoseconds: u64) {
-        let active = nanoseconds >= self.minimum_gap_ns;
         self.shared.park_deadline_ns.store(0, Ordering::Release);
-        self.shared.active.store(active, Ordering::Release);
-        if active {
-            self.shared.wake.notify_one();
+        if nanoseconds < self.minimum_gap_ns {
+            self.shared.probe.store(false, Ordering::Release);
+            self.shared.active.store(false, Ordering::Release);
+            return;
+        }
+        if self.shared.active.load(Ordering::Acquire) {
+            return;
+        }
+        self.shared.probe.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.as_ref() {
+            worker.thread().unpark();
         }
     }
 
@@ -122,6 +129,7 @@ impl MachineKeeper {
     /// Park activity immediately at exhaustion or invalidation.
     pub fn park(&self) {
         self.shared.park_deadline_ns.store(0, Ordering::Release);
+        self.shared.probe.store(false, Ordering::Release);
         self.shared.active.store(false, Ordering::Release);
     }
 
@@ -137,8 +145,11 @@ impl MachineKeeper {
     pub fn close(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
         self.shared.park_deadline_ns.store(0, Ordering::Release);
+        self.shared.probe.store(false, Ordering::Release);
         self.shared.active.store(false, Ordering::Release);
-        self.shared.wake.notify_one();
+        if let Some(worker) = self.worker.as_ref() {
+            worker.thread().unpark();
+        }
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -160,6 +171,7 @@ fn run_loop(
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
     let mut window_started = Instant::now();
     let mut pulse = PeriodicPulse::new(period_ns);
+    let mut was_active = false;
     while !shared.stop.load(Ordering::Acquire) {
         let park_deadline_ns = shared.park_deadline_ns.load(Ordering::Acquire);
         if park_deadline_ns != 0 && monotonic_ns() >= park_deadline_ns {
@@ -168,23 +180,30 @@ fn run_loop(
             continue;
         }
         if !shared.active.load(Ordering::Acquire) {
-            let guard = shared
-                .parked
-                .lock()
-                .expect("machine-keeping mutex poisoned");
-            let _guard = shared
-                .wake
-                .wait_while(guard, |_| {
-                    !shared.active.load(Ordering::Acquire) && !shared.stop.load(Ordering::Acquire)
-                })
-                .expect("machine-keeping mutex poisoned");
-            window_started = Instant::now();
-            pulse.reset();
-            if let Some(entries) = monitor.as_mut() {
-                entries.reset();
+            if was_active {
+                if let Some(entries) = monitor.as_mut() {
+                    entries.reset();
+                }
+                was_active = false;
+            }
+            thread::park();
+            if shared.stop.load(Ordering::Acquire) {
+                break;
+            }
+            if shared.probe.swap(false, Ordering::AcqRel) {
+                let powered_down_entries = monitor.as_mut().and_then(IdleEntryMonitor::delta);
+                if needs_activity(powered_down_entries) {
+                    shared.active.store(true, Ordering::Release);
+                    window_started = Instant::now();
+                    pulse.reset();
+                    if let Some(entries) = monitor.as_mut() {
+                        entries.reset();
+                    }
+                }
             }
             continue;
         }
+        was_active = true;
         let duty = shared.duty.load(Ordering::Relaxed);
         let active_ns = period_ns.saturating_mul(u64::from(duty)) / u64::from(DUTY_SCALE);
         let active_until = pulse.active_until(active_ns.max(1));
@@ -196,7 +215,7 @@ fn run_loop(
         }
         if window_started.elapsed() >= TUNING_WINDOW {
             if let Some(entries) = monitor.as_mut() {
-                let next = tuner.observe(entries.delta());
+                let next = tuner.observe(entries.delta().unwrap_or(u64::MAX));
                 shared.duty.store(next, Ordering::Relaxed);
             }
             window_started = Instant::now();

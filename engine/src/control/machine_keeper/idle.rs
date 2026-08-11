@@ -23,13 +23,11 @@ impl IdleEntryMonitor {
         }
     }
 
-    pub(super) fn delta(&mut self) -> u64 {
-        let Some(total) = read_total(&self.paths) else {
-            return u64::MAX;
-        };
+    pub(super) fn delta(&mut self) -> Option<u64> {
+        let total = read_total(&self.paths)?;
         let delta = total.saturating_sub(self.previous);
         self.previous = total;
-        delta
+        Some(delta)
     }
 }
 
