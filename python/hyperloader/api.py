@@ -108,6 +108,8 @@ class DataLoader:
         self.root_seed = resolve_root_seed(resolved_seed, generator)
         self._epoch_state = EpochState()
         self._resume_cursor_batches = 0
+        self._resume_sampler_checksum = 0
+        self._sampler_runtime: Any = None
         self._abandon_notice_emitted = False
         self._process_pool: Any = None
         self._thread_pool: Any = None
@@ -209,8 +211,6 @@ class DataLoader:
             )
         if self._plan is None:
             raise RuntimeError("iterable planning is not initialized")
-        if self.sampler is not None or self.batch_sampler is not None:
-            raise RuntimeError("user sampler planning is not initialized")
         if self.collate_fn is not None:
             raise RuntimeError("user collation planning is not initialized")
         auto_advanced = self._epoch_state.begin_iteration()
@@ -227,7 +227,16 @@ class DataLoader:
         )
         if active is not None and not active.complete:
             self.close()
-        if isinstance(self._plan, TensorPlan):
+        if self.sampler is not None or self.batch_sampler is not None:
+            from .state import UserBatchSamplerIterator, build_sampler_runtime
+
+            self._sampler_runtime = build_sampler_runtime(self)
+            iterator = (
+                UserBatchSamplerIterator(self)
+                if self.batch_sampler is not None
+                else ProcessIterator(self)
+            )
+        elif isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
         elif is_native_batch_path(self):
             iterator = StructuredIterator(self)
@@ -243,6 +252,7 @@ class DataLoader:
         iterator = attach_pinned_delivery(pinned_delivery, iterator)
         iterator = attach_machine_keeping(self, iterator)
         self._resume_cursor_batches = 0
+        self._resume_sampler_checksum = 0
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
 
@@ -255,6 +265,7 @@ class DataLoader:
         """Select an epoch and reset the next iterator to its first batch."""
         self._epoch_state.set_epoch(epoch)
         self._resume_cursor_batches = 0
+        self._resume_sampler_checksum = 0
 
     def state_dict(self) -> dict[str, object]:
         """Capture the delivered map-style coordinate for exact continuation."""
@@ -279,6 +290,7 @@ class DataLoader:
         if active is not None:
             active.invalidate()
         self._active_iterator_ref = None
+        self._sampler_runtime = None
         self._native_batch_probe = None
         if getattr(self, "_pinned_delivery", None) is not None:
             self._pinned_delivery.close()

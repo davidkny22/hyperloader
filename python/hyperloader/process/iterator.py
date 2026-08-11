@@ -176,8 +176,13 @@ class ProcessIterator(Iterator[Any]):
             sample_position = (
                 position * batch_size if batch_size is not None else position
             )
-            index = self._loader._plan.index(
-                self._loader.root_seed, self._epoch, sample_position
+            sampler_runtime = self._loader._sampler_runtime
+            index = (
+                self._loader._plan.index(
+                    self._loader.root_seed, self._epoch, sample_position
+                )
+                if sampler_runtime is None
+                else sampler_runtime.index(sample_position)
             )
             batch_len = (
                 min(batch_size, self._length - sample_position)
@@ -300,6 +305,12 @@ class ProcessIterator(Iterator[Any]):
         """Return the strict delivered-batch prefix count."""
         batch_size = self._loader.batch_size or 1
         return (self._position + batch_size - 1) // batch_size
+
+    @property
+    def sampler_checksum(self) -> int:
+        """Return the checksum through the delivered user-sampler prefix."""
+        runtime = self._loader._sampler_runtime
+        return 0 if runtime is None else runtime.checksum_at(self._position)
 
     def invalidate(self) -> None:
         """Prevent a replaced iterator from consuming a new pool's completions."""

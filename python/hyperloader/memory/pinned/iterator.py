@@ -39,6 +39,11 @@ class PinnedDeliveryIterator(Iterator[Any]):
         """Return the wrapped iterator's delivered-batch prefix."""
         return int(self._iterator.delivered_batches)
 
+    @property
+    def sampler_checksum(self) -> int:
+        """Return the wrapped iterator's sampler-prefix checksum."""
+        return int(self._iterator.sampler_checksum)
+
     def invalidate(self) -> None:
         """Invalidate the wrapped execution iterator."""
         self._iterator.invalidate()

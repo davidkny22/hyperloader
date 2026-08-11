@@ -18,7 +18,15 @@ def prepare_process_pool(loader: Any) -> None:
     ):
         return
     depth = frontier_ceiling(loader)
-    probe_index = loader._plan.index(loader.root_seed, loader._epoch, 0)
+    sampler_runtime = getattr(loader, "_sampler_runtime", None)
+    probe = None if sampler_runtime is None else sampler_runtime.probe()
+    if sampler_runtime is not None and probe is None:
+        return
+    probe_position, probe_index = (
+        (0, loader._plan.index(loader.root_seed, loader._epoch, 0))
+        if probe is None
+        else probe
+    )
     batch_size = (
         loader.batch_size
         if (
@@ -27,6 +35,7 @@ def prepare_process_pool(loader: Any) -> None:
             and loader.batch_size is not None
             and loader.batch_size > 1
             and not isinstance(loader.dataset, Pipeline)
+            and sampler_runtime is None
         )
         else None
     )
@@ -35,7 +44,7 @@ def prepare_process_pool(loader: Any) -> None:
         loader.num_workers,
         loader.root_seed,
         loader._epoch,
-        0,
+        probe_position,
         probe_index,
         worker_init_fn=loader.worker_init_fn,
         multiprocessing_context=loader.multiprocessing_context,

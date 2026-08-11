@@ -58,19 +58,29 @@ def capture_map_state(loader: Any) -> dict[str, object]:
     active = (
         None if loader._active_iterator_ref is None else loader._active_iterator_ref()
     )
-    if active is None or active.complete:
+    if active is None and loader._resume_cursor_batches:
+        epoch = loader._epoch_state.current
+        cursor = loader._resume_cursor_batches
+        checksum = loader._resume_sampler_checksum
+    elif active is None or active.complete:
         epoch = loader._epoch_state.current
         cursor = 0
+        checksum = 0
     else:
         epoch = active.coordinate_epoch
         cursor = active.delivered_batches
+        checksum = (
+            active.sampler_checksum
+            if loader.sampler is not None or loader.batch_sampler is not None
+            else 0
+        )
     fingerprint = loader._fingerprint
     return MapCoordinateState(
         root_seed=loader.root_seed,
         epoch=epoch,
         cursor=cursor,
         global_batch=int(_fingerprint_value(fingerprint, "placement.B_g")),
-        sampler_checksum=0,
+        sampler_checksum=checksum,
         fingerprint=fingerprint,
         batch_shape=_fingerprint_value(fingerprint, "batch_shape"),
     ).to_dict()
@@ -97,6 +107,7 @@ def restore_map_state(loader: Any, payload: dict[str, object]) -> None:
     loader.root_seed = state.root_seed
     loader._epoch_state.restore(state.epoch)
     loader._resume_cursor_batches = state.cursor
+    loader._resume_sampler_checksum = state.sampler_checksum
 
 
 def _fingerprint_value(fingerprint: ContractFingerprint, path: str) -> Any:

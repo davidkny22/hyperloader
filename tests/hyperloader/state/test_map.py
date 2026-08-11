@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader as TorchDataLoader
 
 from hyperloader import DataLoader
 
@@ -23,6 +24,48 @@ class RangeDataset:
 
     def __getitem__(self, index: int) -> torch.Tensor:
         return torch.tensor([index, index + 100], dtype=torch.int64)
+
+
+class FixedSampler:
+    """Yield one configured deterministic index stream."""
+
+    def __init__(self, indices: list[int]) -> None:
+        self.indices = indices
+
+    def __iter__(self) -> Any:
+        return iter(self.indices)
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+
+class FixedBatchSampler:
+    """Yield configured variable batches without automatic regrouping."""
+
+    def __init__(self, batches: list[list[int]]) -> None:
+        self.batches = batches
+
+    def __iter__(self) -> Any:
+        return iter(self.batches)
+
+    def __len__(self) -> int:
+        return len(self.batches)
+
+
+class DriftingSampler:
+    """Change order on the second iteration without changing public identity."""
+
+    def __init__(self, indices: list[int]) -> None:
+        self.indices = indices
+        self._iterations = 0
+
+    def __iter__(self) -> Any:
+        self._iterations += 1
+        values = self.indices if self._iterations == 1 else reversed(self.indices)
+        return iter(values)
+
+    def __len__(self) -> int:
+        return len(self.indices)
 
 
 def _assert_batches_equal(
@@ -177,6 +220,110 @@ class MapCoordinateStateTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "exceeds 4"):
             iter(loader)
+
+    def test_user_sampler_resumes_exactly_under_checksum(self) -> None:
+        dataset = RangeDataset(10)
+        sampler = FixedSampler([7, 1, 9, 0, 4, 2, 8, 5])
+        loader = DataLoader(
+            dataset, batch_size=2, sampler=sampler, seed=59, num_workers=2
+        )
+        iterator = iter(loader)
+        next(iterator)
+        next(iterator)
+        state = loader.state_dict()
+        expected = list(iterator)
+
+        resumed = DataLoader(
+            dataset,
+            batch_size=2,
+            sampler=FixedSampler(list(sampler.indices)),
+            seed=61,
+            num_workers=2,
+        )
+        resumed.load_state_dict(state)
+
+        self.assertEqual(state["B_g"], 0)
+        self.assertNotEqual(state["sampler_checksum"], 0)
+        _assert_batches_equal(self, list(resumed), expected)
+        loader.close()
+        resumed.close()
+
+    def test_batch_sampler_preserves_variable_batches_across_resume(self) -> None:
+        dataset = RangeDataset(8)
+        batches = [[6, 1, 3], [0], [7, 2], [5, 4]]
+        loader = DataLoader(
+            dataset,
+            batch_sampler=FixedBatchSampler(batches),
+            seed=67,
+            num_workers=2,
+        )
+        iterator = iter(loader)
+        next(iterator)
+        state = loader.state_dict()
+        expected = list(iterator)
+
+        resumed = DataLoader(
+            dataset,
+            batch_sampler=FixedBatchSampler(copy.deepcopy(batches)),
+            seed=71,
+            num_workers=2,
+        )
+        resumed.load_state_dict(state)
+        actual = list(resumed)
+
+        self.assertEqual([len(batch) for batch in actual], [1, 2, 2])
+        _assert_batches_equal(self, actual, expected)
+        loader.close()
+        resumed.close()
+
+    def test_nondeterministic_sampler_names_both_checksum_causes(self) -> None:
+        loader = DataLoader(
+            RangeDataset(8),
+            batch_size=2,
+            sampler=DriftingSampler(list(range(8))),
+            seed=73,
+            num_workers=2,
+        )
+        iterator = iter(loader)
+        next(iterator)
+        state = loader.state_dict()
+        loader.load_state_dict(state)
+
+        with self.assertRaisesRegex(ValueError, "nondeterministic.*different rank"):
+            iter(loader)
+        loader.close()
+
+    def test_user_sampler_and_batch_sampler_match_torch_grouping(self) -> None:
+        dataset = RangeDataset(9)
+        indices = [8, 2, 5, 0, 7, 1, 6]
+        batches = [[4, 1, 8], [0], [3, 7]]
+
+        hyper_sampler = DataLoader(
+            dataset,
+            batch_size=3,
+            sampler=FixedSampler(indices),
+            seed=79,
+            num_workers=2,
+        )
+        torch_sampler = TorchDataLoader(
+            dataset, batch_size=3, sampler=FixedSampler(indices), num_workers=0
+        )
+        hyper_batches = DataLoader(
+            dataset,
+            batch_sampler=FixedBatchSampler(batches),
+            seed=83,
+            num_workers=2,
+        )
+        torch_batches = TorchDataLoader(
+            dataset,
+            batch_sampler=FixedBatchSampler(batches),
+            num_workers=0,
+        )
+
+        _assert_batches_equal(self, list(hyper_sampler), list(torch_sampler))
+        _assert_batches_equal(self, list(hyper_batches), list(torch_batches))
+        hyper_sampler.close()
+        hyper_batches.close()
 
 
 if __name__ == "__main__":
