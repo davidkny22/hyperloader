@@ -96,10 +96,11 @@ def _loader() -> SimpleNamespace:
 
 def _calibration() -> SimpleNamespace:
     return SimpleNamespace(
+        staged_copy_tax=None,
         idle_state_tax=SimpleNamespace(
             minimum_gap_nanoseconds=1_930_000,
             warm_duty_fraction=0.05,
-        )
+        ),
     )
 
 

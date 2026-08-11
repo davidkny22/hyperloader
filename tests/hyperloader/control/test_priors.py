@@ -34,6 +34,24 @@ class SparkPriorTest(unittest.TestCase):
 
         self.assertIsNone(spark_prior(machine))
 
+    def test_spark_kernel_identity_receives_the_same_narrow_prior(self) -> None:
+        machine = MachineIdentity(
+            "aarch64",
+            (
+                CpuCluster("efficiency", tuple(range(5)), 2_808_000_000),
+                CpuCluster("capacity-1", tuple(range(10, 15)), 2_860_000_000),
+                CpuCluster("capacity-2", tuple(range(5, 10)), 3_900_000_000),
+                CpuCluster("capacity-3", tuple(range(15, 19)), 3_978_000_000),
+                CpuCluster("performance", (19,), 4_004_000_000),
+            ),
+            128_524_574_720,
+        )
+
+        prior = spark_prior(machine)
+
+        self.assertIsNotNone(prior)
+        self.assertEqual(prior.machine, machine)
+
 
 if __name__ == "__main__":
     unittest.main()

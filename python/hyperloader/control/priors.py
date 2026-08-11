@@ -17,8 +17,23 @@ from .record import (
 def spark_prior(machine: MachineIdentity) -> CalibrationRecord | None:
     """Return the Spark campaign prior only for the measured hardware class."""
     model = machine.cpu_model.casefold()
+    logical_cpus = {cpu for cluster in machine.clusters for cpu in cluster.logical_cpus}
+    frequencies = {
+        cluster.max_frequency_hz
+        for cluster in machine.clusters
+        if cluster.max_frequency_hz is not None
+    }
+    detected_spark_topology = (
+        model == "aarch64"
+        and len(logical_cpus) == 20
+        and 2_808_000_000 in frequencies
+        and 4_004_000_000 in frequencies
+        and 115 * 1024**3 <= machine.memory_bytes <= 130 * 1024**3
+    )
     if not (
-        "nvidia grace" in model or ("cortex-x925" in model and "cortex-a725" in model)
+        "nvidia grace" in model
+        or ("cortex-x925" in model and "cortex-a725" in model)
+        or detected_spark_topology
     ):
         return None
     return CalibrationRecord(
