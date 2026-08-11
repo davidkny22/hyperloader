@@ -18,6 +18,41 @@ class PinnedTensorPool:
     def __init__(self) -> None:
         self._layouts: dict[tuple[object, ...], _LayoutPool] = {}
         self.copied_bytes = 0
+        self.allocation_count = 0
+        self.held_events = 0
+        self.capacity_bytes = 0
+
+    def acquire(
+        self,
+        shape: tuple[int, ...],
+        stride: tuple[int, ...],
+        dtype: Any,
+        path: tuple[object, ...] = (),
+    ) -> Any:
+        """Return one reusable pinned final buffer without copying into it."""
+        import torch
+
+        key = (*path, dtype, shape, stride)
+        layout = self._layouts.setdefault(key, _LayoutPool())
+        for candidate in layout.tensors:
+            if sys.getrefcount(candidate) <= 3:
+                return candidate
+        if layout.tensors:
+            self.held_events += 1
+        target = torch.empty_strided(
+            shape,
+            stride,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        layout.tensors.append(target)
+        self.allocation_count += 1
+        self.capacity_bytes = max(
+            self.capacity_bytes,
+            int(target.numel() * target.element_size()),
+        )
+        return target
 
     def stage(self, value: Any) -> Any:
         """Stage every CPU tensor leaf while preserving the container structure."""
@@ -63,27 +98,12 @@ class PinnedTensorPool:
     def _stage_tensor(self, source: Any, path: tuple[object, ...]) -> Any:
         import torch
 
-        key = (
-            *path,
-            source.dtype,
+        target = self.acquire(
             tuple(source.shape),
             tuple(source.stride()),
+            source.dtype,
+            path,
         )
-        layout = self._layouts.setdefault(key, _LayoutPool())
-        target = None
-        for candidate in layout.tensors:
-            if sys.getrefcount(candidate) <= 3:
-                target = candidate
-                break
-        if target is None:
-            target = torch.empty_strided(
-                tuple(source.shape),
-                tuple(source.stride()),
-                dtype=source.dtype,
-                device="cpu",
-                pin_memory=True,
-            )
-            layout.tensors.append(target)
         with torch.no_grad():
             target.copy_(source)
         self.copied_bytes += source.numel() * source.element_size()

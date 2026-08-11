@@ -156,12 +156,15 @@ class DataLoader:
         )
         from .structured import is_native_batch_path, prepare_native_batch
 
+        self._machine_identity: Any = None
+        self._calibration: Any = None
+        self._pinned_delivery: Any = None
         if is_native_batch_path(self):
+            self._calibration = resolve_calibration(self._machine_identity)
+            configure_pinned_delivery(self)
             prepare_native_batch(self)
         self._fingerprint = build_contract_fingerprint(self)
-        self._machine_identity: Any = None
         self._cost_profile = build_cost_profile(self)
-        self._calibration: Any = None
         self._machine_keeper: Any = None
         self._machine_keeper_cpus: tuple[int, ...] = ()
         self._machine_keeper_interrupt_cpus: tuple[int, ...] = ()
@@ -169,7 +172,6 @@ class DataLoader:
         self._machine_keeper_route_refresh_ns = 0
         self._machine_keeper_route_batches = 0
         self._machine_keeping_last_delivery_ns = 0
-        self._pinned_delivery: Any = None
         self._controller: Any = None
         self._telemetry = telemetry
         self._last_frontier_report: dict[str, int | float | str] | None = None
@@ -303,10 +305,9 @@ class DataLoader:
             self._pinned_delivery is not None
             and self._pinned_delivery.effective_memory == "pinned"
         ):
-            delivery_report = self._pinned_delivery.report()
             memory = snapshot.setdefault("memory", {})
             if isinstance(memory, dict):
-                memory.update(delivery_report)
+                self._pinned_delivery.compose_memory_report(memory)
         current = snapshot.get("current")
         if isinstance(current, dict):
             keeper = getattr(self, "_machine_keeper", None)

@@ -25,6 +25,9 @@ class PinnedDelivery:
             if registration.activate():
                 self._registration = registration
                 return
+        direct = getattr(loader._execution_dataset, "enable_pinned_delivery", None)
+        if direct is not None and bool(direct()):
+            return
         self._pool = PinnedTensorPool()
 
     @property
@@ -45,6 +48,23 @@ class PinnedDelivery:
             ),
             "pinned_staged_bytes": 0 if self._pool is None else self._pool.copied_bytes,
         }
+
+    def compose_memory_report(self, memory: dict[str, object]) -> None:
+        """Add delivery-stage traffic to an execution-owned memory report."""
+        report = self.report()
+        memory.update(report)
+        staged = int(report["pinned_staged_bytes"])
+        if staged == 0 or "actual_bytes" not in memory:
+            return
+        actual = int(memory["actual_bytes"]) + staged
+        overhead = int(memory.get("bytes_beyond_irreducible", 0)) + staged
+        samples = int(memory.get("produced_samples", 0))
+        memory["actual_bytes"] = actual
+        memory["bytes_beyond_irreducible"] = overhead
+        memory["actual_bytes_per_sample"] = actual / samples if samples else 0.0
+        memory["bytes_beyond_irreducible_per_sample"] = (
+            overhead / samples if samples else 0.0
+        )
 
     def close(self) -> None:
         """Release registration and pool ownership."""

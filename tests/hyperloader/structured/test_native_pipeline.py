@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -76,6 +78,65 @@ class NativePipelineTest(unittest.TestCase):
             self.assertTrue(torch.equal(actual, expected))
         finally:
             loader.close()
+
+    def test_calibrated_png_stack_targets_the_pinned_final_pool(self) -> None:
+        encoded = [
+            encode_png((torch.arange(60, dtype=torch.uint8) + offset).reshape(3, 4, 5))
+            for offset in range(4)
+        ]
+        dataset = pipeline(
+            Source(encoded, output_type=torch.Tensor),
+            Decode(
+                forbidden_decode,
+                input_type=torch.Tensor,
+                output_type=torch.Tensor,
+                codec="png",
+                substitute=True,
+            ),
+            Collate(torch.stack, input_type=torch.Tensor, output_type=torch.Tensor),
+        )
+        empty_strided = torch.empty_strided
+        allocations: list[bool] = []
+
+        def allocate(shape, stride, **options):
+            allocations.append(bool(options.get("pin_memory")))
+            return empty_strided(shape, stride, dtype=options["dtype"])
+
+        calibration = SimpleNamespace(
+            staged_copy_tax=SimpleNamespace(loss_fraction=0.1),
+            idle_state_tax=None,
+        )
+        with (
+            mock.patch("hyperloader.api.resolve_calibration", return_value=calibration),
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.empty_strided", side_effect=allocate),
+            mock.patch(
+                "hyperloader.decoder.execution._resolve_backend",
+                return_value=decode_png,
+            ),
+        ):
+            loader = DataLoader(dataset, batch_size=2, num_workers=2, seed=24)
+            try:
+                batches = list(loader)
+                report = loader.stats()["memory"]
+            finally:
+                loader.close()
+
+        self.assertTrue(all(allocations))
+        self.assertEqual(len(batches), 2)
+        self.assertTrue(
+            torch.equal(
+                batches[0], torch.stack([decode_png(value) for value in encoded[:2]])
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                batches[1], torch.stack([decode_png(value) for value in encoded[2:]])
+            )
+        )
+        self.assertEqual(report["delivery_memory"], "pinned")
+        self.assertEqual(report["pinned_staged_bytes"], 0)
+        self.assertEqual(report["bytes_beyond_irreducible"], 0)
 
     def test_variable_token_sequences_use_one_final_padding_write(self) -> None:
         tokens = [

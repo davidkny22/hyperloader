@@ -101,6 +101,44 @@ class PinnedDeliveryTest(unittest.TestCase):
 
         self.assertEqual(third.data_ptr(), first_pointer)
 
+    def test_delivery_stage_bytes_compose_with_unequal_execution_components(
+        self,
+    ) -> None:
+        source = torch.arange(8)
+        runtime = _Runtime(register_result=1)
+        loader = _loader(source)
+        empty_strided = torch.empty_strided
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.cudart", return_value=runtime),
+            mock.patch(
+                "torch.empty_strided",
+                side_effect=lambda shape, stride, **options: empty_strided(
+                    shape, stride, dtype=options["dtype"]
+                ),
+            ),
+        ):
+            delivery = PinnedDelivery(loader)
+            delivery.stage(source)
+
+        memory = {
+            "actual_bytes": 30,
+            "actual_bytes_per_sample": 15.0,
+            "bytes_beyond_irreducible": 0,
+            "bytes_beyond_irreducible_per_sample": 0.0,
+            "irreducible_bytes": 30,
+            "pinned_stage_bytes": 10,
+            "produced_samples": 2,
+        }
+        delivery.compose_memory_report(memory)
+
+        self.assertEqual(memory["pinned_stage_bytes"], 10)
+        self.assertEqual(memory["pinned_staged_bytes"], 64)
+        self.assertEqual(memory["actual_bytes"], 94)
+        self.assertEqual(memory["actual_bytes_per_sample"], 47.0)
+        self.assertEqual(memory["bytes_beyond_irreducible"], 64)
+        self.assertEqual(memory["bytes_beyond_irreducible_per_sample"], 32.0)
+
     def test_auto_without_measured_tax_remains_host_delivery(self) -> None:
         loader = _loader(torch.arange(8), staged_copy_tax=None)
 

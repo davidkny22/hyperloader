@@ -114,6 +114,13 @@ class NativePipelineAdapter:
             "variable_shape": self._variable_shape,
         }
 
+    def enable_pinned_delivery(self) -> bool:
+        """Route image collation directly into reusable pinned final slots."""
+        if self.source_class != "pinned-decode":
+            return False
+        self._slots.enable_pinned()
+        return True
+
     def close(self) -> None:
         """Join native workers while permitting a later iterator to reopen them."""
         if self._sample_executor is not None:
