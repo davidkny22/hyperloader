@@ -34,6 +34,7 @@ class FactorConfig:
     step_clip: int = 1
     hysteresis: int = 3
     growth_mult: int = 2
+    f_warm: float = 0.05
 
     def __post_init__(self) -> None:
         for name in (
@@ -54,12 +55,15 @@ class FactorConfig:
             "step_clip",
             "hysteresis",
             "growth_mult",
+            "f_warm",
         ):
             _require_positive(f"factors.{name}", getattr(self, name))
         if self.f_snap != "off":
             _require_positive("factors.f_snap", self.f_snap)
         if self.alpha > 1:
             raise ValueError("factors.alpha must not exceed one")
+        if self.f_warm > 1:
+            raise ValueError("factors.f_warm must not exceed one")
         if (
             isinstance(self.growth_mult, bool)
             or not isinstance(self.growth_mult, int)

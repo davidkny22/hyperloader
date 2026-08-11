@@ -6,7 +6,9 @@ from .machine import MachineIdentity
 from .record import (
     BandwidthPoint,
     CalibrationRecord,
+    IdleStateTax,
     PinCost,
+    StagedCopyTax,
     StealCurve,
     StealPoint,
 )
@@ -16,14 +18,13 @@ def spark_prior(machine: MachineIdentity) -> CalibrationRecord | None:
     """Return the Spark campaign prior only for the measured hardware class."""
     model = machine.cpu_model.casefold()
     if not (
-        "nvidia grace" in model
-        or ("cortex-x925" in model and "cortex-a725" in model)
+        "nvidia grace" in model or ("cortex-x925" in model and "cortex-a725" in model)
     ):
         return None
     return CalibrationRecord(
         machine=machine,
-        source="DGX Spark anchor campaign 2026-08-08",
-        measured_at="2026-08-08",
+        source="DGX Spark anchor and fixed-text campaigns",
+        measured_at="2026-08-11",
         steal_curves=(
             StealCurve(
                 "performance-first",
@@ -60,4 +61,14 @@ def spark_prior(machine: MachineIdentity) -> CalibrationRecord | None:
         bandwidth_provenance="derived-prior",
         spawn_nanoseconds=13_800_000,
         pin_cost=PinCost(268_435_456, 9_000_000),
+        idle_state_tax=IdleStateTax(
+            loss_fraction=0.23617,
+            powered_down_residency_fraction=0.68708,
+            warm_duty_fraction=0.05,
+            minimum_gap_nanoseconds=1_930_000,
+        ),
+        staged_copy_tax=StagedCopyTax(
+            batch_bytes=262_144,
+            loss_fraction=0.1329,
+        ),
     )

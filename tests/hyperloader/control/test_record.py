@@ -10,8 +10,10 @@ from hyperloader.control import (
     BandwidthPoint,
     CalibrationRecord,
     CpuCluster,
+    IdleStateTax,
     MachineIdentity,
     PinCost,
+    StagedCopyTax,
     StealCurve,
     StealPoint,
     calibration_cache_path,
@@ -23,11 +25,15 @@ from hyperloader.control import (
 def _record(machine: MachineIdentity) -> CalibrationRecord:
     compute = tuple(
         StealPoint(cores, loss)
-        for cores, loss in zip((1, 2, 4, 8, 16), (0.01, 0.015, 0.02, 0.03, 0.04), strict=True)
+        for cores, loss in zip(
+            (1, 2, 4, 8, 16), (0.01, 0.015, 0.02, 0.03, 0.04), strict=True
+        )
     )
     stream = tuple(
         StealPoint(cores, loss)
-        for cores, loss in zip((1, 2, 4, 8, 16), (0.02, 0.03, 0.04, 0.05, 0.06), strict=True)
+        for cores, loss in zip(
+            (1, 2, 4, 8, 16), (0.02, 0.03, 0.04, 0.05, 0.06), strict=True
+        )
     )
     return CalibrationRecord(
         machine=machine,
@@ -44,6 +50,8 @@ def _record(machine: MachineIdentity) -> CalibrationRecord:
         bandwidth_provenance="measured",
         spawn_nanoseconds=10,
         pin_cost=PinCost(4096, 20),
+        idle_state_tax=IdleStateTax(0.1, 0.5, 0.05, 2_000_000),
+        staged_copy_tax=StagedCopyTax(4096, 0.12),
     )
 
 
@@ -84,6 +92,19 @@ class CalibrationRecordTest(unittest.TestCase):
     def test_measured_curve_requires_the_complete_width_grid(self) -> None:
         with self.assertRaisesRegex(ValueError, "1/2/4/8/16"):
             StealCurve("all", "compute", (StealPoint(1, 0.01), StealPoint(2, 0.02)))
+
+    def test_tax_measurements_reject_invalid_bounds(self) -> None:
+        with self.assertRaisesRegex(ValueError, "warm duty"):
+            IdleStateTax(0.1, 0.5, 0.0, 2_000_000)
+        with self.assertRaisesRegex(ValueError, "positive batch size"):
+            StagedCopyTax(0, 0.1)
+
+    def test_persisted_records_require_explicit_tax_measurements(self) -> None:
+        payload = _record(self.machine).to_dict()
+        del payload["idle_state_tax"]
+
+        with self.assertRaisesRegex(ValueError, "tax measurements"):
+            CalibrationRecord.from_dict(payload)
 
 
 if __name__ == "__main__":

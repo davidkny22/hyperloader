@@ -8,30 +8,34 @@ from .cache import (
 )
 from .controller import AdaptiveController, ControllerDecision
 from .machine import CpuCluster, MachineIdentity, detect_machine_identity
-from .priors import spark_prior
 from .objective import ControllerObjective
-from .runtime import build_controller, decision_report, resolve_calibration
+from .priors import spark_prior
 from .record import (
     BandwidthPoint,
     CalibrationRecord,
+    IdleStateTax,
     PinCost,
+    StagedCopyTax,
     StealCurve,
     StealPoint,
 )
+from .runtime import build_controller, decision_report, resolve_calibration
 
 __all__ = [
-    "BandwidthPoint",
     "AdaptiveController",
+    "BandwidthPoint",
     "CalibrationRecord",
     "ControllerDecision",
     "ControllerObjective",
     "CpuCluster",
+    "IdleStateTax",
     "MachineIdentity",
     "PinCost",
+    "StagedCopyTax",
     "StealCurve",
     "StealPoint",
-    "calibration_cache_path",
     "build_controller",
+    "calibration_cache_path",
     "decision_report",
     "detect_machine_identity",
     "load_calibration",

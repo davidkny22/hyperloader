@@ -1,6 +1,7 @@
 """Resource ceiling and controller cadence configuration."""
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from .automatic import AUTO, AutoFloat, AutoInt, _require_nonnegative_int
 
@@ -23,8 +24,11 @@ class ControlConfig:
     """Configure controller cadence and resource ceilings."""
 
     cadence: AutoFloat = AUTO
+    machine_keeping: Literal["auto", "off"] = "auto"
     ceilings: CeilingConfig = field(default_factory=CeilingConfig)
 
     def __post_init__(self) -> None:
         if self.cadence is not AUTO and self.cadence <= 0:
             raise ValueError("control.cadence must be auto or positive")
+        if self.machine_keeping not in {"auto", "off"}:
+            raise ValueError("control.machine_keeping must be auto or off")
