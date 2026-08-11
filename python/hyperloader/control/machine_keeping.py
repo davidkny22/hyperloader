@@ -26,6 +26,12 @@ class MachineKeepingIterator(Iterator[Any]):
         self._gapless_limit = (
             loader.config.factors.f_cad_b * loader.config.factors.hysteresis
         )
+        self._gapless_started_ns: int | None = None
+        self._gapless_limit_ns = int(
+            loader.config.factors.f_cad_s
+            * loader.config.factors.hysteresis
+            * 1_000_000_000
+        )
 
     def __iter__(self) -> MachineKeepingIterator:
         return self
@@ -39,9 +45,16 @@ class MachineKeepingIterator(Iterator[Any]):
                 if self._loader._machine_keeper is not None:
                     self._loader._machine_keeper.observe_gap(gap_ns)
                 self._gapless_batches = 0
+                self._gapless_started_ns = None
             elif self._loader._machine_keeper is not None:
+                if self._gapless_started_ns is None:
+                    self._gapless_started_ns = now
                 self._gapless_batches += 1
-                if self._gapless_batches >= self._gapless_limit:
+                gapless_ns = now - self._gapless_started_ns
+                if (
+                    self._gapless_batches >= self._gapless_limit
+                    and gapless_ns >= self._gapless_limit_ns
+                ):
                     self._park()
         try:
             value = next(self._iterator)
