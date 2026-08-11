@@ -115,6 +115,35 @@ def _compare(
     return document
 
 
+def summarize_results(
+    results: dict[str, dict[str, dict[str, Any]]],
+    *,
+    workloads: tuple[str, ...],
+    references: tuple[str, ...],
+    smoke: bool,
+) -> dict[str, Any]:
+    """Summarize either the complete matrix or an explicitly selected subset."""
+    if smoke:
+        return {"status": "smoke", "workloads": results}
+    passing = sum(
+        all(cell["status"] in {"win", "tie"} for cell in comparisons.values())
+        for comparisons in results.values()
+    )
+    full_matrix = workloads == workload_names() and references == ("torch", "spdl")
+    required = 5 if full_matrix else len(workloads)
+    return {
+        "criterion": (
+            "win or noise-bounded tie against both references in at least five cells"
+            if full_matrix
+            else "win or noise-bounded tie for every selected workload and reference"
+        ),
+        "passing_workloads": passing,
+        "required_workloads": required,
+        "status": "pass" if passing >= required else "fail",
+        "workloads": results,
+    }
+
+
 def main() -> None:
     """Tune equally, compare all cells, and preserve each raw observation."""
     parser = argparse.ArgumentParser()
@@ -122,6 +151,8 @@ def main() -> None:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--machine", required=True)
     parser.add_argument("--torchvision-version", required=True)
+    parser.add_argument("--workload", action="append", choices=workload_names())
+    parser.add_argument("--reference", action="append", choices=("torch", "spdl"))
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=False)
@@ -130,8 +161,11 @@ def main() -> None:
     environment = _environment(arguments)
     _write_json(arguments.output / "environment.json", asdict(environment))
 
+    workloads = tuple(arguments.workload or workload_names())
+    references = tuple(arguments.reference or ("torch", "spdl"))
+    systems = ("hyperloader", *references)
     results = {}
-    for name in workload_names():
+    for name in workloads:
         workload = make_workload(
             name,
             workspace,
@@ -140,7 +174,7 @@ def main() -> None:
         try:
             selected = {}
             tuning_records = {}
-            for system in ("hyperloader", "torch", "spdl"):
+            for system in systems:
                 selected[system], tuning_records[system] = tune(
                     system, workload, smoke=arguments.smoke
                 )
@@ -160,24 +194,17 @@ def main() -> None:
                     output=arguments.output,
                     smoke=arguments.smoke,
                 )
-                for reference in ("torch", "spdl")
+                for reference in references
             }
         finally:
             workload.close()
 
-    if arguments.smoke:
-        summary = {"status": "smoke", "workloads": results}
-    else:
-        passing = sum(
-            all(cell["status"] in {"win", "tie"} for cell in comparisons.values())
-            for comparisons in results.values()
-        )
-        summary = {
-            "criterion": "win or noise-bounded tie against both references in at least five cells",
-            "passing_workloads": passing,
-            "status": "pass" if passing >= 5 else "fail",
-            "workloads": results,
-        }
+    summary = summarize_results(
+        results,
+        workloads=workloads,
+        references=references,
+        smoke=arguments.smoke,
+    )
     _write_json(arguments.output / "summary.json", summary)
     print(json.dumps(summary, sort_keys=True))
 
