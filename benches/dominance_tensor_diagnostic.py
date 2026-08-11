@@ -76,9 +76,11 @@ def _measure_live(
     seconds: float,
     *,
     clone: bool = False,
+    touch: bool = False,
 ) -> dict[str, float | int]:
     count = 0
     feeder_seconds = 0.0
+    touch_seconds = 0.0
     clone_seconds = 0.0
     gpu_seconds = 0.0
     started = time.perf_counter()
@@ -87,13 +89,17 @@ def _measure_live(
         before_feeder = time.perf_counter()
         batch = feeder.next_batch()
         after_feeder = time.perf_counter()
+        if touch:
+            int(batch.sum().item())
+        after_touch = time.perf_counter()
         if clone:
             batch = batch.clone()
         after_clone = time.perf_counter()
         workload.run(batch)
         completed = time.perf_counter()
         feeder_seconds += after_feeder - before_feeder
-        clone_seconds += after_clone - after_feeder
+        touch_seconds += after_touch - after_feeder
+        clone_seconds += after_clone - after_touch
         gpu_seconds += completed - after_clone
         count += 1
     elapsed = time.perf_counter() - started
@@ -102,6 +108,7 @@ def _measure_live(
         "elapsed_seconds": elapsed,
         "iterations_per_second": count / elapsed,
         "feeder_seconds_per_iteration": feeder_seconds / count,
+        "touch_seconds_per_iteration": touch_seconds / count,
         "clone_seconds_per_iteration": clone_seconds / count,
         "gpu_seconds_per_iteration": gpu_seconds / count,
     }
@@ -192,7 +199,12 @@ def main() -> None:
         gpu_workload = GpuWorkload("compute")
         gpu_workload.warm(live_feeders["hyperloader"].next_batch(), iterations=20)
         live_sampler.start()
-        names = ("hyper-live", "hyper-live-clone", "torch-live")
+        names = (
+            "hyper-live",
+            "hyper-live-touch",
+            "hyper-live-clone",
+            "torch-live",
+        )
         for round_index in range(4):
             order = names if round_index % 2 == 0 else tuple(reversed(names))
             for name in order:
@@ -206,6 +218,7 @@ def main() -> None:
                             live_feeders[system],
                             arguments.seconds,
                             clone=name == "hyper-live-clone",
+                            touch=name == "hyper-live-touch",
                         ),
                     }
                 )
@@ -227,11 +240,17 @@ def main() -> None:
             for metric in (
                 "iterations_per_second",
                 "feeder_seconds_per_iteration",
+                "touch_seconds_per_iteration",
                 "clone_seconds_per_iteration",
                 "gpu_seconds_per_iteration",
             )
         }
-        for name in ("hyper-live", "hyper-live-clone", "torch-live")
+        for name in (
+            "hyper-live",
+            "hyper-live-touch",
+            "hyper-live-clone",
+            "torch-live",
+        )
     }
     report = {
         "commit": arguments.commit,
