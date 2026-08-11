@@ -171,3 +171,52 @@ class DutyCycleAluSpinner:
             )
         )
         self._record["stopped_seconds"] = time.perf_counter() - self._started_at
+
+
+class DutyCycleAluSpinnerGroup:
+    """Run identical native pulses on an explicit set of Linux CPUs."""
+
+    def __init__(
+        self,
+        library: Path,
+        cores: tuple[int, ...],
+        *,
+        active_microseconds: int,
+        period_microseconds: int,
+    ) -> None:
+        if not cores or len(set(cores)) != len(cores):
+            raise ValueError("pulse cores must be a nonempty unique sequence")
+        self._spinners = [
+            DutyCycleAluSpinner(
+                library,
+                core,
+                active_microseconds=active_microseconds,
+                period_microseconds=period_microseconds,
+            )
+            for core in cores
+        ]
+        self._started = 0
+
+    def start(self) -> None:
+        """Start every pulse and stop the started subset if one fails."""
+        try:
+            for spinner in self._spinners:
+                spinner.start()
+                self._started += 1
+        except BaseException:
+            for spinner in reversed(self._spinners[: self._started]):
+                spinner.stop()
+            self._started = 0
+            raise
+
+    def stop(self) -> dict[str, object]:
+        """Stop every pulse and return placement records in core order."""
+        if self._started != len(self._spinners):
+            raise RuntimeError("pulse group is not fully started")
+        reports = [spinner.stop() for spinner in reversed(self._spinners)]
+        self._started = 0
+        reports.reverse()
+        return {
+            "cores": [int(report["core"]) for report in reports],
+            "threads": reports,
+        }

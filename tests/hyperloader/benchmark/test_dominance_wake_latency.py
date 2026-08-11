@@ -25,8 +25,9 @@ class _SequencedEvent:
 
 
 class DominanceWakeLatencyTest(unittest.TestCase):
-    def test_only_auto_controls_consumes_the_live_loader(self) -> None:
+    def test_live_modes_consume_the_installed_loader(self) -> None:
         self.assertTrue(wake_latency.uses_live_hyperloader("auto-controls"))
+        self.assertTrue(wake_latency.uses_live_hyperloader("targeted-warmth"))
         for mode in ("blocking", "event-query", "consumer-warmth"):
             with self.subTest(mode=mode):
                 self.assertFalse(wake_latency.uses_live_hyperloader(mode))

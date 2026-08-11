@@ -93,10 +93,12 @@ class HyperloaderFeeder:
         selected: SelectedConfig,
         *,
         delivery_memory: Literal["auto", "host", "pinned"] = "auto",
+        machine_keeping: Literal["auto", "off"] = "auto",
     ) -> None:
         from hyperloader import DataLoader
         from hyperloader.config import (
             DeterminismConfig,
+            ControlConfig,
             HyperConfig,
             MemoryConfig,
             SchedulerConfig,
@@ -119,6 +121,7 @@ class HyperloaderFeeder:
                 worker_init_fn=pin_efficiency_worker,
                 multiprocessing_context="forkserver",
                 config=HyperConfig(
+                    control=ControlConfig(machine_keeping=machine_keeping),
                     determinism=determinism,
                     memory=MemoryConfig(delivery_memory=delivery_memory),
                     scheduler=SchedulerConfig(
@@ -218,6 +221,7 @@ def build_feeder(
     selected: SelectedConfig,
     *,
     delivery_memory: Literal["auto", "host", "pinned"] = "auto",
+    machine_keeping: Literal["auto", "off"] = "auto",
 ) -> TorchFeeder | HyperloaderFeeder | SpdlFeeder:
     """Construct one named system through its public entry point."""
     if system == "hyperloader":
@@ -225,9 +229,10 @@ def build_feeder(
             workload,
             selected,
             delivery_memory=delivery_memory,
+            machine_keeping=machine_keeping,
         )
-    if delivery_memory != "auto":
-        raise ValueError("delivery memory overrides apply only to hyperloader")
+    if delivery_memory != "auto" or machine_keeping != "auto":
+        raise ValueError("execution overrides apply only to hyperloader")
     factories = {
         "torch": TorchFeeder,
         "spdl": SpdlFeeder,

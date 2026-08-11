@@ -10,9 +10,9 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from dominance_alu_spinner import DutyCycleAluSpinner
+from dominance_alu_spinner import DutyCycleAluSpinner, DutyCycleAluSpinnerGroup
 from dominance_cpu_idle import (
     capture_kernel_counters,
     diff_cpuidle,
@@ -33,13 +33,21 @@ from overhead_environment import (
 from overhead_workload import GpuWorkload
 
 
+class WarmthController(Protocol):
+    """Lifecycle shared by one-core and multi-core diagnostic pulses."""
+
+    def start(self) -> None: ...
+
+    def stop(self) -> dict[str, object]: ...
+
+
 def _measure_half(
     name: str,
     workload: GpuWorkload,
     next_batch: Callable[[], Any],
     half_seconds: float,
     sampler: ClockSampler,
-    warmth: DutyCycleAluSpinner | None,
+    warmth: WarmthController | None,
 ) -> dict[str, object]:
     before = capture_kernel_counters()
     warmth_report = None
@@ -116,7 +124,7 @@ def _clock_windows(
 
 def uses_live_hyperloader(mode: str) -> bool:
     """Return whether a diagnostic mode consumes the installed loader directly."""
-    return mode == "auto-controls"
+    return mode in {"auto-controls", "targeted-warmth"}
 
 
 def main() -> None:
@@ -126,7 +134,13 @@ def main() -> None:
     parser.add_argument("--commit", required=True)
     parser.add_argument(
         "--mode",
-        choices=("blocking", "event-query", "consumer-warmth", "auto-controls"),
+        choices=(
+            "blocking",
+            "event-query",
+            "consumer-warmth",
+            "auto-controls",
+            "targeted-warmth",
+        ),
         required=True,
     )
     parser.add_argument("--half-seconds", type=float, default=45.0)
@@ -141,10 +155,11 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.half_seconds <= 0:
         raise ValueError("half duration must be positive")
-    if arguments.mode == "consumer-warmth" and arguments.spinner_library is None:
-        raise ValueError("consumer warmth requires a native spinner library")
-    if arguments.mode != "consumer-warmth" and arguments.spinner_library is not None:
-        raise ValueError("only consumer warmth can load the native spinner")
+    warmth_modes = {"consumer-warmth", "targeted-warmth"}
+    if arguments.mode in warmth_modes and arguments.spinner_library is None:
+        raise ValueError("warmth diagnostics require a native spinner library")
+    if arguments.mode not in warmth_modes and arguments.spinner_library is not None:
+        raise ValueError("only warmth diagnostics can load the native spinner")
     arguments.output.mkdir(parents=True, exist_ok=False)
 
     bundle = make_workload("fixed-text", arguments.output / "workload", batches=32)
@@ -158,6 +173,9 @@ def main() -> None:
             bundle,
             configs["hyperloader"],
             delivery_memory=arguments.hyper_delivery_memory,
+            machine_keeping=(
+                "off" if arguments.mode == "targeted-warmth" else "auto"
+            ),
         ),
         "torch": build_feeder("torch", bundle, configs["torch"]),
     }
@@ -194,16 +212,21 @@ def main() -> None:
         workload.warm(closed_bank[0], iterations=20)
         sampler.start()
         sampler_started = True
-        warmth = (
-            DutyCycleAluSpinner(
+        warmth = None
+        if arguments.mode == "consumer-warmth":
+            warmth = DutyCycleAluSpinner(
                 arguments.spinner_library,
                 consumer_cpu,
                 active_microseconds=arguments.warmth_active_us,
                 period_microseconds=arguments.warmth_period_us,
             )
-            if arguments.mode == "consumer-warmth"
-            else None
-        )
+        elif arguments.mode == "targeted-warmth":
+            warmth = DutyCycleAluSpinnerGroup(
+                arguments.spinner_library,
+                (0, consumer_cpu),
+                active_microseconds=arguments.warmth_active_us,
+                period_microseconds=arguments.warmth_period_us,
+            )
         if uses_live_hyperloader(arguments.mode):
             halves = [
                 _measure_half(
@@ -212,7 +235,7 @@ def main() -> None:
                     feeders["hyperloader"].next_batch,
                     arguments.half_seconds,
                     sampler,
-                    None,
+                    warmth,
                 )
             ]
             hyperloader_report = feeders["hyperloader"].report()
@@ -276,6 +299,9 @@ def main() -> None:
         "batch": describe_batch(closed_bank[0]),
         "hyperloader_report": hyperloader_report,
         "hyperloader_delivery_memory": arguments.hyper_delivery_memory,
+        "product_machine_keeping": (
+            "off" if arguments.mode == "targeted-warmth" else "auto"
+        ),
         "halves": halves,
         "clock_samples": clock_samples,
         "clock_summaries": _clock_windows(clock_samples, halves),
