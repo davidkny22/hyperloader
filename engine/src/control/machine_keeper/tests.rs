@@ -14,11 +14,14 @@ fn tuner_restores_the_lowest_zero_entry_duty() {
 }
 
 #[test]
-fn tuner_does_not_undercut_the_calibrated_warm_duty() {
+fn tuner_descends_below_the_calibration_prior_to_minimum_duty() {
     let mut tuner = DutyTuner::new(50_000, 50_000);
 
-    assert_eq!(tuner.observe(0), 50_000);
-    assert_eq!(tuner.observe(0), 50_000);
+    assert_eq!(tuner.observe(0), 40_000);
+    assert_eq!(tuner.observe(0), 30_000);
+    assert_eq!(tuner.observe(0), 20_000);
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(0), 10_000);
 }
 
 #[test]
@@ -35,11 +38,11 @@ fn tuner_never_exceeds_the_configured_cap() {
 fn tuner_reopens_after_a_late_powered_down_entry() {
     let mut tuner = DutyTuner::new(20_000, 50_000);
 
-    assert_eq!(tuner.observe(0), 20_000);
-    assert_eq!(tuner.observe(0), 20_000);
-    assert_eq!(tuner.observe(0), 20_000);
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(0), 10_000);
+    assert_eq!(tuner.observe(1), 20_000);
     assert_eq!(tuner.observe(1), 30_000);
-    assert_eq!(tuner.observe(1), 40_000);
 }
 
 #[test]

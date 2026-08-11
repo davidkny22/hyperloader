@@ -12,10 +12,10 @@ pub(super) struct DutyTuner {
 
 impl DutyTuner {
     pub(super) fn new(initial: u32, maximum: u32) -> Self {
-        let minimum = initial.min(maximum);
+        let minimum = DUTY_STEP.min(maximum);
         Self {
             minimum,
-            current: minimum,
+            current: initial.clamp(minimum, maximum),
             maximum,
             lowest_zero: None,
             settled: false,
