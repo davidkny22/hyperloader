@@ -7,6 +7,7 @@ from typing import Any
 
 from ..telemetry.delivery import build_delivery_telemetry
 from ..process.sizing import frontier_depth
+from ..state import resume_sample_position
 from .metrics import payload_bytes
 
 
@@ -20,16 +21,18 @@ class StructuredIterator(Iterator[Any]):
         if loader.drop_last and loader.batch_size is not None:
             length -= length % loader.batch_size
         self._length = length
-        self._position = 0
+        self._position = resume_sample_position(loader, length)
         self._complete = False
         self._valid = True
         self._delivery_telemetry = build_delivery_telemetry(loader)
         begin_epoch = getattr(loader._execution_dataset, "begin_native_epoch", None)
         if begin_epoch is not None:
             batch_size = loader.batch_size or 1
-            retained_stop = (
-                min(batch_size, length) if loader._native_batch_probe is not None else 0
-            )
+            retained_stop = self._position
+            if self._position == 0 and loader._native_batch_probe is not None:
+                retained_stop = min(batch_size, length)
+            elif self._position:
+                loader._native_batch_probe = None
             begin_epoch(length, frontier_depth(loader), retained_stop, batch_size)
 
     def __iter__(self) -> StructuredIterator:
@@ -90,6 +93,17 @@ class StructuredIterator(Iterator[Any]):
     def complete(self) -> bool:
         """Report whether exhaustion advanced the loader epoch."""
         return self._complete
+
+    @property
+    def coordinate_epoch(self) -> int:
+        """Return the epoch carried by this iterator's checkpoint coordinate."""
+        return self._epoch
+
+    @property
+    def delivered_batches(self) -> int:
+        """Return the strict delivered-batch prefix count."""
+        batch_size = self._loader.batch_size or 1
+        return (self._position + batch_size - 1) // batch_size
 
     def invalidate(self) -> None:
         """Prevent a replaced iterator from producing more batches."""

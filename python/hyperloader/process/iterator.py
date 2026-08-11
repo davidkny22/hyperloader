@@ -10,6 +10,7 @@ from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .frontier import FrontierRuntime, binding_cause
 from .sizing import delivery_length, frontier_ceiling, frontier_depth
+from ..state import resume_sample_position
 from ..telemetry.delivery import build_delivery_telemetry
 
 
@@ -19,8 +20,8 @@ class ProcessIterator(Iterator[Any]):
     def __init__(self, loader: Any) -> None:
         self._loader = loader
         self._epoch = loader._epoch
-        self._position = 0
         self._length = delivery_length(loader)
+        self._position = resume_sample_position(loader, self._length)
         self._complete = False
         self._valid = True
         self._ready: dict[int, tuple[int, bytes, int]] = {}
@@ -33,6 +34,11 @@ class ProcessIterator(Iterator[Any]):
             depth = frontier_depth(loader)
             batch_size = loader._process_pool.batch_size
             self._worker_batches = batch_size is not None
+            schedule_start = (
+                self._position // batch_size
+                if batch_size is not None
+                else self._position
+            )
             schedule_length = (
                 (self._length + batch_size - 1) // batch_size
                 if batch_size is not None
@@ -57,6 +63,7 @@ class ProcessIterator(Iterator[Any]):
                 loader.config.factors.growth_mult,
                 binding_cause(loader),
                 self._dispatch_cost,
+                start=schedule_start,
             )
             self._schedule.set_worker_count(loader._controller.width)
             self._fill_frontier()
@@ -282,6 +289,17 @@ class ProcessIterator(Iterator[Any]):
     def complete(self) -> bool:
         """Report whether exhaustion advanced the loader epoch."""
         return self._complete
+
+    @property
+    def coordinate_epoch(self) -> int:
+        """Return the epoch carried by this iterator's checkpoint coordinate."""
+        return self._epoch
+
+    @property
+    def delivered_batches(self) -> int:
+        """Return the strict delivered-batch prefix count."""
+        batch_size = self._loader.batch_size or 1
+        return (self._position + batch_size - 1) // batch_size
 
     def invalidate(self) -> None:
         """Prevent a replaced iterator from consuming a new pool's completions."""

@@ -37,8 +37,10 @@ class FrontierRuntime:
         growth_multiplier: int,
         binding: str,
         cost_estimator: Callable[[int], float | None] | None = None,
+        *,
+        start: int = 0,
     ) -> None:
-        self._schedule = _hyperloader._StaticSchedule(0, end, depth, worker_count)
+        self._schedule = _hyperloader._StaticSchedule(start, end, depth, worker_count)
         self._initial_depth = depth
         self._depth = depth
         self._ceiling = ceiling

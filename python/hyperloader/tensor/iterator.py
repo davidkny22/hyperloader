@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..telemetry.delivery import DELIVERY_GROUP
+from ..state import resume_sample_position
 
 
 class TensorIterator(Iterator[Any]):
@@ -19,7 +20,7 @@ class TensorIterator(Iterator[Any]):
         if loader.drop_last and loader.batch_size is not None:
             length -= length % loader.batch_size
         self._length = length
-        self._position = 0
+        self._position = resume_sample_position(loader, length)
         self._complete = False
         self._valid = True
         self._telemetry = loader._telemetry
@@ -125,6 +126,16 @@ class TensorIterator(Iterator[Any]):
     def complete(self) -> bool:
         """Report whether exhaustion advanced the loader epoch."""
         return self._complete
+
+    @property
+    def coordinate_epoch(self) -> int:
+        """Return the epoch carried by this iterator's checkpoint coordinate."""
+        return self._epoch
+
+    @property
+    def delivered_batches(self) -> int:
+        """Return the strict delivered-batch prefix count."""
+        return self._batch_ordinal(self._position)
 
     def invalidate(self) -> None:
         """Prevent a replaced iterator from producing more batches."""

@@ -107,6 +107,7 @@ class DataLoader:
         self.delivery_memory = resolved.delivery_memory
         self.root_seed = resolve_root_seed(resolved_seed, generator)
         self._epoch_state = EpochState()
+        self._resume_cursor_batches = 0
         self._abandon_notice_emitted = False
         self._process_pool: Any = None
         self._thread_pool: Any = None
@@ -241,6 +242,7 @@ class DataLoader:
         pinned_delivery = configure_pinned_delivery(self)
         iterator = attach_pinned_delivery(pinned_delivery, iterator)
         iterator = attach_machine_keeping(self, iterator)
+        self._resume_cursor_batches = 0
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
 
@@ -252,6 +254,19 @@ class DataLoader:
     def set_epoch(self, epoch: int) -> None:
         """Select an epoch and reset the next iterator to its first batch."""
         self._epoch_state.set_epoch(epoch)
+        self._resume_cursor_batches = 0
+
+    def state_dict(self) -> dict[str, object]:
+        """Capture the delivered map-style coordinate for exact continuation."""
+        from .state import capture_map_state
+
+        return capture_map_state(self)
+
+    def load_state_dict(self, state: dict[str, object]) -> None:
+        """Restore a validated map-style coordinate for the next iterator."""
+        from .state import restore_map_state
+
+        restore_map_state(self, state)
 
     def close(self) -> None:
         """Release persistent process resources owned by this loader."""

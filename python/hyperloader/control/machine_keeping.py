@@ -159,6 +159,16 @@ class MachineKeepingIterator(Iterator[Any]):
         """Report the wrapped iterator's completion state."""
         return bool(self._iterator.complete)
 
+    @property
+    def coordinate_epoch(self) -> int:
+        """Return the wrapped iterator's checkpoint epoch."""
+        return int(self._iterator.coordinate_epoch)
+
+    @property
+    def delivered_batches(self) -> int:
+        """Return the wrapped iterator's delivered-batch prefix."""
+        return int(self._iterator.delivered_batches)
+
     def invalidate(self) -> None:
         """Park machine keeping and invalidate the wrapped iterator."""
         self._park()

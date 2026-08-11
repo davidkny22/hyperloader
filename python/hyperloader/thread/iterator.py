@@ -8,6 +8,7 @@ from concurrent.futures import Future
 from typing import Any
 
 from ..process.sizing import delivery_length, frontier_depth
+from ..state import resume_sample_position
 from ..telemetry.delivery import build_delivery_telemetry
 from .pool import ThreadPool
 
@@ -18,10 +19,12 @@ class ThreadIterator(Iterator[Any]):
     def __init__(self, loader: Any) -> None:
         self._loader = loader
         self._epoch = loader._epoch
-        self._position = 0
-        self._next_submit = 0
         self._length = delivery_length(loader)
-        self._depth = min(self._length, frontier_depth(loader))
+        self._position = resume_sample_position(loader, self._length)
+        self._next_submit = self._position
+        self._depth = min(
+            self._length - self._position, frontier_depth(loader)
+        )
         self._complete = False
         self._valid = True
         self._futures: dict[int, Future[tuple[Any, int]]] = {}
@@ -112,6 +115,17 @@ class ThreadIterator(Iterator[Any]):
     def complete(self) -> bool:
         """Report whether exhaustion advanced the loader epoch."""
         return self._complete
+
+    @property
+    def coordinate_epoch(self) -> int:
+        """Return the epoch carried by this iterator's checkpoint coordinate."""
+        return self._epoch
+
+    @property
+    def delivered_batches(self) -> int:
+        """Return the strict delivered-batch prefix count."""
+        batch_size = self._loader.batch_size or 1
+        return (self._position + batch_size - 1) // batch_size
 
     def invalidate(self) -> None:
         """Prevent a replaced iterator from committing more results."""
