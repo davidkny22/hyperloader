@@ -20,7 +20,7 @@ impl PeriodicPulse {
     }
 
     pub(super) fn active_until(&self, active_ns: u64) -> u64 {
-        self.next_start_ns.saturating_add(active_ns)
+        monotonic_ns().saturating_add(active_ns)
     }
 
     pub(super) fn before(&self, deadline_ns: u64) -> bool {
@@ -28,7 +28,12 @@ impl PeriodicPulse {
     }
 
     pub(super) fn wait_next(&mut self) {
-        self.next_start_ns = self.next_start_ns.saturating_add(self.period_ns);
+        let now = monotonic_ns();
+        let elapsed = now.saturating_sub(self.next_start_ns);
+        let periods = elapsed / self.period_ns + 1;
+        self.next_start_ns = self
+            .next_start_ns
+            .saturating_add(self.period_ns.saturating_mul(periods));
         let deadline = libc::timespec {
             tv_sec: (self.next_start_ns / 1_000_000_000) as libc::time_t,
             tv_nsec: (self.next_start_ns % 1_000_000_000) as libc::c_long,
@@ -87,7 +92,7 @@ impl PeriodicPulse {
     }
 
     pub(super) fn active_until(&self, active_ns: u64) -> std::time::Instant {
-        self.next_start + std::time::Duration::from_nanos(active_ns)
+        std::time::Instant::now() + std::time::Duration::from_nanos(active_ns)
     }
 
     pub(super) fn before(&self, deadline: std::time::Instant) -> bool {
@@ -95,7 +100,18 @@ impl PeriodicPulse {
     }
 
     pub(super) fn wait_next(&mut self) {
-        self.next_start += self.period;
+        let now = std::time::Instant::now();
+        if now >= self.next_start {
+            let periods =
+                now.duration_since(self.next_start).as_nanos() / self.period.as_nanos() + 1;
+            if periods > u128::from(u32::MAX) {
+                self.next_start = now + self.period;
+            } else {
+                self.next_start += self.period * periods as u32;
+            }
+        } else {
+            self.next_start += self.period;
+        }
         if let Some(remaining) = self
             .next_start
             .checked_duration_since(std::time::Instant::now())
