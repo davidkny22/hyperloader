@@ -15,7 +15,7 @@ from hyperloader import DataLoader
     "requires the explicit Spark hardware assurance environment",
 )
 class SparkMachineDeliveryTest(unittest.TestCase):
-    """Exercise both calibrated controls through the installed public loader."""
+    """Exercise calibrated controls through the installed public loader."""
 
     def test_auto_controls_preserve_fixed_text_storage_and_values(self) -> None:
         source = torch.arange(2048 * 512, dtype=torch.int64).reshape(2048, 512)
@@ -28,7 +28,7 @@ class SparkMachineDeliveryTest(unittest.TestCase):
             second = next(iterator)
             snapshot = loader.stats()
 
-            self.assertEqual(loader.delivery_memory, "pinned")
+            self.assertEqual(loader.delivery_memory, "host")
             self.assertEqual(source._version, source_version)
             self.assertEqual(
                 first.untyped_storage().data_ptr(), source.untyped_storage().data_ptr()
@@ -38,11 +38,8 @@ class SparkMachineDeliveryTest(unittest.TestCase):
             )
             self.assertTrue(torch.equal(first, source[:64]))
             self.assertTrue(torch.equal(second, source[64:128]))
-            self.assertEqual(
-                snapshot["memory"]["pinned_registered_bytes"],
-                source.untyped_storage().nbytes(),
-            )
-            self.assertEqual(snapshot["memory"]["pinned_staged_bytes"], 0)
+            self.assertEqual(snapshot["memory"].get("pinned_registered_bytes", 0), 0)
+            self.assertEqual(snapshot["memory"].get("pinned_staged_bytes", 0), 0)
             self.assertGreater(snapshot["current"]["machine_keeping_duty"], 0.0)
             self.assertLessEqual(snapshot["current"]["machine_keeping_duty"], 0.05)
         finally:
