@@ -3,6 +3,7 @@
 const DUTY_STEP: u32 = 10_000;
 
 pub(super) struct DutyTuner {
+    minimum: u32,
     current: u32,
     maximum: u32,
     lowest_zero: Option<u32>,
@@ -11,8 +12,10 @@ pub(super) struct DutyTuner {
 
 impl DutyTuner {
     pub(super) fn new(initial: u32, maximum: u32) -> Self {
+        let minimum = initial.min(maximum);
         Self {
-            current: initial.min(maximum),
+            minimum,
+            current: minimum,
             maximum,
             lowest_zero: None,
             settled: false,
@@ -31,8 +34,8 @@ impl DutyTuner {
         }
         if powered_down_entries == 0 {
             self.lowest_zero = Some(self.current);
-            if self.current > DUTY_STEP {
-                self.current -= DUTY_STEP;
+            if self.current > self.minimum {
+                self.current = self.current.saturating_sub(DUTY_STEP).max(self.minimum);
             } else {
                 self.settled = true;
             }
