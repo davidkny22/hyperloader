@@ -190,19 +190,25 @@ def _variable_text(_root: Path, batches: int) -> WorkloadBundle:
     from hyperloader import Collate, Source, pipeline
 
     batch_size = 64
-    values = tuple(
-        torch.arange(256 + index % 257, dtype=torch.int64)
-        for index in range(batch_size * batches)
-    )
+    lengths = [256 + index % 257 for index in range(batch_size * batches)]
+    storage = torch.empty(sum(lengths), dtype=torch.int64)
+    values = []
+    offset = 0
+    for length in lengths:
+        row = storage[offset : offset + length]
+        row.copy_(torch.arange(length, dtype=torch.int64))
+        values.append(row)
+        offset += length
+    token_rows = tuple(values)
     native = pipeline(
-        Source(values, output_type=torch.Tensor),
+        Source(token_rows, output_type=torch.Tensor),
         Collate(pad_sequence, input_type=torch.Tensor, output_type=torch.Tensor),
     )
     return WorkloadBundle(
         "varlen-text",
         "compute",
         batch_size,
-        values,
+        token_rows,
         native,
         pad_sequence,
         "pre-tokenized tensors; native variable padding into final arena slot",

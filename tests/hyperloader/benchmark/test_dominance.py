@@ -110,6 +110,19 @@ class DominanceHarnessTest(unittest.TestCase):
             self._assert_public_values("numpy-array", Path(directory))
             gc.collect()
 
+    def test_varlen_rows_share_one_fixture_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload = make_workload("varlen-text", Path(directory), batches=1)
+            try:
+                storages = {
+                    row.untyped_storage().data_ptr()
+                    for row in workload.reference_dataset
+                }
+                self.assertEqual(len(storages), 1)
+                self.assertEqual(len(workload.reference_dataset), 64)
+            finally:
+                workload.close()
+
     def _assert_public_values(self, name: str, root: Path) -> None:
         workload = make_workload(
             name,
