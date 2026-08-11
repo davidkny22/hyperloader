@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -239,6 +240,65 @@ class DominanceHarnessTest(unittest.TestCase):
                 selected,
                 delivery_memory="host",
             )
+
+    def test_native_thread_affinity_expands_workers_then_restores_consumer(
+        self,
+    ) -> None:
+        feeders = importlib.import_module("dominance_feeders")
+        calls: list[tuple[int, set[int]]] = []
+
+        def set_affinity(process: int, cpus: set[int]) -> None:
+            calls.append((process, set(cpus)))
+
+        with (
+            mock.patch.object(
+                feeders.os, "sched_getaffinity", return_value={19}, create=True
+            ),
+            mock.patch.object(
+                feeders.os, "sched_setaffinity", side_effect=set_affinity, create=True
+            ),
+            mock.patch.object(feeders.os, "cpu_count", return_value=20),
+            feeders.native_thread_affinity(),
+        ):
+            self.assertEqual(calls, [(0, set(range(10)))])
+
+        self.assertEqual(calls, [(0, set(range(10))), (0, {19})])
+
+    def test_native_thread_affinity_keeps_consumer_when_worker_set_is_refused(
+        self,
+    ) -> None:
+        feeders = importlib.import_module("dominance_feeders")
+        setter = mock.Mock(side_effect=OSError("worker cores unavailable"))
+
+        with (
+            mock.patch.object(
+                feeders.os, "sched_getaffinity", return_value={19}, create=True
+            ),
+            mock.patch.object(feeders.os, "sched_setaffinity", setter, create=True),
+            mock.patch.object(feeders.os, "cpu_count", return_value=20),
+            feeders.native_thread_affinity(),
+        ):
+            pass
+
+        setter.assert_called_once_with(0, set(range(10)))
+
+    @unittest.skipUnless(
+        os.environ.get("HYPERLOADER_SPARK_HARDWARE") == "1",
+        "requires the guarded Spark affinity topology",
+    )
+    def test_native_thread_affinity_reaches_real_worker_cores(self) -> None:
+        feeders = importlib.import_module("dominance_feeders")
+        before = os.sched_getaffinity(0)
+
+        with feeders.native_thread_affinity():
+            during = os.sched_getaffinity(0)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                inherited = pool.submit(os.sched_getaffinity, 0).result()
+
+        self.assertEqual(before, {19})
+        self.assertEqual(during, set(range(10)))
+        self.assertEqual(inherited, set(range(10)))
+        self.assertEqual(os.sched_getaffinity(0), before)
 
     def test_loader_slowdown_mutation_exceeds_the_tie_margin(self) -> None:
         mutation = os.environ.get("HYPERLOADER_DOMINANCE_MUTATION")

@@ -26,14 +26,20 @@ def native_thread_affinity() -> Any:
         yield
         return
     original = os.sched_getaffinity(0)
-    available = set(EFFICIENCY_CORES).intersection(original)
-    if not available:
-        available = set(original)
-    os.sched_setaffinity(0, available)
+    cpu_count = os.cpu_count() or 0
+    target = {cpu for cpu in EFFICIENCY_CORES if cpu < cpu_count}
+    changed = False
+    if target and target != set(original):
+        try:
+            os.sched_setaffinity(0, target)
+            changed = True
+        except OSError:
+            pass
     try:
         yield
     finally:
-        os.sched_setaffinity(0, original)
+        if changed:
+            os.sched_setaffinity(0, original)
 
 
 class TorchFeeder:
