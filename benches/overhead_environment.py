@@ -33,13 +33,21 @@ class ClockSampler:
         self._stop = threading.Event()
         self._samples: list[ClockSample] = []
         self._started = 0.0
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="clock-sampler", daemon=True
+        )
         self._rail_sources = _spark_hwmon_sources()
 
     @property
     def rail_sources(self) -> dict[str, str]:
         """Return readable Spark rail labels and their sysfs sources."""
         return {label: str(path) for label, path in self._rail_sources.items()}
+
+    def elapsed_seconds(self) -> float:
+        """Return elapsed time on the sampler's measurement clock."""
+        if self._started == 0.0:
+            raise RuntimeError("clock sampler has not started")
+        return time.perf_counter() - self._started
 
     def start(self) -> None:
         """Start sampling from a dedicated efficiency core."""
