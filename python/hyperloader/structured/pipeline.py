@@ -6,6 +6,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from hyperloader import _hyperloader
+
 from ..decoder.execution import PinnedDecoder
 from ..stages import Decode, Pipeline
 from .metrics import payload_bytes
@@ -18,6 +20,7 @@ class NativePipelineAdapter:
     pipeline: Pipeline[Any, Any]
     worker_count: int
     source_class: str
+    growth: str
     native_batch_enabled: bool = field(default=True, init=False)
     _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
     _futures: dict[int, Future[Any]] = field(
@@ -34,6 +37,11 @@ class NativePipelineAdapter:
     _output_bytes: int = field(default=0, init=False, repr=False)
     _minimum_sample_bytes: int | None = field(default=None, init=False, repr=False)
     _maximum_sample_bytes: int = field(default=0, init=False, repr=False)
+    _slot_capacity_bytes: int = field(default=0, init=False, repr=False)
+    _arena: Any = field(default=None, init=False, repr=False)
+    _closed_arena_stats: tuple[int, int, int, int] = field(
+        default=(0, 0, 0, 0), init=False, repr=False
+    )
 
     def __len__(self) -> int:
         return len(self.pipeline)
@@ -46,7 +54,7 @@ class NativePipelineAdapter:
             else [self._value(index) for index in range(start, stop)]
         )
         self._fill_frontier()
-        value = self.pipeline.collate(values)
+        value = self._collate_into_slot(values)
         self._record(values, value)
         return value
 
@@ -60,6 +68,7 @@ class NativePipelineAdapter:
 
     def memory_report(self) -> dict[str, object]:
         """Return measured byte ownership for delivered native batches."""
+        regions, growth_events, hold_events, overflow_events = self._arena_stats()
         return {
             "bytes_beyond_irreducible": 0,
             "delivery": "single-write",
@@ -70,6 +79,11 @@ class NativePipelineAdapter:
             "source_class": self.source_class,
             "produced_batches": self._produced_batches,
             "produced_samples": self._produced_samples,
+            "growth_events": growth_events,
+            "hold_events": hold_events,
+            "overflow_events": overflow_events,
+            "regions": regions,
+            "slot_capacity_bytes": self._slot_capacity_bytes,
             "variable_shape": self._variable_shape,
         }
 
@@ -82,6 +96,9 @@ class NativePipelineAdapter:
         self._epoch_length = 0
         self._next_submit = 0
         self._prefetch_depth = 0
+        if self._arena is not None:
+            self._closed_arena_stats = self._arena.stats()
+            self._arena = None
 
     def _pool(self) -> ThreadPoolExecutor:
         if self._executor is None:
@@ -107,6 +124,7 @@ class NativePipelineAdapter:
             self._next_submit += 1
 
     def _record(self, values: list[Any], batch: Any) -> None:
+        output_size = payload_bytes(batch)
         for value in values:
             signature = _shape_signature(value)
             if self._sample_shape is None:
@@ -123,10 +141,84 @@ class NativePipelineAdapter:
             )
         self._produced_batches += 1
         self._produced_samples += len(values)
-        self._output_bytes += payload_bytes(batch)
+        self._output_bytes += output_size
+
+    def _collate_into_slot(self, values: list[Any]) -> Any:
+        import torch
+        from torch.nn.utils.rnn import pad_sequence
+
+        if not values:
+            return self.pipeline.collate(values)
+        first = values[0]
+        if not isinstance(first, torch.Tensor) or first.device.type != "cpu":
+            return self.pipeline.collate(values)
+        if self.pipeline.collate_stage.fn is pad_sequence:
+            return self._pad_into_slot(values)
+        return self._stack_into_slot(values)
+
+    def _stack_into_slot(self, values: list[Any]) -> Any:
+        import torch
+
+        first = values[0]
+        shape = (len(values), *first.shape)
+        output, slot, required = self._allocate_slot(shape, first)
+        try:
+            torch.stack(values, out=output)
+            slot.publish(required)
+            return output
+        except BaseException:
+            del output
+            del slot
+            raise
+
+    def _pad_into_slot(self, values: list[Any]) -> Any:
+        first = values[0]
+        maximum = max(int(value.size(0)) for value in values)
+        shape = (maximum, len(values), *first.shape[1:])
+        output, slot, required = self._allocate_slot(shape, first)
+        try:
+            output.zero_()
+            for column, value in enumerate(values):
+                output[: value.size(0), column, ...].copy_(value)
+            slot.publish(required)
+            return output
+        except BaseException:
+            del output
+            del slot
+            raise
+
+    def _allocate_slot(
+        self, shape: tuple[int, ...], template: Any
+    ) -> tuple[Any, Any, int]:
+        import math
+        import torch
+
+        elements = math.prod(shape)
+        required = elements * template.element_size()
+        reserved = max(required, template.element_size())
+        if self._arena is None:
+            initial = _size_class(reserved, template.element_size())
+            self._arena = _hyperloader._NativeArena(
+                initial,
+                max(2, self.worker_count),
+                self.growth,
+            )
+        slot = self._arena.reserve(reserved)
+        self._slot_capacity_bytes = max(self._slot_capacity_bytes, slot.capacity)
+        output = torch.frombuffer(
+            slot,
+            dtype=template.dtype,
+            count=elements,
+        ).view(shape)
+        return output, slot, required
+
+    def _arena_stats(self) -> tuple[int, int, int, int]:
+        return self._closed_arena_stats if self._arena is None else self._arena.stats()
 
 
-def bind_native_pipeline(dataset: Any, *, shuffle: bool, worker_count: Any) -> Any:
+def bind_native_pipeline(
+    dataset: Any, *, shuffle: bool, worker_count: Any, growth: str
+) -> Any:
     """Select an exact native adapter or retain the established pipeline refuge."""
     if (
         not isinstance(dataset, Pipeline)
@@ -140,12 +232,16 @@ def bind_native_pipeline(dataset: Any, *, shuffle: bool, worker_count: Any) -> A
     source_class = _source_class(dataset)
     if source_class is None:
         return dataset
-    return NativePipelineAdapter(dataset, worker_count, source_class)
+    return NativePipelineAdapter(dataset, worker_count, source_class, growth)
 
 
 def _source_class(dataset: Pipeline[Any, Any]) -> str | None:
     stages = dataset.sample_stages
-    if not stages and _declares_tensor(dataset.source.output_type):
+    if (
+        not stages
+        and _declares_tensor(dataset.source.output_type)
+        and _tensor_source(dataset.source.source)
+    ):
         return "tokenized-text"
     if (
         len(stages) == 1
@@ -172,8 +268,26 @@ def _declares_tensor(value: type[Any]) -> bool:
     return value.__module__ == "torch" and value.__name__ == "Tensor"
 
 
+def _tensor_source(source: list[Any] | tuple[Any, ...]) -> bool:
+    if not source:
+        return True
+    first = source[0]
+    first_type = type(first)
+    return bool(
+        first_type.__module__ == "torch"
+        and first_type.__name__ == "Tensor"
+        and first.device.type == "cpu"
+        and not first.requires_grad
+    )
+
+
 def _shape_signature(value: Any) -> object:
     value_type = type(value)
     if value_type.__module__ == "torch" and value_type.__name__ == "Tensor":
         return (str(value.dtype), tuple(int(size) for size in value.shape))
     return value_type.__module__, value_type.__qualname__
+
+
+def _size_class(size: int, element_size: int) -> int:
+    minimum = max(size, element_size)
+    return 1 << (minimum - 1).bit_length()

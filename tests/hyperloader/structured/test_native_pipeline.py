@@ -8,7 +8,16 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torchvision.io import decode_png, encode_png
 
-from hyperloader import Collate, DataLoader, Decode, Source, Transform, pipeline
+from hyperloader import (
+    Collate,
+    DataLoader,
+    Decode,
+    HyperConfig,
+    Source,
+    Transform,
+    pipeline,
+)
+from hyperloader.config import MemoryConfig
 
 
 def forbidden_decode(_value: torch.Tensor) -> torch.Tensor:
@@ -59,14 +68,18 @@ class NativePipelineTest(unittest.TestCase):
             self.assertEqual(report["bytes_beyond_irreducible"], 0)
             self.assertFalse(report["variable_shape"])
             self.assertEqual(report["produced_batches"], 1)
+            self.assertEqual(actual.untyped_storage().nbytes(), actual.numel())
+            self.assertEqual(report["slot_capacity_bytes"], 128)
+            loader.close()
+            self.assertTrue(torch.equal(actual, expected))
         finally:
             loader.close()
 
     def test_variable_token_sequences_use_one_final_padding_write(self) -> None:
         tokens = [
-            torch.tensor([1, 2]),
-            torch.tensor([3, 4, 5, 6]),
-            torch.tensor([7]),
+            torch.tensor([1]),
+            torch.tensor([2, 3]),
+            torch.tensor([4, 5, 6, 7, 8, 9, 10, 11]),
             torch.tensor([8, 9, 10]),
         ]
         dataset = pipeline(
@@ -87,13 +100,67 @@ class NativePipelineTest(unittest.TestCase):
             self.assertEqual(report["source_class"], "tokenized-text")
             self.assertTrue(report["variable_shape"])
             self.assertEqual(report["minimum_sample_bytes"], 8)
-            self.assertEqual(report["maximum_sample_bytes"], 32)
+            self.assertEqual(report["maximum_sample_bytes"], 64)
             self.assertEqual(report["produced_batches"], 2)
             self.assertEqual(report["produced_samples"], 4)
+            self.assertEqual(report["overflow_events"], 1)
+            self.assertEqual(report["slot_capacity_bytes"], 128)
+            self.assertEqual(report["growth_events"], 1)
+            self.assertEqual(report["regions"], 3)
+            self.assertEqual(batches[0].untyped_storage().nbytes(), 32)
+            self.assertEqual(batches[1].untyped_storage().nbytes(), 128)
             self.assertEqual(
                 report["loader_written_bytes"],
                 sum(batch.numel() * batch.element_size() for batch in batches),
             )
+        finally:
+            loader.close()
+
+    def test_variable_output_strict_growth_raises_at_the_overrun(self) -> None:
+        tokens = [
+            torch.tensor([1]),
+            torch.tensor([2, 3]),
+            torch.tensor([4, 5, 6, 7, 8, 9, 10, 11]),
+            torch.tensor([8, 9, 10]),
+        ]
+        dataset = pipeline(
+            Source(tokens, output_type=torch.Tensor),
+            Collate(pad_sequence, input_type=torch.Tensor, output_type=torch.Tensor),
+        )
+        loader = DataLoader(
+            dataset,
+            batch_size=2,
+            num_workers=2,
+            seed=30,
+            config=HyperConfig(memory=MemoryConfig(growth="strict-error")),
+        )
+        iterator = iter(loader)
+        try:
+            self.assertTrue(torch.equal(next(iterator), pad_sequence(tokens[:2])))
+            with self.assertRaisesRegex(RuntimeError, "growth is disabled"):
+                next(iterator)
+            report = loader.stats()["memory"]
+            self.assertEqual(report["overflow_events"], 1)
+            self.assertEqual(report["slot_capacity_bytes"], 32)
+        finally:
+            loader.close()
+
+    def test_held_fixed_batches_grow_a_complete_slot_class(self) -> None:
+        tokens = [torch.tensor([index, index + 1]) for index in range(6)]
+        dataset = pipeline(
+            Source(tokens, output_type=torch.Tensor),
+            Collate(torch.stack, input_type=torch.Tensor, output_type=torch.Tensor),
+        )
+        loader = DataLoader(dataset, batch_size=2, num_workers=2, seed=30)
+        try:
+            batches = list(loader)
+            report = loader.stats()["memory"]
+            self.assertEqual(len(batches), 3)
+            self.assertEqual(report["growth_events"], 1)
+            self.assertEqual(report["hold_events"], 1)
+            self.assertEqual(report["overflow_events"], 0)
+            loader.close()
+            self.assertTrue(torch.equal(batches[0], torch.stack(tokens[:2])))
         finally:
             loader.close()
 

@@ -140,6 +140,7 @@ class DataLoader:
             self._execution_dataset,
             shuffle=bool(shuffle),
             worker_count=num_workers,
+            growth=resolved_config.memory.growth,
         )
         self._dataset_fingerprint = build_dataset_fingerprint(
             dataset, resolved_config.determinism.fingerprint

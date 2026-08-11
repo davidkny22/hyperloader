@@ -4,6 +4,7 @@ use crate::{collate, rng};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+mod native_arena;
 mod process;
 mod profile;
 mod schedule;
@@ -124,6 +125,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rank_placements, module)?)?;
     module.add_function(wrap_pyfunction!(default_collate, module)?)?;
     process::register(module)?;
+    native_arena::register(module)?;
     module.add_class::<profile::PyCostProfile>()?;
     module.add_class::<schedule::PyStaticSchedule>()?;
     module.add_class::<telemetry::PyTelemetry>()?;

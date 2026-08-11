@@ -12,6 +12,7 @@ use crate::arena::{RegionRegistry, RegionToken};
 use slab::MAX_REGION_SEQUENCE;
 use slab::{ArenaInner, find_free_slot, locate_slot, recycle, reserve_slot, validate_specs};
 use std::num::NonZeroU32;
+use std::ptr::NonNull;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Thread-safe owner of size-classed, immutable shared-memory slab regions.
@@ -111,6 +112,34 @@ impl ArenaAllocator {
         };
         let slab_index = inner.add_slab(spec, true)?;
         reserve_slot(&mut inner.slabs[slab_index], 0, worker)
+    }
+
+    /// Return the stable writable range of one exclusive reservation.
+    ///
+    /// # Safety
+    ///
+    /// The caller must keep this allocator alive, publish or cancel the reservation exactly
+    /// once, and never write after publication. The slot remains exclusively owned by `worker`
+    /// until that transition.
+    pub unsafe fn writing_ptr_len(
+        &self,
+        slot: SlotRef,
+        worker: u32,
+    ) -> Result<(NonNull<u8>, usize), ArenaError> {
+        let mut inner = self.lock()?;
+        let (slab_index, slot_index) = locate_slot(&inner.slabs, slot)?;
+        let slab = &mut inner.slabs[slab_index];
+        validate_writer(slab.slots[slot_index].state, worker)?;
+        let pointer = unsafe {
+            slab.region
+                .payload_mut()
+                .as_mut_ptr()
+                .add(slot.offset as usize)
+        };
+        Ok((
+            NonNull::new(pointer).expect("mapped payload pointer is non-null"),
+            slot.capacity as usize,
+        ))
     }
 
     /// Copy a completed payload and transition its reservation to ready.
