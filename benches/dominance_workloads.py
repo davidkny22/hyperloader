@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ class WorkloadBundle:
     collate_fn: Any
     stage_plan_pin: str
     mapped_owner: Any = None
+    decoder_pins: dict[str, str] | None = None
 
     def normalize(self, value: Any) -> Any:
         """Return one dense tensor consumed identically by the GPU workload."""
@@ -66,7 +68,11 @@ class WorkloadBundle:
 
 
 def make_workload(
-    name: str, root: Path, *, batches: int = DEFAULT_BATCHES
+    name: str,
+    root: Path,
+    *,
+    batches: int = DEFAULT_BATCHES,
+    torchvision_version: str | None = None,
 ) -> WorkloadBundle:
     """Build one named matrix cell with identical source values for all systems."""
     if name not in workload_names():
@@ -81,19 +87,42 @@ def make_workload(
         "arrow-tabular": _arrow_tabular,
         "numpy-array": _numpy_array,
     }
+    if name in {"images-light", "images-heavy"}:
+        return factories[name](root, batches, torchvision_version)
     return factories[name](root, batches)
 
 
-def _image_light(_root: Path, batches: int) -> WorkloadBundle:
-    return _image_workload("images-light", edge=64, batch_size=64, batches=batches)
+def _image_light(
+    _root: Path, batches: int, torchvision_version: str | None
+) -> WorkloadBundle:
+    return _image_workload(
+        "images-light",
+        edge=64,
+        batch_size=64,
+        batches=batches,
+        torchvision_version=torchvision_version,
+    )
 
 
-def _image_heavy(_root: Path, batches: int) -> WorkloadBundle:
-    return _image_workload("images-heavy", edge=512, batch_size=8, batches=batches)
+def _image_heavy(
+    _root: Path, batches: int, torchvision_version: str | None
+) -> WorkloadBundle:
+    return _image_workload(
+        "images-heavy",
+        edge=512,
+        batch_size=8,
+        batches=batches,
+        torchvision_version=torchvision_version,
+    )
 
 
 def _image_workload(
-    name: str, *, edge: int, batch_size: int, batches: int
+    name: str,
+    *,
+    edge: int,
+    batch_size: int,
+    batches: int,
+    torchvision_version: str | None,
 ) -> WorkloadBundle:
     import torch
     from torchvision.io import encode_png
@@ -118,6 +147,11 @@ def _image_workload(
         ),
         Collate(torch.stack, input_type=torch.Tensor, output_type=torch.Tensor),
     )
+    pin = (
+        None
+        if torchvision_version is None
+        else f"torchvision.io.decode_png@{torchvision_version}"
+    )
     return WorkloadBundle(
         name,
         "compute",
@@ -125,7 +159,8 @@ def _image_workload(
         reference,
         native,
         torch.stack,
-        "torchvision.io.decode_png@0.28.0; native final arena stack",
+        f"{pin or 'static platform PNG pin'}; native final arena stack",
+        decoder_pins=(None if pin is None else {"pipeline-decode-0": pin}),
     )
 
 
@@ -174,12 +209,15 @@ def _variable_text(_root: Path, batches: int) -> WorkloadBundle:
 
 def _arrow_tabular(_root: Path, batches: int) -> WorkloadBundle:
     from datasets import Dataset
+    from datasets.table import InMemoryTable
     from torch.utils.data import default_collate
 
     batch_size = 64
     rows = batch_size * batches
     values = np.arange(SAMPLE_WIDTH, dtype=np.int64)[None, :].repeat(rows, axis=0)
-    dataset = Dataset.from_dict({"tokens": values.tolist()})
+    fingerprint = hashlib.sha256(values.tobytes(order="C")).hexdigest()
+    table = InMemoryTable.from_pydict({"tokens": values.tolist()})
+    dataset = Dataset(table, fingerprint=fingerprint)
     return WorkloadBundle(
         "arrow-tabular",
         "bandwidth",

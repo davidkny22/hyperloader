@@ -121,6 +121,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--machine", required=True)
+    parser.add_argument("--torchvision-version", required=True)
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=False)
@@ -131,7 +132,11 @@ def main() -> None:
 
     results = {}
     for name in workload_names():
-        workload = make_workload(name, workspace)
+        workload = make_workload(
+            name,
+            workspace,
+            torchvision_version=arguments.torchvision_version,
+        )
         try:
             selected = {}
             tuning_records = {}

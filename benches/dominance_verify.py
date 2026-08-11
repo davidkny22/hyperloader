@@ -38,6 +38,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-root", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--torchvision-version")
     arguments = parser.parse_args()
 
     root = Path(__file__).parents[1]
@@ -55,6 +56,10 @@ def main() -> None:
         arguments.install_root.resolve()
     )
     environment["COVERAGE_FILE"] = str(evidence / ".coverage")
+    if arguments.torchvision_version is not None:
+        environment["HYPERLOADER_DOMINANCE_TORCHVISION_VERSION"] = (
+            arguments.torchvision_version
+        )
     module = "tests.hyperloader.benchmark.test_dominance"
     include = ",".join(
         [

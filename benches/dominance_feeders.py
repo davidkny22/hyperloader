@@ -85,10 +85,15 @@ class HyperloaderFeeder:
 
     def __init__(self, workload: WorkloadBundle, selected: SelectedConfig) -> None:
         from hyperloader import DataLoader
-        from hyperloader.config import HyperConfig, SchedulerConfig
+        from hyperloader.config import DeterminismConfig, HyperConfig, SchedulerConfig
 
         started = time.perf_counter()
         frontier = selected.workers * selected.prefetch_factor * workload.batch_size
+        determinism = (
+            DeterminismConfig(decoder_pins=workload.decoder_pins)
+            if workload.decoder_pins is not None
+            else DeterminismConfig()
+        )
         with native_thread_affinity():
             self._loader = DataLoader(
                 workload.hyperloader_dataset,
@@ -99,10 +104,11 @@ class HyperloaderFeeder:
                 worker_init_fn=pin_efficiency_worker,
                 multiprocessing_context="forkserver",
                 config=HyperConfig(
+                    determinism=determinism,
                     scheduler=SchedulerConfig(
                         frontier_depth=frontier,
                         profile_cache="off",
-                    )
+                    ),
                 ),
             )
             self._iterator = iter(self._loader)

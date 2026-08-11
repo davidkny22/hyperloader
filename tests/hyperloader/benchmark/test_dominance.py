@@ -110,7 +110,14 @@ class DominanceHarnessTest(unittest.TestCase):
             gc.collect()
 
     def _assert_public_values(self, name: str, root: Path) -> None:
-        workload = make_workload(name, root, batches=1)
+        workload = make_workload(
+            name,
+            root,
+            batches=1,
+            torchvision_version=os.environ.get(
+                "HYPERLOADER_DOMINANCE_TORCHVISION_VERSION"
+            ),
+        )
         loader = DataLoader(
             workload.hyperloader_dataset,
             batch_size=workload.batch_size,
