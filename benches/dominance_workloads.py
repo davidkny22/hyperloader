@@ -30,9 +30,11 @@ class DecodedImageDataset:
         return len(self.encoded)
 
     def __getitem__(self, index: int) -> Any:
+        import torch
         from torchvision.io import decode_png
 
-        return decode_png(self.encoded[index])
+        encoded = torch.frombuffer(self.encoded[index], dtype=torch.uint8)
+        return decode_png(encoded)
 
 
 @dataclass(slots=True)
@@ -133,14 +135,14 @@ def _image_workload(
     base = torch.arange(3 * edge * edge, dtype=torch.int64).reshape(3, edge, edge)
     for offset in range(batch_size):
         image = ((base * 37 + offset * 19) % 251).to(torch.uint8)
-        seeds.append(encode_png(image))
+        seeds.append(bytearray(encode_png(image).tolist()))
     encoded = tuple(seeds * batches)
     reference = DecodedImageDataset(encoded)
     native = pipeline(
-        Source(encoded, output_type=torch.Tensor),
+        Source(encoded, output_type=bytearray),
         Decode(
             forbidden_decoder,
-            input_type=torch.Tensor,
+            input_type=bytearray,
             output_type=torch.Tensor,
             codec="png",
             substitute=True,
