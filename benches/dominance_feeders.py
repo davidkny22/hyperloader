@@ -77,6 +77,10 @@ class TorchFeeder:
         if shutdown is not None:
             shutdown()
 
+    def report(self) -> dict[str, object]:
+        """Describe the reference delivery state used by this feeder."""
+        return {"batches": self.batches, "pin_memory": False}
+
 
 class HyperloaderFeeder:
     """Cycle the installed public loader under a selected configuration."""
@@ -130,6 +134,14 @@ class HyperloaderFeeder:
         """Release native workers and named arena ownership."""
         self._loader.close()
 
+    def report(self) -> dict[str, object]:
+        """Capture public loader instruments before ownership closes."""
+        return {
+            "batches": self.batches,
+            "delivery_memory": self._loader.delivery_memory,
+            "stats": self._loader.stats(),
+        }
+
 
 class SpdlFeeder:
     """Cycle one explicit SPDL thread pipeline under a selected configuration."""
@@ -182,6 +194,10 @@ class SpdlFeeder:
         close = getattr(self._iterator, "close", None)
         if close is not None:
             close()
+
+    def report(self) -> dict[str, object]:
+        """Describe the completed thread-pipeline delivery count."""
+        return {"batches": self.batches}
 
 
 def build_feeder(

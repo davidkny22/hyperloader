@@ -74,6 +74,7 @@ def run_dominance_cell(
             if observed != system:
                 spills += 1
         clock_samples = sampler.stop()
+        feeder_reports = {system: feeder.report() for system, feeder in feeders.items()}
     finally:
         if sampler._thread.is_alive():
             sampler.stop()
@@ -111,6 +112,7 @@ def run_dominance_cell(
                 system: feeder.batches - start_batches[system]
                 for system, feeder in feeders.items()
             },
+            "feeder_reports": feeder_reports,
             "stage_plan_pin": workload.stage_plan_pin,
             "systems": {"loader": "hyperloader", "reference": reference},
         },
