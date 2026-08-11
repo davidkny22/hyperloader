@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
 import gc
+import importlib
 import os
 import sys
 import tempfile
@@ -104,9 +104,8 @@ class DominanceHarnessTest(unittest.TestCase):
         for name in workload_names():
             if name == "numpy-array":
                 continue
-            with self.subTest(name=name):
-                with tempfile.TemporaryDirectory() as directory:
-                    self._assert_public_values(name, Path(directory))
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                self._assert_public_values(name, Path(directory))
         with tempfile.TemporaryDirectory() as directory:
             self._assert_public_values("numpy-array", Path(directory))
             gc.collect()
@@ -202,9 +201,11 @@ class DominanceHarnessTest(unittest.TestCase):
             decide(observations)
 
     def test_unknown_workload_and_system_are_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "unknown dominance workload"):
-                make_workload("missing", Path(directory))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(ValueError, "unknown dominance workload"),
+        ):
+            make_workload("missing", Path(directory))
         feeders = importlib.import_module("dominance_feeders")
         with self.assertRaisesRegex(ValueError, "unknown dominance system"):
             feeders.build_feeder("missing", object(), SelectedConfig(2, 2))
@@ -229,6 +230,7 @@ class DominanceHarnessTest(unittest.TestCase):
             workload,
             selected,
             delivery_memory="host",
+            machine_keeping="auto",
         )
         with self.assertRaisesRegex(ValueError, "only to hyperloader"):
             feeders.build_feeder(

@@ -37,6 +37,16 @@ class _Keeper:
         self.closed = True
 
 
+class _Route:
+    def __init__(self, *routes: tuple[int, ...]) -> None:
+        self._routes = iter(routes)
+        self._last: tuple[int, ...] = ()
+
+    def refresh(self) -> tuple[int, ...]:
+        self._last = next(self._routes, self._last)
+        return self._last
+
+
 class MachineKeepingTest(unittest.TestCase):
     """Prove gap gating, native construction, telemetry, and the off refuge."""
 
@@ -51,7 +61,11 @@ class MachineKeepingTest(unittest.TestCase):
                 side_effect=lambda: next(clock),
             ),
             mock.patch(
-                "hyperloader.control.machine_keeping._consumer_cpus", return_value=(19,)
+                "hyperloader.control.machine_keeping._current_cpu", return_value=19
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping.AcceleratorInterruptRoute.discover",
+                return_value=_Route((0,)),
             ),
             mock.patch(
                 "hyperloader.control.machine_keeping._hyperloader._MachineKeeper",
@@ -63,7 +77,7 @@ class MachineKeepingTest(unittest.TestCase):
             self.assertEqual(next(iterator).item(), 1)
             self.assertEqual(next(iterator).item(), 2)
 
-        factory.assert_called_once_with((19,), 0.05, 0.05, 1_930_000)
+        factory.assert_called_once_with((0, 19), 0.05, 0.05, 1_930_000)
         self.assertEqual(keeper.gaps, [2_000_000])
 
     def test_public_stats_report_native_duty_and_close_releases_it(self) -> None:
@@ -76,6 +90,47 @@ class MachineKeepingTest(unittest.TestCase):
 
         self.assertTrue(keeper.closed)
 
+    def test_controller_cadence_refreshes_interrupt_and_consumer_cores(self) -> None:
+        loader = _loader()
+        loader._machine_keeping_last_delivery_ns = 1
+        loader.config = SimpleNamespace(
+            factors=FactorConfig(f_cad_s=1e-9, f_cad_b=1),
+            control=ControlConfig(),
+        )
+        first_keeper = _Keeper()
+        second_keeper = _Keeper()
+        clock = iter((2_000_001, 2_000_010, 4_000_020, 4_000_030))
+        with (
+            mock.patch(
+                "hyperloader.control.machine_keeping.time.perf_counter_ns",
+                side_effect=lambda: next(clock),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._current_cpu",
+                side_effect=(19, 19, 18),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping.AcceleratorInterruptRoute.discover",
+                return_value=_Route((0,), (12,)),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._hyperloader._MachineKeeper",
+                side_effect=(first_keeper, second_keeper),
+                create=True,
+            ) as factory,
+        ):
+            iterator = MachineKeepingIterator(
+                loader, iter((torch.tensor([1]), torch.tensor([2])))
+            )
+            self.assertEqual(next(iterator).item(), 1)
+            self.assertEqual(next(iterator).item(), 2)
+
+        self.assertEqual(
+            [call.args[0] for call in factory.call_args_list], [(0, 19), (12, 18)]
+        )
+        self.assertTrue(first_keeper.closed)
+        self.assertEqual(second_keeper.gaps, [2_000_010])
+
     def test_completed_iterator_rearms_before_the_next_epoch_first_batch(self) -> None:
         loader = _loader()
         keeper = _Keeper()
@@ -86,7 +141,11 @@ class MachineKeepingTest(unittest.TestCase):
                 side_effect=lambda: next(clock),
             ),
             mock.patch(
-                "hyperloader.control.machine_keeping._consumer_cpus", return_value=(19,)
+                "hyperloader.control.machine_keeping._current_cpu", return_value=19
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping.AcceleratorInterruptRoute.discover",
+                return_value=_Route((0,), (0,)),
             ),
             mock.patch(
                 "hyperloader.control.machine_keeping._hyperloader._MachineKeeper",
@@ -101,7 +160,7 @@ class MachineKeepingTest(unittest.TestCase):
             second = MachineKeepingIterator(loader, iter((torch.tensor([2]),)))
             self.assertEqual(next(second).item(), 2)
 
-        factory.assert_called_once_with((19,), 0.05, 0.05, 1_930_000)
+        factory.assert_called_once_with((0, 19), 0.05, 0.05, 1_930_000)
         self.assertEqual(keeper.gaps, [2_000_000, 4_000_000])
         self.assertEqual(keeper.deferred, [6_000_000_000])
         self.assertFalse(keeper.parked)
@@ -116,9 +175,18 @@ class MachineKeepingTest(unittest.TestCase):
         keeper = _Keeper()
         loader._machine_keeper = keeper
         clock = iter((10, 20, 120, 130, 230, 240, 340, 350, 450, 460))
-        with mock.patch(
-            "hyperloader.control.machine_keeping.time.perf_counter_ns",
-            side_effect=lambda: next(clock),
+        with (
+            mock.patch(
+                "hyperloader.control.machine_keeping.time.perf_counter_ns",
+                side_effect=lambda: next(clock),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._current_cpu", return_value=None
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping.AcceleratorInterruptRoute.discover",
+                return_value=None,
+            ),
         ):
             iterator = MachineKeepingIterator(
                 loader,
@@ -150,9 +218,18 @@ class MachineKeepingTest(unittest.TestCase):
                 2_000_000_030,
             )
         )
-        with mock.patch(
-            "hyperloader.control.machine_keeping.time.perf_counter_ns",
-            side_effect=lambda: next(clock),
+        with (
+            mock.patch(
+                "hyperloader.control.machine_keeping.time.perf_counter_ns",
+                side_effect=lambda: next(clock),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._current_cpu", return_value=None
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping.AcceleratorInterruptRoute.discover",
+                return_value=None,
+            ),
         ):
             iterator = MachineKeepingIterator(
                 loader,
@@ -197,6 +274,8 @@ def _loader() -> SimpleNamespace:
         _calibration=_calibration(),
         _machine_keeper=None,
         _machine_keeper_cpus=(),
+        _machine_keeper_interrupt_cpus=(),
+        _machine_keeper_consumer_cpu=None,
         _machine_keeping_last_delivery_ns=0,
         config=SimpleNamespace(
             factors=FactorConfig(f_warm=0.05),

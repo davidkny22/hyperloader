@@ -61,6 +61,16 @@ fn gap_gate_parks_and_probes_the_native_thread() {
     keeper.close();
 }
 
+#[test]
+fn keeper_group_deduplicates_and_orders_cores() {
+    let cpu = current_cpu();
+    let mut keeper = MachineKeeper::new(vec![cpu, cpu], 0.05, 0.05, 2_000_000)
+        .expect("machine keeper should deduplicate its target cores");
+
+    assert_eq!(keeper.cpus(), vec![cpu]);
+    keeper.close();
+}
+
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn deferred_park_spans_rollover_and_expires_without_consumption() {

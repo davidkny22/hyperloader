@@ -67,6 +67,14 @@ impl PyMachineKeeper {
             .map_or(0.0, MachineKeeper::duty)
     }
 
+    fn cpus(&self) -> Vec<usize> {
+        self.keeper
+            .lock()
+            .expect("machine-keeping mutex poisoned")
+            .as_ref()
+            .map_or_else(Vec::new, MachineKeeper::cpus)
+    }
+
     fn close(&self) {
         if let Some(mut keeper) = self
             .keeper
@@ -77,4 +85,21 @@ impl PyMachineKeeper {
             keeper.close();
         }
     }
+}
+
+#[pyfunction(name = "_current_cpu")]
+pub(crate) fn current_cpu() -> Option<usize> {
+    current_cpu_impl()
+}
+
+#[cfg(target_os = "linux")]
+fn current_cpu_impl() -> Option<usize> {
+    // SAFETY: sched_getcpu takes no pointers and returns either a CPU index or -1.
+    let cpu = unsafe { libc::sched_getcpu() };
+    usize::try_from(cpu).ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_cpu_impl() -> Option<usize> {
+    None
 }

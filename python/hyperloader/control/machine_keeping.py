@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Iterator
 from typing import Any
 
 from hyperloader import _hyperloader
+
+from .interrupts import AcceleratorInterruptRoute
 
 
 class MachineKeepingIterator(Iterator[Any]):
@@ -32,16 +33,32 @@ class MachineKeepingIterator(Iterator[Any]):
             * loader.config.factors.hysteresis
             * 1_000_000_000
         )
+        self._interrupt_route = AcceleratorInterruptRoute.discover()
+        self._interrupt_cpus = tuple(
+            getattr(loader, "_machine_keeper_interrupt_cpus", ())
+        )
+        self._consumer_cpu = _current_cpu()
+        if self._consumer_cpu is None:
+            self._consumer_cpu = getattr(loader, "_machine_keeper_consumer_cpu", None)
+        self._route_refresh_started_ns: int | None = None
+        self._route_refresh_batches = 0
+        self._route_cadence_ns = int(
+            loader.config.factors.f_cad_s * 1_000_000_000
+        )
+        self._route_cadence_batches = loader.config.factors.f_cad_b
 
     def __iter__(self) -> MachineKeepingIterator:
         return self
 
     def __next__(self) -> Any:
         now = time.perf_counter_ns()
+        self._route_refresh_batches += 1
+        if self._loader._machine_keeper is not None and self._route_refresh_due(now):
+            self._replace_keeper(self._target_cpus(now))
         if self._gap_started_ns:
             gap_ns = now - self._gap_started_ns
             if gap_ns >= self._minimum_gap_ns:
-                self._ensure_keeper()
+                self._ensure_keeper(now)
                 if self._loader._machine_keeper is not None:
                     self._loader._machine_keeper.observe_gap(gap_ns)
                 self._gapless_batches = 0
@@ -68,21 +85,62 @@ class MachineKeepingIterator(Iterator[Any]):
         self._loader._machine_keeping_last_delivery_ns = self._gap_started_ns
         return value
 
-    def _ensure_keeper(self) -> None:
-        cpus = _consumer_cpus()
+    def _ensure_keeper(self, now_ns: int) -> None:
+        cpus = self._target_cpus(now_ns, force=self._loader._machine_keeper is None)
         if not cpus:
             return
         if self._loader._machine_keeper is not None:
             if cpus == self._loader._machine_keeper_cpus:
                 return
-            self._loader._machine_keeper.close()
-        self._loader._machine_keeper = _hyperloader._MachineKeeper(
+            self._replace_keeper(cpus)
+            return
+        self._construct_keeper(cpus)
+
+    def _replace_keeper(self, cpus: tuple[int, ...]) -> None:
+        if not cpus or cpus == self._loader._machine_keeper_cpus:
+            return
+        replacement = self._new_keeper(cpus)
+        self._loader._machine_keeper.close()
+        self._loader._machine_keeper = replacement
+        self._loader._machine_keeper_cpus = cpus
+
+    def _construct_keeper(self, cpus: tuple[int, ...]) -> None:
+        self._loader._machine_keeper = self._new_keeper(cpus)
+        self._loader._machine_keeper_cpus = cpus
+
+    def _new_keeper(self, cpus: tuple[int, ...]) -> Any:
+        return _hyperloader._MachineKeeper(
             cpus,
             self._loader.config.factors.f_warm,
             self._initial_duty,
             self._minimum_gap_ns,
         )
-        self._loader._machine_keeper_cpus = cpus
+
+    def _target_cpus(self, now_ns: int, *, force: bool = False) -> tuple[int, ...]:
+        if force or self._route_refresh_due(now_ns):
+            self._interrupt_cpus = (
+                () if self._interrupt_route is None else self._interrupt_route.refresh()
+            )
+            current_cpu = _current_cpu()
+            if current_cpu is not None:
+                self._consumer_cpu = current_cpu
+            self._loader._machine_keeper_interrupt_cpus = self._interrupt_cpus
+            self._loader._machine_keeper_consumer_cpu = self._consumer_cpu
+            self._route_refresh_started_ns = now_ns
+            self._route_refresh_batches = 0
+        cpus = set(self._interrupt_cpus)
+        if self._consumer_cpu is not None:
+            cpus.add(self._consumer_cpu)
+        return tuple(sorted(cpus))
+
+    def _route_refresh_due(self, now_ns: int) -> bool:
+        if self._route_refresh_started_ns is None:
+            self._route_refresh_started_ns = now_ns
+            return False
+        return (
+            self._route_refresh_batches >= self._route_cadence_batches
+            and now_ns - self._route_refresh_started_ns >= self._route_cadence_ns
+        )
 
     def _park(self) -> None:
         if self._loader._machine_keeper is not None:
@@ -120,8 +178,6 @@ def attach_machine_keeping(loader: Any, iterator: Iterator[Any]) -> Iterator[Any
     return MachineKeepingIterator(loader, iterator)
 
 
-def _consumer_cpus() -> tuple[int, ...]:
-    affinity = getattr(os, "sched_getaffinity", None)
-    if affinity is None:
-        return ()
-    return tuple(sorted(affinity(0)))
+def _current_cpu() -> int | None:
+    current = getattr(_hyperloader, "_current_cpu", None)
+    return None if current is None else current()

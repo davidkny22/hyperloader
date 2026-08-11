@@ -164,6 +164,8 @@ class DataLoader:
         self._calibration: Any = None
         self._machine_keeper: Any = None
         self._machine_keeper_cpus: tuple[int, ...] = ()
+        self._machine_keeper_interrupt_cpus: tuple[int, ...] = ()
+        self._machine_keeper_consumer_cpu: int | None = None
         self._machine_keeping_last_delivery_ns = 0
         self._pinned_delivery: Any = None
         self._controller: Any = None
@@ -266,6 +268,8 @@ class DataLoader:
             self._machine_keeper.close()
             self._machine_keeper = None
             self._machine_keeper_cpus = ()
+            self._machine_keeper_interrupt_cpus = ()
+            self._machine_keeper_consumer_cpu = None
         self._machine_keeping_last_delivery_ns = 0
         if getattr(self, "_process_pool", None) is not None:
             self._process_pool.close()

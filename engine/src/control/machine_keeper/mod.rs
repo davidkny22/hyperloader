@@ -26,8 +26,13 @@ struct SharedState {
     park_deadline_ns: AtomicU64,
 }
 
-/// One engine-owned low-duty thread for the consumer's active CPU set.
+/// Engine-owned low-duty threads pinned one per measured wake-route CPU.
 pub struct MachineKeeper {
+    keepers: Vec<CoreKeeper>,
+}
+
+struct CoreKeeper {
+    cpu: usize,
     shared: Arc<SharedState>,
     worker: Option<JoinHandle<()>>,
     minimum_gap_ns: u64,
@@ -36,13 +41,15 @@ pub struct MachineKeeper {
 impl MachineKeeper {
     /// Start a parked activity thread and wait until its affinity is applied.
     pub fn new(
-        cpus: Vec<usize>,
+        mut cpus: Vec<usize>,
         maximum_duty: f64,
         initial_duty: f64,
         minimum_gap_ns: u64,
     ) -> Result<Self, String> {
+        cpus.sort_unstable();
+        cpus.dedup();
         if cpus.is_empty() {
-            return Err("machine keeping requires a nonempty consumer CPU set".to_owned());
+            return Err("machine keeping requires a nonempty wake-route CPU set".to_owned());
         }
         if !(0.0 < maximum_duty && maximum_duty <= 1.0) {
             return Err("machine-keeping maximum duty must be in (0, 1]".to_owned());
@@ -53,6 +60,76 @@ impl MachineKeeper {
         if minimum_gap_ns == 0 {
             return Err("machine keeping requires a positive gap threshold".to_owned());
         }
+        let mut keepers = Vec::with_capacity(cpus.len());
+        for cpu in cpus {
+            match CoreKeeper::new(cpu, maximum_duty, initial_duty, minimum_gap_ns) {
+                Ok(keeper) => keepers.push(keeper),
+                Err(error) => {
+                    for keeper in &mut keepers {
+                        keeper.close();
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(Self { keepers })
+    }
+
+    /// Activate each core only when the observed consumer gap reaches the calibrated regime.
+    pub fn observe_gap(&self, nanoseconds: u64) {
+        for keeper in &self.keepers {
+            keeper.observe_gap(nanoseconds);
+        }
+    }
+
+    /// Keep activity across a likely rollover, then park if consumption does not resume.
+    pub fn defer_park(&self, nanoseconds: u64) {
+        for keeper in &self.keepers {
+            keeper.defer_park(nanoseconds);
+        }
+    }
+
+    /// Park every per-core activity thread immediately.
+    pub fn park(&self) {
+        for keeper in &self.keepers {
+            keeper.park();
+        }
+    }
+
+    /// Return the maximum currently applied per-core duty, or zero while parked.
+    pub fn duty(&self) -> f64 {
+        self.keepers
+            .iter()
+            .map(CoreKeeper::duty)
+            .fold(0.0, f64::max)
+    }
+
+    /// Return the exact sorted core placement owned by this keeper group.
+    pub fn cpus(&self) -> Vec<usize> {
+        self.keepers.iter().map(|keeper| keeper.cpu).collect()
+    }
+
+    /// Stop every native thread and release its process resource.
+    pub fn close(&mut self) {
+        for keeper in &mut self.keepers {
+            keeper.close();
+        }
+    }
+}
+
+impl Drop for MachineKeeper {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl CoreKeeper {
+    fn new(
+        cpu: usize,
+        maximum_duty: f64,
+        initial_duty: f64,
+        minimum_gap_ns: u64,
+    ) -> Result<Self, String> {
         let initial = duty_units(initial_duty);
         let maximum = duty_units(maximum_duty);
         let shared = Arc::new(SharedState {
@@ -66,13 +143,13 @@ impl MachineKeeper {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let period_ns = (minimum_gap_ns / 2).clamp(100_000, 1_000_000);
         let worker = thread::Builder::new()
-            .name("hyperloader-machine-keeper".to_owned())
+            .name(format!("hyperloader-keeper-{cpu}"))
             .spawn(move || {
-                if let Err(error) = apply_affinity(&cpus) {
+                if let Err(error) = apply_affinity(&[cpu]) {
                     let _ = ready_tx.send(Err(error));
                     return;
                 }
-                let mut monitor = IdleEntryMonitor::discover(&cpus);
+                let mut monitor = IdleEntryMonitor::discover(&[cpu]);
                 let mut tuner = DutyTuner::new(initial, maximum);
                 let _ = ready_tx.send(Ok(()));
                 run_loop(worker_shared, period_ns, &mut monitor, &mut tuner);
@@ -80,6 +157,7 @@ impl MachineKeeper {
             .map_err(|error| format!("machine-keeping thread could not start: {error}"))?;
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
+                cpu,
                 shared,
                 worker: Some(worker),
                 minimum_gap_ns,
@@ -98,7 +176,7 @@ impl MachineKeeper {
     }
 
     /// Activate only when the observed consumer gap reaches the calibrated regime.
-    pub fn observe_gap(&self, nanoseconds: u64) {
+    fn observe_gap(&self, nanoseconds: u64) {
         self.shared.park_deadline_ns.store(0, Ordering::Release);
         if nanoseconds < self.minimum_gap_ns {
             self.shared.probe.store(false, Ordering::Release);
@@ -115,7 +193,7 @@ impl MachineKeeper {
     }
 
     /// Keep activity across a likely rollover, then park if consumption does not resume.
-    pub fn defer_park(&self, nanoseconds: u64) {
+    fn defer_park(&self, nanoseconds: u64) {
         if nanoseconds == 0 || !self.shared.active.load(Ordering::Acquire) {
             self.park();
             return;
@@ -127,14 +205,14 @@ impl MachineKeeper {
     }
 
     /// Park activity immediately at exhaustion or invalidation.
-    pub fn park(&self) {
+    fn park(&self) {
         self.shared.park_deadline_ns.store(0, Ordering::Release);
         self.shared.probe.store(false, Ordering::Release);
         self.shared.active.store(false, Ordering::Release);
     }
 
     /// Return the currently applied duty, or zero while parked.
-    pub fn duty(&self) -> f64 {
+    fn duty(&self) -> f64 {
         if !self.shared.active.load(Ordering::Acquire) {
             return 0.0;
         }
@@ -142,7 +220,7 @@ impl MachineKeeper {
     }
 
     /// Stop the native thread and release its process resource.
-    pub fn close(&mut self) {
+    fn close(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
         self.shared.park_deadline_ns.store(0, Ordering::Release);
         self.shared.probe.store(false, Ordering::Release);
@@ -156,7 +234,7 @@ impl MachineKeeper {
     }
 }
 
-impl Drop for MachineKeeper {
+impl Drop for CoreKeeper {
     fn drop(&mut self) {
         self.close();
     }

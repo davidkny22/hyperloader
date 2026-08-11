@@ -35,11 +35,14 @@ class SparkMachineDeliveryTest(unittest.TestCase):
                 self.assertTrue(
                     torch.equal(batch, source[batch_index * 64 : (batch_index + 1) * 64])
                 )
-                time.sleep(0.003)
+                batch.to("cuda", non_blocking=True)
+                torch.cuda.synchronize()
+                time.sleep(0.08)
                 snapshot = loader.stats()
                 if (
                     len(delivered) >= 3
                     and snapshot["current"]["machine_keeping_duty"] > 0.0
+                    and 0 in set(loader._machine_keeper.cpus())
                 ):
                     break
 
@@ -52,6 +55,9 @@ class SparkMachineDeliveryTest(unittest.TestCase):
             self.assertEqual(snapshot["memory"].get("pinned_staged_bytes", 0), 0)
             self.assertGreater(snapshot["current"]["machine_keeping_duty"], 0.0)
             self.assertLessEqual(snapshot["current"]["machine_keeping_duty"], 0.05)
+            keeper_cpus = set(loader._machine_keeper.cpus())
+            self.assertIn(0, keeper_cpus)
+            self.assertIn(loader._machine_keeper_consumer_cpu, keeper_cpus)
         finally:
             loader.close()
 

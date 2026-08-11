@@ -131,5 +131,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<schedule::PyStaticSchedule>()?;
     module.add_class::<telemetry::PyTelemetry>()?;
     module.add_class::<machine_keeper::PyMachineKeeper>()?;
+    module.add_function(wrap_pyfunction!(machine_keeper::current_cpu, module)?)?;
     Ok(())
 }
