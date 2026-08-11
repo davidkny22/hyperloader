@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from hyperloader import DataLoader
+from hyperloader.config import DeterminismConfig, HyperConfig
 
 BENCHES = Path(__file__).parents[3] / "benches"
 sys.path.insert(0, str(BENCHES))
@@ -123,8 +124,20 @@ class DominanceHarnessTest(unittest.TestCase):
             batch_size=workload.batch_size,
             num_workers=1,
             seed=313,
+            config=HyperConfig(
+                determinism=(
+                    DeterminismConfig(decoder_pins=workload.decoder_pins)
+                    if workload.decoder_pins is not None
+                    else DeterminismConfig()
+                )
+            ),
         )
         try:
+            if workload.decoder_pins is not None:
+                self.assertEqual(
+                    loader.decoder_pins[0]["version"],
+                    next(iter(workload.decoder_pins.values())).rsplit("@", 1)[1],
+                )
             expected_items = [
                 workload.reference_dataset[index]
                 for index in range(workload.batch_size)
