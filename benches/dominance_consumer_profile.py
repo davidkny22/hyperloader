@@ -14,7 +14,7 @@ from typing import Any
 
 from dominance_alu_spinner import AluSpinner
 from dominance_feeders import build_feeder
-from dominance_gpu_segments import summarize_clocks
+from dominance_gpu_segments import summarize_clocks, summarize_segments
 from dominance_protocol import SelectedConfig
 from dominance_thread_activity import diff_thread_cpu, snapshot_threads
 from dominance_workloads import make_workload
@@ -42,18 +42,42 @@ def profile_sync(workload: GpuWorkload) -> None:
     workload._torch.cuda.synchronize()
 
 
+def _profile_iteration(workload: GpuWorkload, batch: Any) -> dict[str, float]:
+    host_started = time.perf_counter()
+    workload._segment_start.record()
+    copy_started = time.perf_counter()
+    device_batch = profile_copy(workload, batch)
+    copy_returned = time.perf_counter()
+    workload._copy_end.record()
+    launch_started = time.perf_counter()
+    profile_launch(workload, device_batch)
+    launch_returned = time.perf_counter()
+    workload._kernel_end.record()
+    sync_started = time.perf_counter()
+    profile_sync(workload)
+    completed = time.perf_counter()
+    return {
+        "cuda_copy_ms": workload._segment_start.elapsed_time(workload._copy_end),
+        "cuda_kernel_ms": workload._copy_end.elapsed_time(workload._kernel_end),
+        "cuda_total_ms": workload._segment_start.elapsed_time(workload._kernel_end),
+        "host_copy_call_ms": 1000.0 * (copy_returned - copy_started),
+        "host_kernel_launch_ms": 1000.0 * (launch_returned - launch_started),
+        "host_sync_ms": 1000.0 * (completed - sync_started),
+        "host_total_ms": 1000.0 * (completed - host_started),
+    }
+
+
 def _profile_half(
     feeder: Any, workload: GpuWorkload, seconds: float, sampler: ClockSampler
 ) -> dict[str, object]:
     before = snapshot_threads()
     iterations = 0
+    observations = []
     started = sampler.elapsed_seconds()
     deadline = time.perf_counter() + seconds
     while time.perf_counter() < deadline:
         batch = profile_next_batch(feeder)
-        device_batch = profile_copy(workload, batch)
-        profile_launch(workload, device_batch)
-        profile_sync(workload)
+        observations.append(_profile_iteration(workload, batch))
         iterations += 1
     finished = sampler.elapsed_seconds()
     after = snapshot_threads()
@@ -63,6 +87,7 @@ def _profile_half(
         "iterations": iterations,
         "elapsed_seconds": finished - started,
         "iterations_per_second": iterations / (finished - started),
+        "segment_summary": summarize_segments(observations),
         "thread_cpu": diff_thread_cpu(before, after),
     }
 
