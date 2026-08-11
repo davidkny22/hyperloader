@@ -72,10 +72,6 @@ impl MachineKeeper {
                     let _ = ready_tx.send(Err(error));
                     return;
                 }
-                if let Err(error) = apply_keeper_priority() {
-                    let _ = ready_tx.send(Err(error));
-                    return;
-                }
                 let mut monitor = IdleEntryMonitor::discover(&cpus);
                 let mut tuner = DutyTuner::new(initial, maximum);
                 let _ = ready_tx.send(Ok(()));
@@ -270,25 +266,6 @@ fn apply_affinity(cpus: &[usize]) -> Result<(), String> {
 
 #[cfg(not(target_os = "linux"))]
 fn apply_affinity(_cpus: &[usize]) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn apply_keeper_priority() -> Result<(), String> {
-    let parameters = libc::sched_param { sched_priority: 0 };
-    // SAFETY: PID zero selects the calling thread, SCHED_IDLE requires static priority zero,
-    // and parameters remains valid for the duration of the call.
-    if unsafe { libc::sched_setscheduler(0, libc::SCHED_IDLE, &parameters) } != 0 {
-        return Err(format!(
-            "machine-keeping priority failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn apply_keeper_priority() -> Result<(), String> {
     Ok(())
 }
 

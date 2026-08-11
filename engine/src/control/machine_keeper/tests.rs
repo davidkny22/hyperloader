@@ -81,19 +81,6 @@ fn deferred_park_spans_rollover_and_expires_without_consumption() {
 }
 
 #[cfg(target_os = "linux")]
-#[test]
-fn keeper_priority_is_idle_without_process_privilege() {
-    let policy = thread::spawn(|| {
-        super::apply_keeper_priority().expect("idle priority should be available");
-        // SAFETY: PID zero queries the calling test thread and takes no pointers.
-        unsafe { libc::sched_getscheduler(0) }
-    })
-    .join()
-    .expect("priority probe thread should exit");
-    assert_eq!(policy, libc::SCHED_IDLE);
-}
-
-#[cfg(target_os = "linux")]
 fn current_cpu() -> usize {
     // SAFETY: sched_getcpu takes no pointers and reports the calling thread's CPU.
     unsafe { libc::sched_getcpu().max(0) as usize }
