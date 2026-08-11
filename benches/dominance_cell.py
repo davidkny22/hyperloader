@@ -8,6 +8,7 @@ from dataclasses import asdict
 from typing import Any
 
 from benchmark_protocol import EnvironmentMetadata, TuningBudget
+from dominance_cpu_idle import HalfBoundaryCpuIdleSampler
 from dominance_feeders import build_feeder
 from dominance_protocol import (
     DominanceObservation,
@@ -29,6 +30,7 @@ def run_dominance_cell(
     tuning: TuningBudget,
     environment: EnvironmentMetadata,
     half_seconds: float = 45.0,
+    capture_cpuidle: bool = False,
 ) -> dict[str, Any]:
     """Run one alternating feeder pair against a continuous GPU workload."""
     if reference not in {"torch", "spdl"}:
@@ -40,6 +42,8 @@ def run_dominance_cell(
     )
     feeders: dict[str, Any] = {}
     sampler = ClockSampler()
+    idle_sampler = HalfBoundaryCpuIdleSampler() if capture_cpuidle else None
+    cpuidle_halves: dict[str, object] | None = None
     original_affinity = os.sched_getaffinity(0)
     try:
         for system in order:
@@ -64,6 +68,8 @@ def run_dominance_cell(
         started = time.perf_counter()
         midpoint = started + half_seconds
         finished = midpoint + half_seconds
+        if idle_sampler is not None:
+            idle_sampler.start(midpoint)
         while (selected_at := time.perf_counter()) < finished:
             system = order[0] if selected_at < midpoint else order[1]
             batch = feeders[system].next_batch()
@@ -73,9 +79,13 @@ def run_dominance_cell(
             counts[observed] += 1
             if observed != system:
                 spills += 1
+        if idle_sampler is not None:
+            cpuidle_halves = idle_sampler.stop()
         clock_samples = sampler.stop()
         feeder_reports = {system: feeder.report() for system, feeder in feeders.items()}
     finally:
+        if idle_sampler is not None:
+            idle_sampler.close()
         if sampler._thread.is_alive():
             sampler.stop()
         os.sched_setaffinity(0, original_affinity)
@@ -108,6 +118,7 @@ def run_dominance_cell(
         "raw": {
             "boundary_spill_operations": spills,
             "clock_samples": clock_samples,
+            "cpuidle_halves": cpuidle_halves,
             "feeder_batches": {
                 system: feeder.batches - start_batches[system]
                 for system, feeder in feeders.items()

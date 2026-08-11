@@ -7,12 +7,14 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 BENCHES = Path(__file__).parents[3] / "benches"
 sys.path.insert(0, str(BENCHES))
 
 summarize_results = importlib.import_module("dominance_campaign").summarize_results
 HyperloaderFeeder = importlib.import_module("dominance_feeders").HyperloaderFeeder
+cpu_idle = importlib.import_module("dominance_cpu_idle")
 
 
 class DominanceCampaignTest(unittest.TestCase):
@@ -88,6 +90,42 @@ class DominanceCampaignTest(unittest.TestCase):
         self.assertEqual(
             report["stats"]["memory"]["pinned_registered_bytes"], 8_388_608
         )
+
+    def test_cpu_idle_sampler_reports_each_uninterrupted_half(self) -> None:
+        snapshots = [
+            _cpuidle_snapshot(1_000_000_000, 10),
+            _cpuidle_snapshot(2_000_000_000, 13),
+            _cpuidle_snapshot(3_000_000_000, 18),
+        ]
+        with patch.object(cpu_idle, "snapshot_cpuidle", side_effect=snapshots):
+            sampler = cpu_idle.HalfBoundaryCpuIdleSampler()
+            sampler.start(0.0)
+            report = sampler.stop()
+
+        first = report["first"]["rows"][0]
+        second = report["second"]["rows"][0]
+        self.assertEqual(first["usage_delta"], 3)
+        self.assertEqual(second["usage_delta"], 5)
+        self.assertEqual(report["first"]["duration_seconds"], 1.0)
+        self.assertEqual(report["second"]["duration_seconds"], 1.0)
+
+
+def _cpuidle_snapshot(captured_ns: int, usage: int) -> dict[str, object]:
+    return {
+        "captured_monotonic_ns": captured_ns,
+        "cpus": {
+            "19": {
+                "1": {
+                    "name": "LPI-1",
+                    "description": "CoreIdle-OFF",
+                    "exit_latency_us": 42,
+                    "target_residency_us": 1_930,
+                    "time_us": usage * 2_000,
+                    "usage": usage,
+                }
+            }
+        },
+    }
 
 
 if __name__ == "__main__":

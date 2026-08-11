@@ -2,8 +2,70 @@
 
 from __future__ import annotations
 
+import os
+import threading
 import time
 from pathlib import Path
+
+
+class HalfBoundaryCpuIdleSampler:
+    """Capture CPU-idle counters around two uninterrupted feeder halves."""
+
+    def __init__(self, *, affinity_cpu: int = 14) -> None:
+        self._affinity_cpu = affinity_cpu
+        self._before: dict[str, object] | None = None
+        self._midpoint: dict[str, object] | None = None
+        self._error: BaseException | None = None
+        self._cancel = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self, midpoint_seconds: float) -> None:
+        """Capture the opening boundary and schedule the midpoint capture."""
+        if self._thread is not None:
+            raise RuntimeError("CPU-idle boundary sampler is already running")
+        self._before = snapshot_cpuidle()
+        self._thread = threading.Thread(
+            target=self._capture_midpoint,
+            args=(midpoint_seconds,),
+            name="dominance-cpuidle-boundary",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> dict[str, object]:
+        """Capture the closing boundary and return both half deltas."""
+        thread = self._thread
+        if thread is None or self._before is None:
+            raise RuntimeError("CPU-idle boundary sampler is not running")
+        thread.join()
+        if self._error is not None:
+            raise RuntimeError("CPU-idle midpoint capture failed") from self._error
+        if self._midpoint is None:
+            raise RuntimeError("CPU-idle midpoint capture was cancelled")
+        after = snapshot_cpuidle()
+        first_seconds = _snapshot_interval_seconds(self._before, self._midpoint)
+        second_seconds = _snapshot_interval_seconds(self._midpoint, after)
+        return {
+            "first": diff_cpuidle(self._before, self._midpoint, first_seconds),
+            "second": diff_cpuidle(self._midpoint, after, second_seconds),
+        }
+
+    def close(self) -> None:
+        """Cancel an unfinished midpoint capture during exceptional cleanup."""
+        self._cancel.set()
+        if self._thread is not None:
+            self._thread.join()
+
+    def _capture_midpoint(self, midpoint_seconds: float) -> None:
+        try:
+            if hasattr(os, "sched_setaffinity"):
+                os.sched_setaffinity(0, {self._affinity_cpu})
+            remaining = max(0.0, midpoint_seconds - time.perf_counter())
+            if self._cancel.wait(remaining):
+                return
+            self._midpoint = snapshot_cpuidle()
+        except (OSError, RuntimeError, ValueError) as error:
+            self._error = error
 
 
 def snapshot_cpuidle(
@@ -63,7 +125,9 @@ def diff_cpuidle(
             time_delta = int(later["time_us"]) - int(earlier["time_us"])
             usage_delta = int(later["usage"]) - int(earlier["usage"])
             if time_delta < 0 or usage_delta < 0:
-                raise RuntimeError(f"CPU-idle counters moved backward on CPU{cpu} state{state}")
+                raise RuntimeError(
+                    f"CPU-idle counters moved backward on CPU{cpu} state{state}"
+                )
             rows.append(
                 {
                     "cpu": int(cpu),
@@ -179,6 +243,17 @@ def _read_text(path: Path) -> str:
 
 def _read_int(path: Path) -> int:
     return int(_read_text(path))
+
+
+def _snapshot_interval_seconds(
+    before: dict[str, object], after: dict[str, object]
+) -> float:
+    elapsed_ns = int(after["captured_monotonic_ns"]) - int(
+        before["captured_monotonic_ns"]
+    )
+    if elapsed_ns <= 0:
+        raise RuntimeError("CPU-idle snapshot clock did not advance")
+    return elapsed_ns / 1_000_000_000.0
 
 
 def _irq_sort_key(value: str) -> tuple[int, int | str]:

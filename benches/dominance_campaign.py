@@ -83,6 +83,7 @@ def _compare(
     environment: EnvironmentMetadata,
     output: Path,
     smoke: bool,
+    capture_cpuidle: bool,
 ) -> dict[str, Any]:
     path = output / f"{workload.name}-{reference}-cells.jsonl"
     observations = []
@@ -98,6 +99,7 @@ def _compare(
             tuning=budget,
             environment=environment,
             half_seconds=half_seconds,
+            capture_cpuidle=capture_cpuidle,
         )
         with path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(cell, sort_keys=True) + "\n")
@@ -153,6 +155,7 @@ def main() -> None:
     parser.add_argument("--torchvision-version", required=True)
     parser.add_argument("--workload", action="append", choices=workload_names())
     parser.add_argument("--reference", action="append", choices=("torch", "spdl"))
+    parser.add_argument("--capture-cpuidle", action="store_true")
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=False)
@@ -193,6 +196,7 @@ def main() -> None:
                     environment=environment,
                     output=arguments.output,
                     smoke=arguments.smoke,
+                    capture_cpuidle=arguments.capture_cpuidle,
                 )
                 for reference in references
             }
