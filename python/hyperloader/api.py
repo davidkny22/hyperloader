@@ -12,6 +12,7 @@ from .constructor import validate_constructor
 from .decoder import bind_decoder_selections, select_decoder_pins
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
+from .memory import ByteLedger
 from .planner import BlackBoxPlan, StagePlan, StructurePlan, TensorPlan, build_plan
 from .process.factory import prepare_process_pool
 from .process.seed import resolve_root_seed
@@ -110,6 +111,11 @@ class DataLoader:
         self._native_batch_shape: Any = None
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
+        self._memory_ledger = (
+            ByteLedger("contiguous-tensor", "view")
+            if isinstance(self._plan, TensorPlan) and not self._plan.shuffle
+            else None
+        )
         self._execution_dataset = (
             self._plan.execution_dataset
             if isinstance(self._plan, StructurePlan)
@@ -263,6 +269,8 @@ class DataLoader:
         memory_report = getattr(self._execution_dataset, "memory_report", None)
         if memory_report is not None:
             snapshot["memory"] = memory_report()
+        elif self._memory_ledger is not None:
+            snapshot["memory"] = self._memory_ledger.report()
         return snapshot
 
     @property

@@ -9,6 +9,7 @@ from typing import Any
 from hyperloader import _hyperloader
 
 from ..decoder.execution import PinnedDecoder
+from ..memory import ByteLedger
 from ..stages import Decode, Pipeline
 from .metrics import payload_bytes
 
@@ -42,6 +43,10 @@ class NativePipelineAdapter:
     _closed_arena_stats: tuple[int, int, int, int] = field(
         default=(0, 0, 0, 0), init=False, repr=False
     )
+    _memory: ByteLedger = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._memory = ByteLedger(self.source_class, "single-write")
 
     def __len__(self) -> int:
         return len(self.pipeline)
@@ -70,15 +75,11 @@ class NativePipelineAdapter:
         """Return measured byte ownership for delivered native batches."""
         regions, growth_events, hold_events, overflow_events = self._arena_stats()
         return {
-            "bytes_beyond_irreducible": 0,
-            "delivery": "single-write",
+            **self._memory.report(),
             "loader_written_bytes": self._output_bytes,
             "maximum_sample_bytes": self._maximum_sample_bytes,
             "minimum_sample_bytes": self._minimum_sample_bytes or 0,
             "sample_output_bytes": self._sample_bytes,
-            "source_class": self.source_class,
-            "produced_batches": self._produced_batches,
-            "produced_samples": self._produced_samples,
             "growth_events": growth_events,
             "hold_events": hold_events,
             "overflow_events": overflow_events,
@@ -125,6 +126,7 @@ class NativePipelineAdapter:
 
     def _record(self, values: list[Any], batch: Any) -> None:
         output_size = payload_bytes(batch)
+        sample_bytes = 0
         for value in values:
             signature = _shape_signature(value)
             if self._sample_shape is None:
@@ -132,6 +134,7 @@ class NativePipelineAdapter:
             elif signature != self._sample_shape:
                 self._variable_shape = True
             size = payload_bytes(value)
+            sample_bytes += size
             self._sample_bytes += size
             self._maximum_sample_bytes = max(self._maximum_sample_bytes, size)
             self._minimum_sample_bytes = (
@@ -142,6 +145,14 @@ class NativePipelineAdapter:
         self._produced_batches += 1
         self._produced_samples += len(values)
         self._output_bytes += output_size
+        self._memory.record(
+            batch,
+            len(values),
+            pinned_stage_bytes=(
+                sample_bytes if self.source_class == "pinned-decode" else 0
+            ),
+            arena_write_bytes=output_size,
+        )
 
     def _collate_into_slot(self, values: list[Any]) -> Any:
         import torch

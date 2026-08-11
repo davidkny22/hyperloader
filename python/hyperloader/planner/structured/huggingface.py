@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from hyperloader.memory import ByteLedger, payload_bytes
 from hyperloader.stages import StageIO
 
 from .columns import collate_columns
@@ -16,6 +17,12 @@ class ArrowDatasetAdapter:
     """Execute Arrow query and configured formatting as co-resident operations."""
 
     dataset: Any
+    _memory: ByteLedger = field(
+        default_factory=lambda: ByteLedger("huggingface-arrow", "pinned-transform"),
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def worker_dataset(self) -> Any:
@@ -45,7 +52,17 @@ class ArrowDatasetAdapter:
 
     def native_batch(self, start: int, stop: int) -> Any:
         """Query and format one contiguous Arrow range as columns."""
-        return collate_columns(self.dataset[start:stop])
+        value = collate_columns(self.dataset[start:stop])
+        self._memory.record(
+            value,
+            stop - start,
+            pinned_stage_bytes=payload_bytes(value),
+        )
+        return value
+
+    def memory_report(self) -> dict[str, object]:
+        """Return pinned Arrow format accounting."""
+        return self._memory.report()
 
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:

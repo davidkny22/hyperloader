@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from hyperloader.memory import ByteLedger
 
 from .plan import StructurePlan, StructureStage
 
@@ -13,6 +15,12 @@ class TensorDatasetAdapter:
     """Index tensor storage directly without invoking a Python dataset method."""
 
     dataset: Any
+    _memory: ByteLedger = field(
+        default_factory=lambda: ByteLedger("tensor-dataset", "view"),
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def worker_dataset(self) -> Any:
@@ -27,7 +35,13 @@ class TensorDatasetAdapter:
 
     def native_batch(self, start: int, stop: int) -> list[Any]:
         """Return default-collated tensor views for one contiguous range."""
-        return [tensor[start:stop] for tensor in self.dataset.tensors]
+        value = [tensor[start:stop] for tensor in self.dataset.tensors]
+        self._memory.record(value, stop - start)
+        return value
+
+    def memory_report(self) -> dict[str, object]:
+        """Return zero-write storage-view accounting."""
+        return self._memory.report()
 
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:

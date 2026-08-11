@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from hyperloader.memory import ByteLedger, payload_bytes
 from hyperloader.stages import StageIO
 
 from .columns import collate_columns
@@ -19,6 +20,11 @@ class ParquetDatasetAdapter:
     schema: Any
     length: int
     _dataset: Any = field(default=None, init=False, repr=False)
+    _memory: ByteLedger = field(
+        default_factory=lambda: ByteLedger("pyarrow-parquet", "pinned-decode"),
+        init=False,
+        repr=False,
+    )
 
     @property
     def worker_dataset(self) -> Any:
@@ -47,7 +53,17 @@ class ParquetDatasetAdapter:
     def native_batch(self, start: int, stop: int) -> dict[str, Any]:
         """Decode one contiguous row range and expose its columns once."""
         indices = list(range(start, stop))
-        return collate_columns(self._source().take(indices).to_pydict())
+        value = collate_columns(self._source().take(indices).to_pydict())
+        self._memory.record(
+            value,
+            stop - start,
+            pinned_stage_bytes=payload_bytes(value),
+        )
+        return value
+
+    def memory_report(self) -> dict[str, object]:
+        """Return pinned Parquet decode accounting."""
+        return self._memory.report()
 
 
 def build_plan(dataset: Any, shuffle: bool | None) -> StructurePlan | None:

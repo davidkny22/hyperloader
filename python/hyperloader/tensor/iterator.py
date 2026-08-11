@@ -77,6 +77,8 @@ class TensorIterator(Iterator[Any]):
             )
             self._position += 1
             sample = self._loader.dataset[index]
+            if self._loader._memory_ledger is not None:
+                self._loader._memory_ledger.record(sample, 1)
             self._loader._epoch_state.mark_delivered(self._epoch)
             return sample
         start = self._position
@@ -84,6 +86,8 @@ class TensorIterator(Iterator[Any]):
         self._position = stop
         if not self._loader._plan.shuffle:
             batch = self._loader.dataset[start:stop]
+            if self._loader._memory_ledger is not None:
+                self._loader._memory_ledger.record(batch, stop - start)
             self._loader._epoch_state.mark_delivered(self._epoch)
             return batch
         indices = [
@@ -103,7 +107,10 @@ class TensorIterator(Iterator[Any]):
             self._complete = True
 
     def _flush_telemetry(self) -> None:
-        if self._telemetry is None or self._position == self._telemetry_flushed_position:
+        if (
+            self._telemetry is None
+            or self._position == self._telemetry_flushed_position
+        ):
             return
         samples = self._position - self._telemetry_flushed_position
         self._telemetry.record_counts(

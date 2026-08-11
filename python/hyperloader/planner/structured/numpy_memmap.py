@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from hyperloader.memory import ByteLedger
 from hyperloader.stages import StageIO
 
 from .plan import StructurePlan, StructureStage
@@ -22,6 +23,11 @@ class MemmapAdapter:
     shape: tuple[int, ...]
     order: str
     _mapped: Any = field(default=None, init=False, repr=False)
+    _memory: ByteLedger = field(
+        default_factory=lambda: ByteLedger("numpy-memmap", "view"),
+        init=False,
+        repr=False,
+    )
 
     @property
     def worker_dataset(self) -> Any:
@@ -59,7 +65,13 @@ class MemmapAdapter:
         import torch
 
         rows = np.asarray(self._array()[start:stop])
-        return torch.from_numpy(rows)
+        value = torch.from_numpy(rows)
+        self._memory.record(value, stop - start)
+        return value
+
+    def memory_report(self) -> dict[str, object]:
+        """Return zero-write memory-map view accounting."""
+        return self._memory.report()
 
     def close(self) -> None:
         """Release the owner-side mapping without changing the source object."""
