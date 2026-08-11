@@ -40,8 +40,6 @@ class MachineKeepingIterator(Iterator[Any]):
         self._consumer_cpu = _current_cpu()
         if self._consumer_cpu is None:
             self._consumer_cpu = getattr(loader, "_machine_keeper_consumer_cpu", None)
-        self._route_refresh_started_ns: int | None = None
-        self._route_refresh_batches = 0
         self._route_cadence_ns = int(
             loader.config.factors.f_cad_s * 1_000_000_000
         )
@@ -52,7 +50,6 @@ class MachineKeepingIterator(Iterator[Any]):
 
     def __next__(self) -> Any:
         now = time.perf_counter_ns()
-        self._route_refresh_batches += 1
         if self._loader._machine_keeper is not None and self._route_refresh_due(now):
             self._replace_keeper(self._target_cpus(now))
         if self._gap_started_ns:
@@ -83,6 +80,7 @@ class MachineKeepingIterator(Iterator[Any]):
             raise
         self._gap_started_ns = time.perf_counter_ns()
         self._loader._machine_keeping_last_delivery_ns = self._gap_started_ns
+        self._loader._machine_keeper_route_batches += 1
         return value
 
     def _ensure_keeper(self, now_ns: int) -> None:
@@ -126,20 +124,21 @@ class MachineKeepingIterator(Iterator[Any]):
                 self._consumer_cpu = current_cpu
             self._loader._machine_keeper_interrupt_cpus = self._interrupt_cpus
             self._loader._machine_keeper_consumer_cpu = self._consumer_cpu
-            self._route_refresh_started_ns = now_ns
-            self._route_refresh_batches = 0
+            self._loader._machine_keeper_route_refresh_ns = now_ns
+            self._loader._machine_keeper_route_batches = 0
         cpus = set(self._interrupt_cpus)
         if self._consumer_cpu is not None:
             cpus.add(self._consumer_cpu)
         return tuple(sorted(cpus))
 
     def _route_refresh_due(self, now_ns: int) -> bool:
-        if self._route_refresh_started_ns is None:
-            self._route_refresh_started_ns = now_ns
+        started_ns = self._loader._machine_keeper_route_refresh_ns
+        if started_ns == 0:
+            self._loader._machine_keeper_route_refresh_ns = now_ns
             return False
         return (
-            self._route_refresh_batches >= self._route_cadence_batches
-            and now_ns - self._route_refresh_started_ns >= self._route_cadence_ns
+            self._loader._machine_keeper_route_batches >= self._route_cadence_batches
+            and now_ns - started_ns >= self._route_cadence_ns
         )
 
     def _park(self) -> None:

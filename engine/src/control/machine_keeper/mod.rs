@@ -143,7 +143,7 @@ impl CoreKeeper {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let period_ns = (minimum_gap_ns / 2).clamp(100_000, 1_000_000);
         let worker = thread::Builder::new()
-            .name(format!("hyperloader-keeper-{cpu}"))
+            .name(format!("hyperloader-mac-{cpu}"))
             .spawn(move || {
                 if let Err(error) = apply_affinity(&[cpu]) {
                     let _ = ready_tx.send(Err(error));

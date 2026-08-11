@@ -131,6 +131,44 @@ class MachineKeepingTest(unittest.TestCase):
         self.assertTrue(first_keeper.closed)
         self.assertEqual(second_keeper.gaps, [2_000_010])
 
+    def test_route_cadence_survives_short_epoch_iterators(self) -> None:
+        loader = _loader()
+        loader.config = SimpleNamespace(
+            factors=FactorConfig(f_cad_s=1e-9, f_cad_b=2),
+            control=ControlConfig(),
+        )
+        first_keeper = _Keeper()
+        replacement = _Keeper()
+        loader._machine_keeper = first_keeper
+        loader._machine_keeper_cpus = (0, 19)
+        loader._machine_keeper_interrupt_cpus = (0,)
+        clock = iter((10, 20, 30, 40, 50, 60))
+        with (
+            mock.patch(
+                "hyperloader.control.machine_keeping.time.perf_counter_ns",
+                side_effect=lambda: next(clock),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._current_cpu", return_value=19
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping.AcceleratorInterruptRoute.discover",
+                side_effect=(_Route(), _Route(), _Route((12,))),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._hyperloader._MachineKeeper",
+                return_value=replacement,
+                create=True,
+            ) as factory,
+        ):
+            for index in range(3):
+                iterator = MachineKeepingIterator(loader, iter((torch.tensor([index]),)))
+                self.assertEqual(next(iterator).item(), index)
+
+        factory.assert_called_once_with((12, 19), 0.05, 0.05, 1_930_000)
+        self.assertTrue(first_keeper.closed)
+        self.assertEqual(loader._machine_keeper_route_batches, 1)
+
     def test_completed_iterator_rearms_before_the_next_epoch_first_batch(self) -> None:
         loader = _loader()
         keeper = _Keeper()
@@ -276,6 +314,8 @@ def _loader() -> SimpleNamespace:
         _machine_keeper_cpus=(),
         _machine_keeper_interrupt_cpus=(),
         _machine_keeper_consumer_cpu=None,
+        _machine_keeper_route_refresh_ns=0,
+        _machine_keeper_route_batches=0,
         _machine_keeping_last_delivery_ns=0,
         config=SimpleNamespace(
             factors=FactorConfig(f_warm=0.05),
