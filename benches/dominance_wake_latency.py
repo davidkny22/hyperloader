@@ -133,6 +133,11 @@ def main() -> None:
     parser.add_argument("--spinner-library", type=Path)
     parser.add_argument("--warmth-active-us", type=int, default=50)
     parser.add_argument("--warmth-period-us", type=int, default=1_000)
+    parser.add_argument(
+        "--hyper-delivery-memory",
+        choices=("auto", "host", "pinned"),
+        default="auto",
+    )
     arguments = parser.parse_args()
     if arguments.half_seconds <= 0:
         raise ValueError("half duration must be positive")
@@ -148,7 +153,13 @@ def main() -> None:
         "torch": SelectedConfig(workers=8, prefetch_factor=4),
     }
     feeders = {
-        name: build_feeder(name, bundle, config) for name, config in configs.items()
+        "hyperloader": build_feeder(
+            "hyperloader",
+            bundle,
+            configs["hyperloader"],
+            delivery_memory=arguments.hyper_delivery_memory,
+        ),
+        "torch": build_feeder("torch", bundle, configs["torch"]),
     }
     closed_bank = collect_batches(feeders["hyperloader"], 32)
     torch_bank = collect_batches(feeders["torch"], 32)
@@ -264,6 +275,7 @@ def main() -> None:
         "batch_bank_size": len(closed_bank),
         "batch": describe_batch(closed_bank[0]),
         "hyperloader_report": hyperloader_report,
+        "hyperloader_delivery_memory": arguments.hyper_delivery_memory,
         "halves": halves,
         "clock_samples": clock_samples,
         "clock_summaries": _clock_windows(clock_samples, halves),

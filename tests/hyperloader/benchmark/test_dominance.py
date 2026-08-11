@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from hyperloader import DataLoader
 from hyperloader.config import DeterminismConfig, HyperConfig
@@ -207,6 +208,35 @@ class DominanceHarnessTest(unittest.TestCase):
         feeders = importlib.import_module("dominance_feeders")
         with self.assertRaisesRegex(ValueError, "unknown dominance system"):
             feeders.build_feeder("missing", object(), SelectedConfig(2, 2))
+
+    def test_delivery_memory_override_routes_only_to_hyperloader(self) -> None:
+        feeders = importlib.import_module("dominance_feeders")
+        workload = object()
+        selected = SelectedConfig(2, 2)
+        sentinel = object()
+        with mock.patch.object(
+            feeders, "HyperloaderFeeder", return_value=sentinel
+        ) as factory:
+            result = feeders.build_feeder(
+                "hyperloader",
+                workload,
+                selected,
+                delivery_memory="host",
+            )
+
+        self.assertIs(result, sentinel)
+        factory.assert_called_once_with(
+            workload,
+            selected,
+            delivery_memory="host",
+        )
+        with self.assertRaisesRegex(ValueError, "only to hyperloader"):
+            feeders.build_feeder(
+                "torch",
+                workload,
+                selected,
+                delivery_memory="host",
+            )
 
     def test_loader_slowdown_mutation_exceeds_the_tie_margin(self) -> None:
         mutation = os.environ.get("HYPERLOADER_DOMINANCE_MUTATION")

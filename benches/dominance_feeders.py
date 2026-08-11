@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Literal
 
 from dominance_protocol import SelectedConfig
 from dominance_workloads import WorkloadBundle
@@ -87,9 +87,20 @@ class HyperloaderFeeder:
 
     system = "hyperloader"
 
-    def __init__(self, workload: WorkloadBundle, selected: SelectedConfig) -> None:
+    def __init__(
+        self,
+        workload: WorkloadBundle,
+        selected: SelectedConfig,
+        *,
+        delivery_memory: Literal["auto", "host", "pinned"] = "auto",
+    ) -> None:
         from hyperloader import DataLoader
-        from hyperloader.config import DeterminismConfig, HyperConfig, SchedulerConfig
+        from hyperloader.config import (
+            DeterminismConfig,
+            HyperConfig,
+            MemoryConfig,
+            SchedulerConfig,
+        )
 
         started = time.perf_counter()
         frontier = selected.workers * selected.prefetch_factor * workload.batch_size
@@ -109,6 +120,7 @@ class HyperloaderFeeder:
                 multiprocessing_context="forkserver",
                 config=HyperConfig(
                     determinism=determinism,
+                    memory=MemoryConfig(delivery_memory=delivery_memory),
                     scheduler=SchedulerConfig(
                         frontier_depth=frontier,
                         profile_cache="off",
@@ -201,12 +213,23 @@ class SpdlFeeder:
 
 
 def build_feeder(
-    system: str, workload: WorkloadBundle, selected: SelectedConfig
+    system: str,
+    workload: WorkloadBundle,
+    selected: SelectedConfig,
+    *,
+    delivery_memory: Literal["auto", "host", "pinned"] = "auto",
 ) -> TorchFeeder | HyperloaderFeeder | SpdlFeeder:
     """Construct one named system through its public entry point."""
+    if system == "hyperloader":
+        return HyperloaderFeeder(
+            workload,
+            selected,
+            delivery_memory=delivery_memory,
+        )
+    if delivery_memory != "auto":
+        raise ValueError("delivery memory overrides apply only to hyperloader")
     factories = {
         "torch": TorchFeeder,
-        "hyperloader": HyperloaderFeeder,
         "spdl": SpdlFeeder,
     }
     try:
