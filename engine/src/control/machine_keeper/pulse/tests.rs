@@ -27,19 +27,17 @@ fn periodic_deadline_skips_missed_intervals_on_its_original_grid() {
 }
 
 #[test]
-fn active_window_starts_when_the_thread_is_scheduled() {
+fn active_window_expires_when_the_thread_misses_its_period() {
     let pulse = PeriodicPulse::new(1_000_000);
     std::thread::sleep(Duration::from_millis(2));
 
     #[cfg(target_os = "linux")]
     {
-        let before = super::monotonic_ns();
-        assert!(pulse.active_until(100_000) >= before + 100_000);
+        assert!(pulse.active_until(100_000) < super::monotonic_ns());
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        let before = std::time::Instant::now();
-        assert!(pulse.active_until(100_000) >= before + Duration::from_nanos(100_000));
+        assert!(pulse.active_until(100_000) < std::time::Instant::now());
     }
 }

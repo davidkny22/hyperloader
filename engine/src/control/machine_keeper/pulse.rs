@@ -20,7 +20,7 @@ impl PeriodicPulse {
     }
 
     pub(super) fn active_until(&self, active_ns: u64) -> u64 {
-        monotonic_ns().saturating_add(active_ns)
+        self.next_start_ns.saturating_add(active_ns)
     }
 
     pub(super) fn before(&self, deadline_ns: u64) -> bool {
@@ -92,7 +92,7 @@ impl PeriodicPulse {
     }
 
     pub(super) fn active_until(&self, active_ns: u64) -> std::time::Instant {
-        std::time::Instant::now() + std::time::Duration::from_nanos(active_ns)
+        self.next_start + std::time::Duration::from_nanos(active_ns)
     }
 
     pub(super) fn before(&self, deadline: std::time::Instant) -> bool {
