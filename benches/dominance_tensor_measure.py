@@ -109,9 +109,12 @@ def measure_live(
     }
 
 
-def _next_touched(feeder: Any) -> Any:
+def _next_prepared(feeder: Any, writeback: bool) -> Any:
     batch = feeder.next_batch()
-    int(batch.sum().item())
+    if writeback:
+        batch.add_(0)
+    else:
+        int(batch.sum().item())
     return batch
 
 
@@ -120,19 +123,21 @@ def measure_prefetched(
     feeder: Any,
     executor: ThreadPoolExecutor,
     seconds: float,
+    *,
+    writeback: bool = False,
 ) -> dict[str, float | int]:
-    """Read the next identity batch while the GPU consumes the current batch."""
+    """Prepare the next identity batch while the GPU consumes the current batch."""
     count = 0
     wait_seconds = 0.0
     gpu_seconds = 0.0
-    future = executor.submit(_next_touched, feeder)
+    future = executor.submit(_next_prepared, feeder, writeback)
     started = time.perf_counter()
     deadline = started + seconds
     while time.perf_counter() < deadline:
         before_wait = time.perf_counter()
         batch = future.result()
         after_wait = time.perf_counter()
-        future = executor.submit(_next_touched, feeder)
+        future = executor.submit(_next_prepared, feeder, writeback)
         workload.run(batch)
         completed = time.perf_counter()
         wait_seconds += after_wait - before_wait

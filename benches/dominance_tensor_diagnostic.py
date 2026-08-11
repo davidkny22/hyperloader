@@ -120,7 +120,8 @@ def main() -> None:
             "hyper-live",
             "hyper-live-touch",
             "hyper-live-clone",
-            "hyper-live-prefetched",
+            "hyper-live-read-prefetched",
+            "hyper-live-write-prefetched",
             "torch-live",
         )
         for round_index in range(4):
@@ -137,8 +138,13 @@ def main() -> None:
                                 live_feeders[system],
                                 prefetch_executor,
                                 arguments.seconds,
+                                writeback=name == "hyper-live-write-prefetched",
                             )
-                            if name == "hyper-live-prefetched"
+                            if name
+                            in {
+                                "hyper-live-read-prefetched",
+                                "hyper-live-write-prefetched",
+                            }
                             else measure_live(
                                 gpu_workload,
                                 live_feeders[system],
@@ -169,7 +175,8 @@ def main() -> None:
             "hyper-live",
             "hyper-live-touch",
             "hyper-live-clone",
-            "hyper-live-prefetched",
+            "hyper-live-read-prefetched",
+            "hyper-live-write-prefetched",
             "torch-live",
         )
         if (items := [item for item in live_observations if item["variant"] == name])

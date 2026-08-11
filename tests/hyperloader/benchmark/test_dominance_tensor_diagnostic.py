@@ -57,12 +57,22 @@ class DominanceTensorDiagnosticTest(unittest.TestCase):
                 self.seen += int(torch.equal(batch, batches[0]))
 
         workload = Workload()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            report = diagnostic.measure_prefetched(workload, Feeder(), executor, 0.005)
+        for writeback in (False, True):
+            with self.subTest(writeback=writeback):
+                workload.seen = 0
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    report = diagnostic.measure_prefetched(
+                        workload,
+                        Feeder(),
+                        executor,
+                        0.005,
+                        writeback=writeback,
+                    )
 
-        self.assertGreater(report["iterations"], 0)
-        self.assertEqual(workload.seen, report["iterations"])
-        self.assertGreaterEqual(report["wait_seconds_per_iteration"], 0.0)
+                self.assertGreater(report["iterations"], 0)
+                self.assertEqual(workload.seen, report["iterations"])
+                self.assertTrue(torch.equal(batches[0], torch.arange(8)))
+                self.assertGreaterEqual(report["wait_seconds_per_iteration"], 0.0)
 
 
 if __name__ == "__main__":
