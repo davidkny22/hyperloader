@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import torch
@@ -41,6 +42,27 @@ class DominanceTensorDiagnosticTest(unittest.TestCase):
         self.assertNotEqual(variants["hyper-clone"][0].data_ptr(), hyper[0].data_ptr())
         self.assertTrue(variants["hyper-shared-clone"][0].is_shared())
         self.assertTrue(variants["torch-shared"][0].is_shared())
+
+    def test_prefetched_measurement_retains_identity_values(self) -> None:
+        batches = [torch.arange(8, dtype=torch.int64)]
+
+        class Feeder:
+            def next_batch(self) -> torch.Tensor:
+                return batches[0]
+
+        class Workload:
+            seen = 0
+
+            def run(self, batch: torch.Tensor) -> None:
+                self.seen += int(torch.equal(batch, batches[0]))
+
+        workload = Workload()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            report = diagnostic.measure_prefetched(workload, Feeder(), executor, 0.005)
+
+        self.assertGreater(report["iterations"], 0)
+        self.assertEqual(workload.seen, report["iterations"])
+        self.assertGreaterEqual(report["wait_seconds_per_iteration"], 0.0)
 
 
 if __name__ == "__main__":
