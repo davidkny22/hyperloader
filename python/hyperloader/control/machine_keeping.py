@@ -16,7 +16,9 @@ class MachineKeepingIterator(Iterator[Any]):
     def __init__(self, loader: Any, iterator: Iterator[Any]) -> None:
         self._loader = loader
         self._iterator = iterator
-        self._gap_started_ns = 0
+        self._gap_started_ns = int(
+            getattr(loader, "_machine_keeping_last_delivery_ns", 0)
+        )
         tax = loader._calibration.idle_state_tax
         self._minimum_gap_ns = tax.minimum_gap_nanoseconds
         self._initial_duty = min(tax.warm_duty_fraction, loader.config.factors.f_warm)
@@ -38,6 +40,7 @@ class MachineKeepingIterator(Iterator[Any]):
             self._park()
             raise
         self._gap_started_ns = time.perf_counter_ns()
+        self._loader._machine_keeping_last_delivery_ns = self._gap_started_ns
         return value
 
     def _ensure_keeper(self) -> None:

@@ -71,6 +71,35 @@ class MachineKeepingTest(unittest.TestCase):
 
         self.assertTrue(keeper.closed)
 
+    def test_completed_iterator_rearms_before_the_next_epoch_first_batch(self) -> None:
+        loader = _loader()
+        keeper = _Keeper()
+        clock = iter((10, 20, 2_000_020, 4_000_020, 4_000_030))
+        with (
+            mock.patch(
+                "hyperloader.control.machine_keeping.time.perf_counter_ns",
+                side_effect=lambda: next(clock),
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._consumer_cpus", return_value=(19,)
+            ),
+            mock.patch(
+                "hyperloader.control.machine_keeping._hyperloader._MachineKeeper",
+                return_value=keeper,
+                create=True,
+            ) as factory,
+        ):
+            first = MachineKeepingIterator(loader, iter((torch.tensor([1]),)))
+            self.assertEqual(next(first).item(), 1)
+            with self.assertRaises(StopIteration):
+                next(first)
+            second = MachineKeepingIterator(loader, iter((torch.tensor([2]),)))
+            self.assertEqual(next(second).item(), 2)
+
+        factory.assert_called_once_with((19,), 0.05, 0.05, 1_930_000)
+        self.assertEqual(keeper.gaps, [2_000_000, 4_000_000])
+        self.assertEqual(loader._machine_keeping_last_delivery_ns, 4_000_030)
+
     def test_off_configuration_never_wraps_the_public_iterator(self) -> None:
         config = HyperConfig(control=ControlConfig(machine_keeping="off"))
         loader = DataLoader(torch.arange(8), batch_size=2, num_workers=1, config=config)
@@ -87,6 +116,7 @@ def _loader() -> SimpleNamespace:
         _calibration=_calibration(),
         _machine_keeper=None,
         _machine_keeper_cpus=(),
+        _machine_keeping_last_delivery_ns=0,
         config=SimpleNamespace(
             factors=FactorConfig(f_warm=0.05),
             control=ControlConfig(),
