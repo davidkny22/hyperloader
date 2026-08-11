@@ -7,7 +7,7 @@ mod tuner;
 
 use idle::IdleEntryMonitor;
 use pulse::PeriodicPulse;
-use regime::needs_activity;
+use regime::ActivityProbe;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
@@ -171,6 +171,7 @@ fn run_loop(
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
     let mut window_started = Instant::now();
     let mut pulse = PeriodicPulse::new(period_ns);
+    let mut activity_probe = ActivityProbe::new();
     let mut was_active = false;
     while !shared.stop.load(Ordering::Acquire) {
         let park_deadline_ns = shared.park_deadline_ns.load(Ordering::Acquire);
@@ -192,7 +193,7 @@ fn run_loop(
             }
             if shared.probe.swap(false, Ordering::AcqRel) {
                 let powered_down_entries = monitor.as_mut().and_then(IdleEntryMonitor::delta);
-                if needs_activity(powered_down_entries) {
+                if activity_probe.observe(powered_down_entries) {
                     shared.active.store(true, Ordering::Release);
                     window_started = Instant::now();
                     pulse.reset();
