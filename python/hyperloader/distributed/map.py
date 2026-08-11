@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from hyperloader.config import AUTO
+from .runtime import capture_topology
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,32 +85,20 @@ class MapPlacement:
 
 
 def build_map_placement(loader: Any) -> MapPlacement:
-    """Resolve explicit topology without consulting distributed runtime state."""
+    """Capture one construction-time topology for native map placement."""
     length = loader._plan.length
     rank = loader.config.distributed.rank
     world_size = loader.config.distributed.world_size
-    if rank is AUTO and world_size is AUTO:
-        return MapPlacement(
-            length,
-            loader.batch_size or 1,
-            0,
-            1,
-            loader.drop_last,
-            loader.config.determinism.exact_count,
-            False,
-        )
-    if not isinstance(rank, int) or not isinstance(world_size, int):
-        raise TypeError(
-            "distributed rank and world_size must both be explicit before runtime discovery"
-        )
+    topology = capture_topology(rank, world_size)
+    loader._distributed_topology = topology
     return MapPlacement(
         length,
         loader.batch_size or 1,
-        rank,
-        world_size,
+        topology.rank,
+        topology.world_size,
         loader.drop_last,
         loader.config.determinism.exact_count,
-        True,
+        topology.enabled,
     )
 
 

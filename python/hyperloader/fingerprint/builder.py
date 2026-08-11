@@ -79,6 +79,9 @@ def build_contract_fingerprint(loader: Any) -> ContractFingerprint:
 
 
 def _world_size(loader: Any) -> int:
+    topology = getattr(loader, "_distributed_topology", None)
+    if topology is not None:
+        return topology.world_size
     configured = loader.config.distributed.world_size
     return configured if isinstance(configured, int) else 1
 
