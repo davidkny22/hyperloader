@@ -41,3 +41,31 @@ fn active_window_expires_when_the_thread_misses_its_period() {
         assert!(pulse.active_until(100_000) < std::time::Instant::now());
     }
 }
+
+#[test]
+fn active_window_starts_at_wake_without_crossing_its_period() {
+    let pulse = PeriodicPulse::new(1_000_000);
+
+    #[cfg(target_os = "linux")]
+    {
+        let now = pulse.next_start_ns + 250_000;
+        assert_eq!(pulse.active_until_from(now, 100_000), now + 100_000);
+        assert_eq!(
+            pulse.active_until_from(now, 900_000),
+            pulse.next_start_ns + pulse.period_ns
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let now = pulse.next_start + Duration::from_micros(250);
+        assert_eq!(
+            pulse.active_until_from(now, 100_000),
+            now + Duration::from_micros(100)
+        );
+        assert_eq!(
+            pulse.active_until_from(now, 900_000),
+            pulse.next_start + pulse.period
+        );
+    }
+}
