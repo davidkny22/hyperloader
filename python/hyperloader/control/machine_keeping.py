@@ -58,6 +58,9 @@ class MachineKeepingIterator(Iterator[Any]):
                     self._park()
         try:
             value = next(self._iterator)
+        except StopIteration:
+            self._defer_park()
+            raise
         except BaseException:
             self._park()
             raise
@@ -84,6 +87,10 @@ class MachineKeepingIterator(Iterator[Any]):
     def _park(self) -> None:
         if self._loader._machine_keeper is not None:
             self._loader._machine_keeper.park()
+
+    def _defer_park(self) -> None:
+        if self._loader._machine_keeper is not None:
+            self._loader._machine_keeper.defer_park(self._gapless_limit_ns)
 
     def _flush_telemetry(self) -> None:
         flush = getattr(self._iterator, "_flush_telemetry", None)

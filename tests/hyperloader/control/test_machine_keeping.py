@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest import mock
 
@@ -17,6 +18,7 @@ class _Keeper:
         self.arguments = arguments
         self.gaps: list[int] = []
         self.parked = False
+        self.deferred: list[int] = []
         self.closed = False
 
     def observe_gap(self, nanoseconds: int) -> None:
@@ -24,6 +26,9 @@ class _Keeper:
 
     def park(self) -> None:
         self.parked = True
+
+    def defer_park(self, nanoseconds: int) -> None:
+        self.deferred.append(nanoseconds)
 
     def duty(self) -> float:
         return 0.04
@@ -98,6 +103,8 @@ class MachineKeepingTest(unittest.TestCase):
 
         factory.assert_called_once_with((19,), 0.05, 0.05, 1_930_000)
         self.assertEqual(keeper.gaps, [2_000_000, 4_000_000])
+        self.assertEqual(keeper.deferred, [6_000_000_000])
+        self.assertFalse(keeper.parked)
         self.assertEqual(loader._machine_keeping_last_delivery_ns, 4_000_030)
 
     def test_gapless_cadence_parks_only_after_controller_hysteresis(self) -> None:
@@ -167,6 +174,22 @@ class MachineKeepingTest(unittest.TestCase):
 
         self.assertNotIsInstance(iterator, MachineKeepingIterator)
         loader.close()
+
+    def test_user_exception_parks_without_a_rollover_grace(self) -> None:
+        loader = _loader()
+        keeper = _Keeper()
+        loader._machine_keeper = keeper
+
+        def failing_iterator() -> Iterator[torch.Tensor]:
+            raise ValueError("boom")
+            yield torch.tensor([0])
+
+        iterator = MachineKeepingIterator(loader, failing_iterator())
+        with self.assertRaisesRegex(ValueError, "boom"):
+            next(iterator)
+
+        self.assertTrue(keeper.parked)
+        self.assertEqual(keeper.deferred, [])
 
 
 def _loader() -> SimpleNamespace:

@@ -48,6 +48,17 @@ impl PyMachineKeeper {
         }
     }
 
+    fn defer_park(&self, nanoseconds: u64) {
+        if let Some(keeper) = self
+            .keeper
+            .lock()
+            .expect("machine-keeping mutex poisoned")
+            .as_ref()
+        {
+            keeper.defer_park(nanoseconds);
+        }
+    }
+
     fn duty(&self) -> f64 {
         self.keeper
             .lock()

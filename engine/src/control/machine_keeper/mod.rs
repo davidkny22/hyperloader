@@ -7,8 +7,8 @@ mod tuner;
 use idle::IdleEntryMonitor;
 use pulse::PeriodicPulse;
 use std::hint::black_box;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tuner::DutyTuner;
@@ -20,6 +20,7 @@ struct SharedState {
     active: AtomicBool,
     stop: AtomicBool,
     duty: AtomicU32,
+    park_deadline_ns: AtomicU64,
     wake: Condvar,
     parked: Mutex<()>,
 }
@@ -57,6 +58,7 @@ impl MachineKeeper {
             active: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             duty: AtomicU32::new(initial),
+            park_deadline_ns: AtomicU64::new(0),
             wake: Condvar::new(),
             parked: Mutex::new(()),
         });
@@ -98,14 +100,28 @@ impl MachineKeeper {
     /// Activate only when the observed consumer gap reaches the calibrated regime.
     pub fn observe_gap(&self, nanoseconds: u64) {
         let active = nanoseconds >= self.minimum_gap_ns;
+        self.shared.park_deadline_ns.store(0, Ordering::Release);
         self.shared.active.store(active, Ordering::Release);
         if active {
             self.shared.wake.notify_one();
         }
     }
 
+    /// Keep activity across a likely rollover, then park if consumption does not resume.
+    pub fn defer_park(&self, nanoseconds: u64) {
+        if nanoseconds == 0 || !self.shared.active.load(Ordering::Acquire) {
+            self.park();
+            return;
+        }
+        let deadline = monotonic_ns().saturating_add(nanoseconds);
+        self.shared
+            .park_deadline_ns
+            .store(deadline, Ordering::Release);
+    }
+
     /// Park activity immediately at exhaustion or invalidation.
     pub fn park(&self) {
+        self.shared.park_deadline_ns.store(0, Ordering::Release);
         self.shared.active.store(false, Ordering::Release);
     }
 
@@ -120,6 +136,7 @@ impl MachineKeeper {
     /// Stop the native thread and release its process resource.
     pub fn close(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
+        self.shared.park_deadline_ns.store(0, Ordering::Release);
         self.shared.active.store(false, Ordering::Release);
         self.shared.wake.notify_one();
         if let Some(worker) = self.worker.take() {
@@ -144,6 +161,12 @@ fn run_loop(
     let mut window_started = Instant::now();
     let mut pulse = PeriodicPulse::new(period_ns);
     while !shared.stop.load(Ordering::Acquire) {
+        let park_deadline_ns = shared.park_deadline_ns.load(Ordering::Acquire);
+        if park_deadline_ns != 0 && monotonic_ns() >= park_deadline_ns {
+            shared.park_deadline_ns.store(0, Ordering::Release);
+            shared.active.store(false, Ordering::Release);
+            continue;
+        }
         if !shared.active.load(Ordering::Acquire) {
             let guard = shared
                 .parked
@@ -185,6 +208,15 @@ fn run_loop(
 
 fn duty_units(value: f64) -> u32 {
     (value * f64::from(DUTY_SCALE)).round() as u32
+}
+
+fn monotonic_ns() -> u64 {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 #[cfg(target_os = "linux")]

@@ -51,6 +51,24 @@ fn gap_gate_parks_and_activates_the_native_thread() {
     keeper.close();
 }
 
+#[test]
+fn deferred_park_spans_rollover_and_expires_without_consumption() {
+    let cpu = current_cpu();
+    let mut keeper = MachineKeeper::new(vec![cpu], 0.05, 0.05, 2_000_000)
+        .expect("machine keeper should start on the current CPU");
+
+    keeper.observe_gap(2_000_000);
+    keeper.defer_park(20_000_000);
+    keeper.observe_gap(2_000_000);
+    thread::sleep(Duration::from_millis(30));
+    assert!(keeper.duty() > 0.0);
+
+    keeper.defer_park(1_000_000);
+    thread::sleep(Duration::from_millis(30));
+    assert_eq!(keeper.duty(), 0.0);
+    keeper.close();
+}
+
 #[cfg(target_os = "linux")]
 fn current_cpu() -> usize {
     // SAFETY: sched_getcpu takes no pointers and reports the calling thread's CPU.
