@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 
 import torch
@@ -173,7 +174,18 @@ class CompatMultiTest(unittest.TestCase):
         try:
             with self.assertRaises(RuntimeError) as candidate_error:
                 next(iter(candidate))
-            self.assertEqual(str(candidate_error.exception), str(reference_error.exception))
+            self.assertEqual(
+                re.sub(
+                    r"pid\(s\) [^)]*",
+                    "pid(s) <pid>",
+                    str(candidate_error.exception),
+                ),
+                re.sub(
+                    r"pid\(s\) [^)]*",
+                    "pid(s) <pid>",
+                    str(reference_error.exception),
+                ),
+            )
         finally:
             candidate.close()
 

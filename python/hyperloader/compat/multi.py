@@ -18,7 +18,7 @@ from hyperloader.fingerprint import (
 from .multi_iterator import CompatMultiIterator
 from .multi_loader import reference_loader, worker_loader
 from .multi_state import CompatMultiCheckpoint
-from .rng import clone_torch_source, capture_torch_source, restore_torch_source
+from .rng import capture_torch_source, clone_torch_source, restore_torch_source
 
 
 def prepare(loader: Any, workers: int) -> None:
@@ -192,7 +192,7 @@ def _require_stateless_map_resume(loader: Any) -> None:
     if not loader.in_order:
         raise RuntimeError("multi-worker compat resume requires in_order=True")
     if isinstance(loader.dataset, torch.utils.data.IterableDataset):
-        raise RuntimeError(
+        raise RuntimeError(  # noqa: TRY004
             "multi-worker compat resume requires a map-style dataset without "
             "cross-sample internal state"
         )

@@ -55,7 +55,7 @@ def patch_worker_dataset(seed: int | None = None) -> None:
     if dataclasses.is_dataclass(info):
         names = [field.name for field in dataclasses.fields(info)]
     else:
-        names = list(getattr(info, "_WorkerInfo__keys"))
+        names = list(info._WorkerInfo__keys)
     values = {}
     for name in names:
         value = getattr(info, name)

@@ -6,8 +6,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from .multi_state import CompatMultiCheckpoint
-from .rng import capture_torch_source
 from .protocol import TaggedBatch
+from .rng import capture_torch_source
 
 
 class CompatMultiIterator(Iterator[Any]):
@@ -67,7 +67,7 @@ class CompatMultiIterator(Iterator[Any]):
                 self._complete = True
                 raise
             if not isinstance(batch, TaggedBatch):
-                raise RuntimeError("compat worker returned an untagged batch")
+                raise TypeError("compat worker returned an untagged batch")
             if batch.dummy:
                 if self._dummy_batches == 0:
                     raise RuntimeError("compat worker returned an unexpected dummy batch")

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import random
 import os
+import random
 from dataclasses import replace
 
 import numpy as np
