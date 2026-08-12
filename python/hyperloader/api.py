@@ -112,6 +112,9 @@ class DataLoader:
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
         self._resume_delivered_bitmap = b""
+        self._resume_iterable_state: Any = None
+        self._iterable_snapshot_notice_emitted = False
+        self._iterable_restart_notice_emitted = False
         self._sampler_runtime: Any = None
         self._abandon_notice_emitted = False
         self._process_pool: Any = None
@@ -259,6 +262,7 @@ class DataLoader:
             from .iterable import IterableIterator
 
             iterator = IterableIterator(self)
+            self._resume_iterable_state = None
         elif self.sampler is not None or self.batch_sampler is not None:
             from .state import (
                 StreamingSamplerIterator,
@@ -290,6 +294,7 @@ class DataLoader:
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
         self._resume_delivered_bitmap = b""
+        self._resume_iterable_state = None
         self._active_iterator_ref = weakref.ref(iterator)
         return iterator
 
@@ -306,13 +311,22 @@ class DataLoader:
         self._resume_delivered_bitmap = b""
 
     def state_dict(self) -> dict[str, object]:
-        """Capture the delivered map-style coordinate for exact continuation."""
+        """Capture the delivered coordinate for exact continuation."""
+        if self._plan is None:
+            from .iterable.state import capture_iterable_state
+
+            return capture_iterable_state(self)
         from .state import capture_map_state
 
         return capture_map_state(self)
 
     def load_state_dict(self, state: dict[str, object]) -> None:
-        """Restore a validated map-style coordinate for the next iterator."""
+        """Restore a validated coordinate for the next iterator."""
+        if self._plan is None:
+            from .iterable.state import restore_iterable_state
+
+            restore_iterable_state(self, state)
+            return
         from .state import restore_map_state
 
         restore_map_state(self, state)

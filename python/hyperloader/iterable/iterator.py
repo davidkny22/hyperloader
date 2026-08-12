@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import pickle
-from collections import deque
 from collections.abc import Iterator
 from typing import Any
 
-from hyperloader.rng import _user_code_context
-
-from . import sharding
 from .factory import logical_lane_count
-from .lane import IterableLane
-from .rng import IterableRngSession
-from .worker_info import lane_worker_info
+from .runtime import IterableLaneRuntime
+from .state import IterableCheckpoint
 
 
 class IterableIterator(Iterator[Any]):
@@ -26,7 +20,8 @@ class IterableIterator(Iterator[Any]):
         self._complete = False
         self._valid = True
         self._lane_count = logical_lane_count(loader)
-        self._lanes = deque(self._build_lane(lane) for lane in range(self._lane_count))
+        self._runtime = IterableLaneRuntime(loader, self._epoch, self._lane_count)
+        self._lanes = self._runtime.build_lanes(loader._resume_iterable_state)
 
     def __iter__(self) -> IterableIterator:
         return self
@@ -36,7 +31,7 @@ class IterableIterator(Iterator[Any]):
             raise RuntimeError("iterable lane iterator is no longer active")
         while self._lanes:
             lane = self._lanes.popleft()
-            values, exhausted = self._next_lane_batch(lane)
+            values, exhausted = self._runtime.next_batch(lane)
             if not exhausted:
                 self._lanes.append(lane)
             if not values:
@@ -49,6 +44,7 @@ class IterableIterator(Iterator[Any]):
             ):
                 continue
             self._delivered += 1
+            self._runtime.mark_delivered(lane)
             self._loader._epoch_state.mark_delivered(self._epoch)
             return (
                 values[0]
@@ -83,59 +79,20 @@ class IterableIterator(Iterator[Any]):
         """Return the strict iterable delivery sentinel."""
         return b""
 
+    def capture_checkpoint(self) -> IterableCheckpoint:
+        """Read selected snapshots without calling back into a live source."""
+        order = tuple(lane.identity for lane in self._lanes)
+        return self._runtime.capture_checkpoint(order)
+
+    def recover_lane(self, identity: int) -> None:
+        """Rebuild one failed lane from the engine-owned delivered checkpoint."""
+        order = tuple(lane.identity for lane in self._lanes)
+        self._lanes = self._runtime.recover_lane(identity, order)
+
     def invalidate(self) -> None:
         """Prevent a replaced lane set from producing more values."""
         self._valid = False
         self._lanes.clear()
-
-    def _build_lane(self, identity: int) -> IterableLane:
-        payload = self._loader._iterable_payload
-        dataset = self._loader.dataset if payload is None else pickle.loads(payload)
-        dataset = sharding.apply_source_shard(
-            dataset,
-            self._loader._distributed_topology,
-            identity,
-            self._lane_count,
-        )
-        with lane_worker_info(identity, self._lane_count, dataset, None):
-            if self._loader.worker_init_fn is not None:
-                self._loader.worker_init_fn(identity)
-            iterator = iter(dataset)
-        return IterableLane(identity, dataset, iterator)
-
-    def _next_lane_batch(self, lane: IterableLane) -> tuple[list[Any], bool]:
-        width = self._loader.batch_size or 1
-        values = []
-        exhausted = False
-        session = IterableRngSession()
-        try:
-            while len(values) < width:
-                sample = session.install(
-                    self._loader.root_seed,
-                    self._epoch,
-                    self._loader._distributed_topology.rank,
-                    lane.identity,
-                    lane.arrival,
-                )
-                with (
-                    lane_worker_info(
-                        lane.identity,
-                        self._lane_count,
-                        lane.dataset,
-                        sample[0],
-                    ),
-                    _user_code_context(sample),
-                ):
-                    try:
-                        value = next(lane.iterator)
-                    except StopIteration:
-                        exhausted = True
-                        break
-                values.append(value)
-                lane.arrival += 1
-        finally:
-            session.close()
-        return values, exhausted
 
     def _finish_epoch(self) -> None:
         if self._complete:

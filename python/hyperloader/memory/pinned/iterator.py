@@ -49,6 +49,14 @@ class PinnedDeliveryIterator(Iterator[Any]):
         """Return the wrapped completion-order delivery bitmap."""
         return bytes(self._iterator.delivered_bitmap)
 
+    def capture_checkpoint(self) -> Any:
+        """Return a wrapped iterable checkpoint without source callbacks."""
+        return self._iterator.capture_checkpoint()
+
+    def recover_lane(self, identity: int) -> None:
+        """Forward one engine-signaled iterable lane recovery."""
+        self._iterator.recover_lane(identity)
+
     def invalidate(self) -> None:
         """Invalidate the wrapped execution iterator."""
         self._iterator.invalidate()

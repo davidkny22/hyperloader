@@ -14,3 +14,4 @@ class IterableLane:
     dataset: Any
     iterator: Any
     arrival: int = 0
+    produced_batches: int = 0
