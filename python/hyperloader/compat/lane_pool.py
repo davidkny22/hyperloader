@@ -52,17 +52,20 @@ class CompatLanePool:
             None,
         )
         reference = loader._compat_reference
-        payload = encode_multiprocessing(
-            (
-                loader.dataset,
-                reference.collate_fn,
-                loader.worker_init_fn,
-                reference._auto_collation,
-                reference.drop_last,
-                self._iterable,
-            )
+        construction = (
+            loader.dataset,
+            reference.collate_fn,
+            loader.worker_init_fn,
+            reference._auto_collation,
+            reference.drop_last,
+            self._iterable,
         )
         context = _resolve_context(loader.multiprocessing_context)
+        payload = (
+            construction
+            if context.get_start_method() == "fork"
+            else encode_multiprocessing(construction)
+        )
         try:
             for worker in range(loader.num_workers):
                 owner, child = context.Pipe(duplex=True)
@@ -110,6 +113,10 @@ class CompatLanePool:
     def pending_count(self) -> int:
         """Return accepted commands that have not completed."""
         return len(self._pending)
+
+    def pending_for(self, worker: int) -> int:
+        """Return incomplete commands currently owned by one lane."""
+        return sum(owner == worker for owner in self._pending.values())
 
     @property
     def closed(self) -> bool:

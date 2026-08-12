@@ -60,6 +60,13 @@ class DataLoader:
         config: HyperConfig | None = None,
     ) -> None:
         """Validate and retain a loader configuration for plan construction."""
+        if (
+            mode == "torch-compat"
+            and num_workers == 0
+            and persistent_workers is not _PERSISTENT_DEFAULT
+            and bool(persistent_workers)
+        ):
+            raise ValueError("persistent_workers option needs num_workers > 0")
         telemetry = build_telemetry(
             True if config is None else config.telemetry.enabled
         )

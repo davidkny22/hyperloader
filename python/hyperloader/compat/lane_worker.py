@@ -26,7 +26,7 @@ COMPAT_STAGE = 1
 
 def lane_worker_main(
     control: Connection,
-    payload: bytes,
+    payload: bytes | tuple[Any, Any, Any, bool, bool, bool],
     worker: int,
     workers: int,
     base_seed: int,
@@ -42,7 +42,7 @@ def lane_worker_main(
         auto_collation,
         drop_last,
         iterable,
-    ) = pickle.loads(payload)
+    ) = pickle.loads(payload) if isinstance(payload, bytes) else payload
     seed = base_seed + worker
     startup_error = _initialize_lane(
         dataset,

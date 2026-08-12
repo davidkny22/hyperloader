@@ -137,14 +137,17 @@ class CompatLaneRuntime(Iterator[Any]):
             self._sampler_exhausted = True
 
     def _next_worker(self) -> int | None:
-        if not self._iterable:
+        if self._loader.in_order and not self._iterable:
             return (
                 self._phase + self._next_task - self._start_task
             ) % self._loader.num_workers
+        task_limit = max(1, self._limit // len(self._active_workers))
         for _ in range(self._loader.num_workers):
             worker = self._worker_cursor % self._loader.num_workers
             self._worker_cursor += 1
-            if worker in self._active_workers:
+            if worker not in self._active_workers:
+                continue
+            if self._loader.in_order or self._pool.pending_for(worker) < task_limit:
                 return worker
         return None
 
