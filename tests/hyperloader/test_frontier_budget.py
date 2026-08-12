@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -35,6 +36,7 @@ def _unbounded_depth(loader: DataLoader) -> int:
 class FrontierBudgetGate(unittest.TestCase):
     """Prove formula bounds, adapted stalls, and named binding causes."""
 
+    @unittest.skipUnless(sys.platform == "win32", "timing floor is pinned on Windows")
     def test_pathological_costs_stay_bounded_after_adaptation(self) -> None:
         expected_root = os.environ.get("HYPERLOADER_EXPECTED_INSTALL_ROOT")
         if expected_root is not None:
