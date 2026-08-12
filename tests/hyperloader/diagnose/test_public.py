@@ -7,6 +7,7 @@ import os
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import hyperloader
 import torch
@@ -66,7 +67,12 @@ class DiagnosisPublicTest(unittest.TestCase):
             self.assertEqual(next(iterator).tolist(), [0, 1])
             before = loader.state_dict()
 
-            report = diagnose(loader)
+            with patch.object(
+                iterator,
+                "_flush_telemetry",
+                side_effect=AssertionError("passive diagnosis flushed telemetry"),
+            ):
+                report = diagnose(loader)
 
             after = loader.state_dict()
             self.assertEqual(before, after)
@@ -122,9 +128,7 @@ class DiagnosisPublicTest(unittest.TestCase):
             self.assertEqual(iterator._rcvd_idx, received)
             self.assertEqual(len(report.record["workers"]), 1)
             self.assertEqual(report.record["saturation"]["capacity_batches"], 2)
-            self.assertIn(
-                report.record["saturation"]["ready_batches"], range(3)
-            )
+            self.assertIn(report.record["saturation"]["ready_batches"], range(3))
             self.assertTrue(report.record["workers"][0]["alive"])
             self.assertGreater(report.record["workers"][0]["rss_bytes"], 0)
         finally:
@@ -143,8 +147,9 @@ class DiagnosisPublicTest(unittest.TestCase):
 
         idle = torch.utils.data.DataLoader(range(2), batch_size=1)
         for invalid in (0, 33, True):
-            with self.subTest(invalid=invalid), self.assertRaisesRegex(
-                ValueError, "1 through 32"
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaisesRegex(ValueError, "1 through 32"),
             ):
                 diagnose(idle, probe=True, probe_batches=invalid)
 

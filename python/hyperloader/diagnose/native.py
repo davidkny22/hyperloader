@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from .telemetry import passive_telemetry
 from .workers import snapshot_workers
 
 
 def observe_native(loader: Any) -> dict[str, object]:
     """Compose public telemetry and live scheduler state without advancing delivery."""
-    telemetry = loader.stats()
+    telemetry = passive_telemetry(loader)
     summary = telemetry.get("current") or telemetry.get("last_epoch") or {}
     frontier = _frontier_report(loader)
     capacity = _number(frontier.get("final_depth"))
