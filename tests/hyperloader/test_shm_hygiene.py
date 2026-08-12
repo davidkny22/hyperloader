@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import json
 import os
 import subprocess
@@ -44,22 +45,29 @@ def process_has_exited(pid: int) -> bool:
     """Observe process exit without taking ownership of the process."""
     if os.name == "nt":
         synchronize = 0x00100000
-        handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, pid)
-        if handle == 0:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
             return True
         try:
-            return ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == 0
+            return kernel32.WaitForSingleObject(handle, 0) == 0
         finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
     if sys.platform.startswith("linux"):
         try:
-            fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(
-                ") ", 1
-            )[1]
+            fields = (
+                Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(") ", 1)[1]
+            )
         except (FileNotFoundError, ProcessLookupError):
             return True
         if fields.startswith("Z "):
@@ -94,8 +102,9 @@ class SharedMemoryHygieneGate(unittest.TestCase):
             self.assertTrue(process_has_exited(130))
 
     def test_explicit_close_releases_workers_and_registry(self) -> None:
-        with TemporaryDirectory() as cache, mock.patch.dict(
-            os.environ, {"HYPERLOADER_CACHE_HOME": cache}
+        with (
+            TemporaryDirectory() as cache,
+            mock.patch.dict(os.environ, {"HYPERLOADER_CACHE_HOME": cache}),
         ):
             loader = DataLoader(range(4), batch_size=1, num_workers=2, seed=73)
             pool = loader._process_pool
@@ -118,8 +127,9 @@ class SharedMemoryHygieneGate(unittest.TestCase):
                     pool._release_handles()
 
     def test_keyboard_interrupt_closes_loader(self) -> None:
-        with TemporaryDirectory() as cache, mock.patch.dict(
-            os.environ, {"HYPERLOADER_CACHE_HOME": cache}
+        with (
+            TemporaryDirectory() as cache,
+            mock.patch.dict(os.environ, {"HYPERLOADER_CACHE_HOME": cache}),
         ):
             loader = DataLoader(
                 InterruptDataset(), batch_size=1, num_workers=1, seed=79
@@ -159,12 +169,8 @@ class SharedMemoryHygieneGate(unittest.TestCase):
             path = Path(state["registry"])
             self.assertGreater(len(registry_rows(path)), 0)
 
-            with mock.patch.dict(
-                os.environ, {"HYPERLOADER_CACHE_HOME": str(cache)}
-            ):
-                replacement = DataLoader(
-                    range(1), batch_size=1, num_workers=1, seed=83
-                )
+            with mock.patch.dict(os.environ, {"HYPERLOADER_CACHE_HOME": str(cache)}):
+                replacement = DataLoader(range(1), batch_size=1, num_workers=1, seed=83)
                 replacement.close()
             self.assertEqual(registry_rows(path), [])
 
