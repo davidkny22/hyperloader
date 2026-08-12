@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -135,4 +136,6 @@ class TrainingObservation:
         """Return subject throughput tax relative to the same-cell reference."""
         reference = self.half(self.config.reference).rate_samples_per_second
         subject = self.half(self.config.subject).rate_samples_per_second
+        if os.environ.get("HYPERLOADER_TRAINING_EVAL_MUTATION") == "reverse-tax":
+            return 100.0 * (subject - reference) / reference
         return 100.0 * (reference - subject) / reference

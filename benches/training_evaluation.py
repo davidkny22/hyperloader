@@ -7,9 +7,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from training_eval.codec import decode_observation
-from training_eval.decision import decide
-from training_eval.output import write_result
+from benches.training_eval.codec import decode_observation
+from benches.training_eval.decision import decide
+from benches.training_eval.output import write_result
 
 
 def main() -> None:

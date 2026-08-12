@@ -51,7 +51,7 @@ def test_file_lease_excludes_live_claim_and_releases_owned_token(
 
 def test_stale_lease_requires_negative_process_probe(tmp_path: Path) -> None:
     path = tmp_path / "LOCAL-LOCK"
-    now = datetime(2026, 8, 12, 20, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     stale = LeaseRecord(
         now - timedelta(minutes=61),
         f"claimant-{tmp_path.name}",

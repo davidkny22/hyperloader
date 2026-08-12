@@ -123,6 +123,12 @@ def test_decision_collects_then_passes_on_upper_interval() -> None:
     assert result.mean_tax_percent == pytest.approx(0.5)
 
 
+def test_subject_slowdown_fails_the_preregistered_upper_bound() -> None:
+    result = decide(_observations(10, tax=2.0))
+    assert result.status == "fail"
+    assert result.lower_percent == pytest.approx(2.0)
+
+
 def test_process_restart_and_noncontiguous_swap_are_rejected() -> None:
     observations = _observations(10)
     observations[0] = replace(
@@ -150,6 +156,47 @@ def test_interactive_or_unleased_cell_is_rejected() -> None:
         second=replace(observations[0].second, environment=changed),
     )
     with pytest.raises(TrainingProtocolError, match="interactive load"):
+        validate_observations(observations)
+
+    observations = _observations(10)
+    changed = replace(observations[0].first.environment, lease_token="")
+    observations[0] = replace(
+        observations[0],
+        first=replace(observations[0].first, environment=changed),
+        second=replace(observations[0].second, environment=changed),
+    )
+    with pytest.raises(TrainingProtocolError, match="machine lease"):
+        validate_observations(observations)
+
+
+def test_order_configuration_and_local_power_drift_are_rejected() -> None:
+    observations = _observations(10)
+    observations[0] = replace(
+        observations[0], first=observations[0].second, second=observations[0].first
+    )
+    with pytest.raises(TrainingProtocolError, match="pair order"):
+        validate_observations(observations)
+
+    observations = _observations(10)
+    observations[1] = replace(
+        observations[1],
+        config=replace(observations[1].config, subject_workers=3),
+    )
+    with pytest.raises(TrainingProtocolError, match="mix configurations"):
+        validate_observations(observations)
+
+    observations = _observations(10)
+    local = replace(
+        observations[0].first.environment,
+        lease_kind="LOCAL-LOCK",
+        plugged_in=False,
+    )
+    observations[0] = replace(
+        observations[0],
+        first=replace(observations[0].first, environment=local),
+        second=replace(observations[0].second, environment=local),
+    )
+    with pytest.raises(TrainingProtocolError, match="plugged-in power"):
         validate_observations(observations)
 
 
