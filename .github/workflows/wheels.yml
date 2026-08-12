@@ -1,0 +1,49 @@
+name: wheels
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2025]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15-dev", "3.14t", "3.15t-dev"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --interpreter python --out dist
+          manylinux: "2014"
+      - run: python -m pip install --force-reinstall --no-deps dist/*
+      - run: python -c "from hyperloader import DataLoader, _hyperloader; assert not getattr(_hyperloader, 'IS_FALLBACK', True); assert list(DataLoader(range(4), batch_size=2, num_workers=0))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.python }}
+          path: dist/*
+
+  fallback:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python tools/build_fallback_wheel.py --output dist
+      - run: python -m pip install --force-reinstall --no-deps dist/*
+      - run: python -c "from hyperloader import _hyperloader; assert _hyperloader.IS_FALLBACK"
+      - run: python -m pytest tests/hyperloader/packaging/test_fallback_wheel.py -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-fallback
+          path: dist/*
