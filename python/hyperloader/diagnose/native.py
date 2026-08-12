@@ -53,11 +53,7 @@ def observe_native(loader: Any) -> dict[str, object]:
 
 
 def _frontier_report(loader: Any) -> dict[str, object]:
-    iterator = None
-    reference = getattr(loader, "_active_iterator_ref", None)
-    if reference is not None:
-        iterator = reference()
-    schedule = None if iterator is None else getattr(iterator, "_schedule", None)
+    schedule = _active_schedule(loader)
     if schedule is not None:
         return dict(schedule.report())
     report = getattr(loader, "_last_frontier_report", None)
@@ -65,12 +61,26 @@ def _frontier_report(loader: Any) -> dict[str, object]:
 
 
 def _live_occupied(loader: Any, frontier: dict[str, object]) -> int | None:
-    reference = getattr(loader, "_active_iterator_ref", None)
-    iterator = None if reference is None else reference()
-    schedule = None if iterator is None else getattr(iterator, "_schedule", None)
+    schedule = _active_schedule(loader)
     if schedule is not None:
         return int(schedule.occupied)
     return _integer(frontier.get("max_occupied"))
+
+
+def _active_schedule(loader: Any) -> Any | None:
+    reference = getattr(loader, "_active_iterator_ref", None)
+    iterator = None if reference is None else reference()
+    seen: set[int] = set()
+    while iterator is not None and id(iterator) not in seen:
+        seen.add(id(iterator))
+        schedule = getattr(iterator, "_schedule", None)
+        if schedule is not None:
+            return schedule
+        nested = getattr(iterator, "_iterator", None)
+        if nested is iterator:
+            break
+        iterator = nested
+    return None
 
 
 def _worker_pids(loader: Any) -> tuple[int, ...]:
