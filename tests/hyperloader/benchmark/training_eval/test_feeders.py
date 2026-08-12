@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from unittest.mock import patch
 
 import pytest
 import torch
 
-from benches.training_eval import IteratorTokenFeeder, ResidentTokenFeeder, TokenBatch
+from benches.training_eval import (
+    IteratorTokenFeeder,
+    ResidentTokenFeeder,
+    TokenBatch,
+    build_public_feeder,
+    collate_token_batch,
+)
+from benches.training_eval.token_source import PretokenizedRows
 
 
 def _batch(value: int) -> TokenBatch:
@@ -47,3 +55,32 @@ def test_token_batch_exposes_the_public_pinning_protocol() -> None:
         pinned = batch.pin_memory()
     assert pinned.digest == batch.digest
     pin.assert_called_once_with()
+
+
+@pytest.mark.skipif(
+    os.environ.get("HYPERLOADER_PINNING_SMOKE") != "1"
+    or not torch.cuda.is_available(),
+    reason="the hardware pinning smoke is not active",
+)
+@pytest.mark.parametrize("system", ("torch", "hyperloader", "spdl"))
+def test_public_feeders_deliver_physically_pinned_token_batches(system: str) -> None:
+    dataset = PretokenizedRows(
+        rows=8,
+        sequence_length=8,
+        vocabulary_size=32,
+        seed=0,
+    )
+    feeder = build_public_feeder(
+        system,
+        dataset,
+        batch_size=2,
+        workers=1,
+        prefetch=1,
+        collate=collate_token_batch,
+        pin_memory=True,
+    )
+    try:
+        batch = feeder.next_batch()
+    finally:
+        feeder.close()
+    assert batch.tokens.is_pinned()
