@@ -4,14 +4,14 @@ on:
   pull_request:
     paths-ignore:
       - "benches/local_training_dominance.py"
-      - "benches/spark_training_point.py"
+      - "benches/spark_*_point.py"
       - "benches/training_evaluation.py"
       - "benches/training_eval/**"
       - "tests/hyperloader/benchmark/training_eval/**"
   push:
     paths-ignore:
       - "benches/local_training_dominance.py"
-      - "benches/spark_training_point.py"
+      - "benches/spark_*_point.py"
       - "benches/training_evaluation.py"
       - "benches/training_eval/**"
       - "tests/hyperloader/benchmark/training_eval/**"
