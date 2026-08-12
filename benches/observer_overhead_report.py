@@ -93,7 +93,7 @@ def evaluate_report(report: dict[str, Any]) -> dict[str, Any]:
             for index, pair in enumerate(cells["noise_pairs"])
         ]
         if os.environ.get("HYPERLOADER_OBSERVER_MUTATION") == "inflate-cost":
-            penalties = [value + 0.01 for value in penalties]
+            penalties = [value + 0.1 for value in penalties]
         interval = _interval(penalties)
         noise_interval = _interval(noise)
         noise_floor = max(abs(noise_interval[0]), abs(noise_interval[1]))
