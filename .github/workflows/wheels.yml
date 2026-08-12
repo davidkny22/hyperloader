@@ -35,11 +35,7 @@ jobs:
       - if: matrix.python.setup == '3.10'
         run: python -m pip install "tomli>=2"
       - if: runner.os == 'Linux'
-        uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          args: --release --interpreter ${{ matrix.python.maturin }} --out dist
-          manylinux: "2014"
+        run: docker run --rm -v "$PWD:/io" ghcr.io/pyo3/maturin:v1.13.3 build --release --interpreter ${{ matrix.python.maturin }} --out /io/dist --manylinux 2014
       - if: runner.os != 'Linux'
         uses: PyO3/maturin-action@v1
         with:
