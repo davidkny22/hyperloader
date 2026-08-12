@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import unittest
+from pathlib import Path
 
+import hyperloader
 import torch
 from hyperloader import DataLoader, diagnose
 
@@ -33,6 +36,12 @@ class SleepingDataset(torch.utils.data.Dataset):
 
 class DiagnosisPublicTest(unittest.TestCase):
     """Exercise both public loader families without private test seams."""
+
+    def test_package_resolves_to_expected_install(self) -> None:
+        expected = os.environ.get("HYPERLOADER_EXPECTED_INSTALL")
+        if expected is not None:
+            package_root = Path(hyperloader.__file__).resolve().parent.parent
+            self.assertEqual(package_root, Path(expected).resolve())
 
     def test_stock_snapshot_is_passive_and_machine_readable(self) -> None:
         loader = CountingTorchLoader(range(8), batch_size=2, num_workers=0)
