@@ -41,7 +41,7 @@ jobs:
           python-version: "3.14"
       - run: python tools/build_fallback_wheel.py --output dist
       - run: python -m pip install --force-reinstall --no-deps dist/*
-      - run: python -c "from hyperloader import _hyperloader; assert _hyperloader.IS_FALLBACK"
+      - run: python tests/hyperloader/packaging/fallback_install_runner.py
       - run: python -m pytest tests/hyperloader/packaging/test_fallback_wheel.py -q
       - uses: actions/upload-artifact@v4
         with:
