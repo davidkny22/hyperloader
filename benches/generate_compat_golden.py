@@ -14,6 +14,12 @@ from benches.compat_golden_cases import generate_cases, supports_in_order
 from benches.compat_golden_model import FORMAT, write_document
 
 
+def canonical_system(value: str) -> str:
+    """Return the release-platform name for an operating-system label."""
+    normalized = value.strip().lower()
+    return "macos" if normalized == "darwin" else normalized
+
+
 def build_document(expected_minor: str, expected_system: str) -> dict[str, object]:
     """Generate a validated artifact for the active Torch environment."""
     actual_minor = ".".join(torch.__version__.split("+")[0].split(".")[:2])
@@ -21,7 +27,7 @@ def build_document(expected_minor: str, expected_system: str) -> dict[str, objec
         raise RuntimeError(
             f"expected Torch {expected_minor}, found {torch.__version__}"
         )
-    if platform.system().lower() != expected_system.lower():
+    if canonical_system(platform.system()) != canonical_system(expected_system):
         raise RuntimeError(
             f"expected {expected_system}, found {platform.system()}"
         )

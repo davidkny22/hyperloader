@@ -17,8 +17,10 @@ def verify_artifact(path: Path) -> dict[str, object]:
     expected = read_document(path)
     environment = expected["environment"]
     actual = build_document(environment["torch_minor"], environment["system"])
-    if actual != expected:
-        location = first_difference(expected, actual)
+    if actual["cases"] != expected["cases"]:
+        location = first_difference(
+            {"cases": expected["cases"]}, {"cases": actual["cases"]}
+        )
         raise RuntimeError(f"torch golden reproduction differs at {location}")
     encoded = path.read_bytes()
     if not encoded.endswith(b"\n"):

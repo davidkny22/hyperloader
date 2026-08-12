@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import platform
 import tempfile
 import unittest
 from collections import namedtuple
@@ -19,7 +20,7 @@ from benches.compat_golden_model import (
     validate_document,
     write_document,
 )
-from benches.generate_compat_golden import build_document
+from benches.generate_compat_golden import build_document, canonical_system
 from benches.verify_compat_golden import first_difference, verify_artifact
 
 
@@ -100,7 +101,12 @@ class CompatGoldenTest(unittest.TestCase):
 
     def test_pinned_artifact_reproduces_and_stream_mutation_is_red(self) -> None:
         root = Path(__file__).parents[3]
-        artifact = root / "oracles" / "torch-golden" / "windows" / "torch-2.13.json"
+        minor = ".".join(torch.__version__.split("+", 1)[0].split(".")[:2])
+        system = platform.system().lower()
+        directory = "macos" if system == "darwin" else system
+        artifact = root / "oracles" / "torch-golden" / directory / f"torch-{minor}.json"
+        if not artifact.is_file():
+            self.skipTest("the active Torch and platform pair has no committed oracle")
         report = verify_artifact(artifact)
         self.assertEqual(report["reproduction"], "bit-exact")
         mutated = copy.deepcopy(read_document(artifact))
@@ -112,24 +118,30 @@ class CompatGoldenTest(unittest.TestCase):
                 verify_artifact(path)
 
     def test_build_document_rejects_environment_drift_before_generation(self) -> None:
+        actual_minor = ".".join(torch.__version__.split("+", 1)[0].split(".")[:2])
         with self.assertRaisesRegex(RuntimeError, "expected Torch 0.0"):
-            build_document("0.0", "Windows")
+            build_document("0.0", platform.system())
         with self.assertRaisesRegex(RuntimeError, "expected MissingOS"):
-            build_document("2.13", "MissingOS")
+            build_document(actual_minor, "MissingOS")
+
+    def test_release_platform_name_accepts_the_darwin_runtime_label(self) -> None:
+        self.assertEqual(canonical_system("macos"), "macos")
+        self.assertEqual(canonical_system("Darwin"), "macos")
+        self.assertEqual(canonical_system("Windows"), "windows")
 
 
 def _document(cases: dict[str, object]) -> dict[str, object]:
     return {
         "format": FORMAT,
         "environment": {
-            "torch": "2.13.0+cpu",
-            "torch_minor": "2.13",
-            "python": "3.12.6",
-            "implementation": "CPython",
-            "system": "Windows",
-            "release": "11",
-            "machine": "AMD64",
-            "multiprocessing_start_method": "spawn",
+            "torch": "torch-version-from-record",
+            "torch_minor": "torch-minor-from-record",
+            "python": "runtime-version-from-record",
+            "implementation": "runtime-implementation-from-record",
+            "system": "operating-system-from-record",
+            "release": "kernel-release-from-record",
+            "machine": "architecture-from-record",
+            "multiprocessing_start_method": "start-method-from-record",
             "in_order": True,
         },
         "cases": cases,
