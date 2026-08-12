@@ -15,6 +15,7 @@ import hyperloader
 from hyperloader import DataLoader, HyperConfig, _hyperloader
 from hyperloader.config import DistributedConfig
 from hyperloader.iterable import sharding
+from torch.utils.data import get_worker_info
 
 
 class ProtocolSource:
@@ -43,6 +44,17 @@ class InvalidShardSource:
 
     def __iter__(self):
         yield 0
+
+
+def _assert_shard_precedes_initialization(lane: int) -> None:
+    info = get_worker_info()
+    if info is None:
+        raise AssertionError("logical worker identity is absent")
+    assignment = info.dataset.assignment
+    if assignment is None:
+        raise AssertionError("source shard must run before worker initialization")
+    if assignment[2] != lane:
+        raise AssertionError("source shard lane does not match worker identity")
 
 
 def _rows(batch: Any) -> list[tuple[int, int, int, int, int]]:
@@ -134,6 +146,18 @@ class IterableShardSweepGate(unittest.TestCase):
         try:
             with self.assertRaisesRegex(TypeError, "source shard must be callable"):
                 iter(loader)
+        finally:
+            loader.close()
+
+    def test_shard_precedes_worker_initialization(self) -> None:
+        loader = DataLoader(
+            ProtocolSource(length=8),
+            batch_size=2,
+            num_workers=2,
+            worker_init_fn=_assert_shard_precedes_initialization,
+        )
+        try:
+            self.assertEqual(len(list(loader)), 4)
         finally:
             loader.close()
 
