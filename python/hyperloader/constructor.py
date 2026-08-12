@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import AUTO, Auto, HyperConfig
+from .io_backend import select_io_backend
 from .stages import Pipeline
 
 
@@ -17,6 +18,7 @@ class ResolvedOptions:
     seed: int | None
     delivery: str
     delivery_memory: str
+    io_backend: str
 
 
 def validate_constructor(
@@ -76,6 +78,7 @@ def validate_constructor(
         raise TypeError("thread_safe must be a boolean declaration")
 
     resolved_config = config if config is not None else HyperConfig()
+    io_backend = select_io_backend(resolved_config.io.backend)
     if (
         seed is not None
         and resolved_config.seed is not None
@@ -117,6 +120,7 @@ def validate_constructor(
         seed=resolved_seed,
         delivery=resolved_delivery,
         delivery_memory=resolved_memory,
+        io_backend=io_backend,
     )
 
 

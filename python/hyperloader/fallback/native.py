@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any
 
 from . import profile as _profile
@@ -41,6 +42,30 @@ def default_collate(batch: Any) -> Any:
     from torch.utils.data._utils.collate import default_collate as torch_collate
 
     return torch_collate(batch)
+
+
+def io_backend_kind(preference: str) -> str:
+    """Select the positioned-read refuge when no native binary is installed."""
+    if preference in {"auto", "pread"}:
+        return "pread"
+    if preference not in {"uring", "iocp"}:
+        raise ValueError(f"unknown I/O backend {preference!r}")
+    raise ValueError(f"I/O backend {preference} is unavailable without the native engine")
+
+
+def read_range(
+    path: str | os.PathLike[str],
+    offset: int,
+    length: int,
+    backend: str = "auto",
+) -> bytes:
+    """Read one positioned file range through the fallback backend."""
+    io_backend_kind(backend)
+    if offset < 0 or length < 0:
+        raise ValueError("I/O offset and length must be nonnegative")
+    with Path(path).open("rb") as source:
+        source.seek(offset)
+        return source.read(length)
 
 
 class MachineKeeper:
