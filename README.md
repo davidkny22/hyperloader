@@ -26,8 +26,8 @@ python -m pip install hyperloader-0.1.0-py3-none-any.whl
 
 PyTorch is the runtime dependency. Native wheels are defined for CPython 3.10 through 3.15,
 including 3.14t and 3.15t, on Linux, macOS, and Windows. The universal fallback carries the
-same public contracts through a pure-Python process engine. Every compressed wheel has a
-5 MiB size ceiling.
+same public contracts through a pure-Python process engine on the hardware-verified Windows
+and Linux paths. Every compressed wheel has a 5 MiB size ceiling.
 
 ## Use
 
@@ -106,11 +106,16 @@ deterministic bootstrap 95 percent interval.
 | Arrow identity throughput over Torch | 18.601% faster | [18.472%, 18.728%] |
 | Fixed-text compute penalty against a free resident feeder | 0.222% | [0.115%, 0.405%] |
 | Fixed-text bandwidth penalty against a free resident feeder | 0.714% | [0.578%, 0.822%] |
+| Final matrix against Torch and SPDL | 6/6 workloads won both comparisons | Narrowest: +10.354% [8.494%, 12.214%] |
 
 Identity comparisons use four workers and batch shape `int64[64,512]`. The resident feeder
 uses at least eight times the 24 MiB last-level cache. The overhead cells run one uninterrupted
 GPU workload for 90 seconds and swap feeders at midpoint. The compute result contains 18
 pairs; the bandwidth result contains 10 pairs.
+
+The final matrix used five paired 90-second cells for each workload-reference comparison
+after equal six-trial tuning budgets. Its narrowest interval is variable-length text against
+Torch.
 
 These figures describe the named Spark configuration. They do not claim the same magnitude
 on another machine or workload. Per-machine calibration selects execution using locally
