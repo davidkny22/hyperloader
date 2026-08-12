@@ -41,15 +41,28 @@ class StreamingSamplerIterator(Iterator[Any]):
             self._finish_epoch()
             raise StopIteration
         try:
-            values = [
-                self._loader._process_pool.execute(
-                    self._epoch, self._position + offset, index
+            if self._loader.collate_fn is not None:
+                value = self._loader._process_pool.execute_collated(
+                    self._epoch,
+                    self._delivered,
+                    tuple(
+                        (self._position + offset, index)
+                        for offset, index in enumerate(indices)
+                    ),
+                    auto_collation=batch_size is not None,
                 )
-                for offset, index in enumerate(indices)
-            ]
-            value = (
-                values[0] if batch_size is None else self._loader._collate_batch(values)
-            )
+            else:
+                values = [
+                    self._loader._process_pool.execute(
+                        self._epoch, self._position + offset, index
+                    )
+                    for offset, index in enumerate(indices)
+                ]
+                value = (
+                    values[0]
+                    if batch_size is None
+                    else self._loader._collate_batch(values)
+                )
         except BaseException:
             self._loader.close()
             raise

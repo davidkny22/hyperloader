@@ -14,6 +14,7 @@ from .batching import BatchLayout, decode_batch
 from .exceptions import reraise_worker_exception
 from .recovery import check_worker, restart_worker
 from .serialization import ResultDecoder
+from .user_collation import execute_collated
 from .worker import BLACK_BOX_STAGE
 from .worker_set import WorkerSet, resolve_context
 
@@ -34,6 +35,7 @@ class ProcessPool:
         *,
         probe_coordinate: int | None = None,
         worker_init_fn: Any = None,
+        collate_fn: Any = None,
         multiprocessing_context: Any = None,
         timeout: float = 0,
         registry_path: str | Path | None = None,
@@ -58,6 +60,7 @@ class ProcessPool:
             context,
             dataset,
             worker_init_fn,
+            collate_fn,
             worker_count,
             root_seed,
             batch_size,
@@ -292,6 +295,23 @@ class ProcessPool:
                 return self.decode(status, payload, worker)
             self._check_worker(worker, deadline)
             self.wait_for_completion(deadline)
+
+    def execute_collated(
+        self,
+        epoch: int,
+        batch_ordinal: int,
+        entries: tuple[tuple[int, Any], ...],
+        *,
+        auto_collation: bool,
+    ) -> Any:
+        """Execute one exact user-collation batch in a process worker."""
+        return execute_collated(
+            self,
+            epoch,
+            batch_ordinal,
+            entries,
+            auto_collation=auto_collation,
+        )
 
     def deadline(self) -> float | None:
         """Create the current request's timeout deadline."""

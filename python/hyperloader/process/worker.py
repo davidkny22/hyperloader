@@ -16,6 +16,7 @@ from .parent_watchdog import start_parent_watchdog
 from .rng import WorkerRngContext
 from .serialization import ResultEncoder
 from .shape import batch_shape
+from .user_collation import USER_COLLATE_STAGE, evaluate_user_collate
 
 BLACK_BOX_STAGE = 0
 NO_PROBE_VALUE = object()
@@ -34,7 +35,7 @@ def worker_main(
     """Run one persistent dataset copy until the owner sends stop."""
     start_parent_watchdog()
     rng_context = WorkerRngContext(worker_id, worker_count)
-    dataset, worker_init_fn = pickle.loads(dataset_payload)
+    dataset, worker_init_fn, collate_fn = pickle.loads(dataset_payload)
     rng_context.attach_dataset(getattr(dataset, "worker_dataset", dataset))
     encoder = ResultEncoder()
     probe_value: Any = NO_PROBE_VALUE
@@ -96,6 +97,7 @@ def worker_main(
             rng_context,
             completion_stride,
             layout,
+            collate_fn,
         )
     finally:
         rng_context.clear()
@@ -115,6 +117,7 @@ def run_commands(
     rng_context: WorkerRngContext,
     completion_stride: int | None,
     layout: BatchLayout | None,
+    collate_fn: Any,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
     while True:
@@ -131,6 +134,20 @@ def run_commands(
         if startup_error is not None:
             status, payload = startup_error
             result = (status, payload, None, 0)
+        elif dispatch.stage_plan == USER_COLLATE_STAGE:
+            result = evaluate_user_collate(
+                dispatch,
+                dataset,
+                worker_id,
+                worker_count,
+                root_seed,
+                encoder,
+                rng_context,
+                endpoint,
+                collate_fn,
+                evaluate_sample,
+                encode_exception,
+            )
         elif dispatch.stage_plan != BLACK_BOX_STAGE:
             status, payload = encode_exception(
                 RuntimeError(f"unknown stage plan {dispatch.stage_plan}")
@@ -284,7 +301,11 @@ def publish_completion(
                 completion_stride is not None
                 and (dispatch.position + 1) % completion_stride == 0
             )
-            if dispatch.batch_len or batch_boundary:
+            if (
+                dispatch.stage_plan == USER_COLLATE_STAGE
+                or dispatch.batch_len
+                or batch_boundary
+            ):
                 control.send(("ready",))
             return
         if control.poll():

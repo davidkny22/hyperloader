@@ -83,7 +83,7 @@ def _bit_equal(left: Any, right: Any) -> bool:
             for left_item, right_item in zip(left, right, strict=True)
         )
     if _is_torch_tensor(left):
-        return _tensor_bytes(left) == _tensor_bytes(right)
+        return _tensor_identity(left) == _tensor_identity(right)
     if _is_numpy_array(left):
         return (
             left.dtype == right.dtype
@@ -91,7 +91,13 @@ def _bit_equal(left: Any, right: Any) -> bool:
             and left.strides == right.strides
             and left.tobytes(order="A") == right.tobytes(order="A")
         )
-    return pickle.dumps(left, protocol=5) == pickle.dumps(right, protocol=5)
+    if _is_numpy_scalar(left):
+        return left.dtype == right.dtype and left.tobytes() == right.tobytes()
+    try:
+        equal = left == right
+        return bool(equal)
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_torch_tensor(value: Any) -> bool:
@@ -99,15 +105,33 @@ def _is_torch_tensor(value: Any) -> bool:
     return module == "torch" or module.startswith("torch.")
 
 
-def _tensor_bytes(value: Any) -> tuple[Any, ...]:
+def _tensor_identity(value: Any) -> tuple[Any, ...]:
     tensor = value.detach().cpu()
+    if str(tensor.layout) != "torch.strided":
+        return (
+            str(value.dtype),
+            tuple(value.shape),
+            str(value.layout),
+            str(value.device),
+            repr(tensor),
+        )
     return (
-        str(tensor.dtype),
-        tuple(tensor.shape),
-        tuple(tensor.stride()),
-        bytes(tensor.contiguous().untyped_storage()),
+        str(value.dtype),
+        tuple(value.shape),
+        str(value.layout),
+        tuple(value.stride()),
+        str(value.device),
+        bytes(tensor.contiguous().clone().untyped_storage()),
     )
 
 
 def _is_numpy_array(value: Any) -> bool:
     return type(value).__module__.startswith("numpy") and hasattr(value, "tobytes")
+
+
+def _is_numpy_scalar(value: Any) -> bool:
+    return (
+        type(value).__module__.startswith("numpy")
+        and hasattr(value, "dtype")
+        and hasattr(value, "tobytes")
+    )

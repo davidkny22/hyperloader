@@ -57,6 +57,7 @@ def prepare_process_pool(loader: Any) -> None:
         probe_index,
         probe_coordinate=probe_coordinate,
         worker_init_fn=loader.worker_init_fn,
+        collate_fn=loader.collate_fn,
         multiprocessing_context=loader.multiprocessing_context,
         timeout=loader.timeout,
         queue_capacity=None,

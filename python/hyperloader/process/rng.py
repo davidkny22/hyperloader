@@ -43,6 +43,17 @@ class WorkerRngContext:
         self._worker_info.begin_sample(torch_seed)
         return torch_seed
 
+    def install_collate(self, root_seed: int, epoch: int, ordinal: int) -> int:
+        """Install the batch-level collation stream."""
+        words = _hyperloader._rng_block(root_seed, epoch, ordinal, 0, 1)
+        torch_seed = words[0] | (words[1] << 32)
+        _, key, coordinate = _hyperloader._sample_rng_context(root_seed, epoch, ordinal)
+        self._current.value = (torch_seed, key, coordinate)
+        if self._worker_info is None:
+            raise RuntimeError("worker RNG context has no attached dataset")
+        self._worker_info.begin_sample(torch_seed)
+        return torch_seed
+
     @property
     def current_sample(self) -> tuple[int, int, int]:
         """Return the installed native identity token for accessor binding."""

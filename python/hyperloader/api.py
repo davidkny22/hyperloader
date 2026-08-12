@@ -221,7 +221,11 @@ class DataLoader:
         self._machine_identity: Any = None
         self._calibration: Any = None
         self._pinned_delivery: Any = None
-        if is_native_batch_path(self) and self._map_placement.identity:
+        if (
+            num_workers != 0
+            and is_native_batch_path(self)
+            and self._map_placement.identity
+        ):
             self._calibration = resolve_calibration(self._machine_identity)
             configure_pinned_delivery(self)
             prepare_native_batch(self)
@@ -249,7 +253,6 @@ class DataLoader:
             and num_workers > 0
             and sampler is None
             and batch_sampler is None
-            and collate_fn is None
             and mode == "native"
             and not self._sample_thread_safe
             and not (is_native_batch_path(self) and self._map_placement.identity)
@@ -268,7 +271,7 @@ class DataLoader:
         from .tensor import TensorIterator
 
         iterable = self._plan is None
-        if not iterable and (self.num_workers is AUTO or self.num_workers == 0):
+        if not iterable and self.num_workers is AUTO:
             raise RuntimeError(
                 "the requested hyperloader execution tier is not initialized"
             )
@@ -276,8 +279,6 @@ class DataLoader:
             raise RuntimeError(
                 "the requested hyperloader execution mode is not initialized"
             )
-        if self.collate_fn is not None:
-            raise RuntimeError("user collation planning is not initialized")
         if self._distributed_topology is not None:
             validate_runtime_topology(self._distributed_topology)
         auto_advanced = False
@@ -311,11 +312,20 @@ class DataLoader:
             )
 
             self._sampler_runtime = build_sampler_runtime(self)
-            iterator = (
-                UserBatchSamplerIterator(self)
-                if self.batch_sampler is not None
-                else StreamingSamplerIterator(self)
-            )
+            if self.num_workers == 0:
+                from .inprocess import InProcessIterator
+
+                iterator = InProcessIterator(self)
+            else:
+                iterator = (
+                    UserBatchSamplerIterator(self)
+                    if self.batch_sampler is not None
+                    else StreamingSamplerIterator(self)
+                )
+        elif self.num_workers == 0:
+            from .inprocess import InProcessIterator
+
+            iterator = InProcessIterator(self)
         elif self._fallback_engine:
             iterator = ProcessIterator(self)
         elif isinstance(self._plan, TensorPlan):

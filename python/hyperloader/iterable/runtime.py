@@ -5,6 +5,7 @@ from __future__ import annotations
 import pickle
 import warnings
 from collections import deque
+from contextlib import nullcontext
 from typing import Any
 
 from hyperloader.rng import _user_code_context
@@ -127,8 +128,8 @@ class IterableLaneRuntime:
             identity,
             self.lane_count,
         )
-        with lane_worker_info(identity, self.lane_count, dataset, None):
-            if self.loader.worker_init_fn is not None:
+        with self._worker_context(identity, dataset, None):
+            if self.loader.num_workers != 0 and self.loader.worker_init_fn is not None:
                 self.loader.worker_init_fn(identity)
         stateful = has_state_pair(dataset)
         if checkpoint is not None and checkpoint.stateful != stateful:
@@ -136,7 +137,7 @@ class IterableLaneRuntime:
                 "iterable source stateful protocol changed since checkpoint"
             )
         start, selected = self._restore_selected(identity, dataset, checkpoint)
-        with lane_worker_info(identity, self.lane_count, dataset, None):
+        with self._worker_context(identity, dataset, None):
             iterator = iter(dataset)
         lane = IterableLane(identity, dataset, iterator, arrival=start)
         ring = self._new_ring(stateful)
@@ -163,7 +164,7 @@ class IterableLaneRuntime:
         restored = pickle.loads(checkpoint.snapshot)
         if not isinstance(restored, dict):
             raise TypeError("iterable source snapshot must decode to a dictionary")
-        with lane_worker_info(identity, self.lane_count, dataset, None):
+        with self._worker_context(identity, dataset, None):
             restore_source_state(dataset, restored)
         arrival = int(checkpoint.snapshot_arrival)
         return arrival, SourceSnapshot(arrival, checkpoint.snapshot)
@@ -194,9 +195,8 @@ class IterableLaneRuntime:
                     lane.arrival,
                 )
                 with (
-                    lane_worker_info(
+                    self._worker_context(
                         lane.identity,
-                        self.lane_count,
                         lane.dataset,
                         sample[0],
                     ),
@@ -227,7 +227,7 @@ class IterableLaneRuntime:
         ring = self.rings[lane.identity]
         if not ring.due(lane.produced_batches, force=force):
             return
-        with lane_worker_info(lane.identity, self.lane_count, lane.dataset, None):
+        with self._worker_context(lane.identity, lane.dataset, None):
             state = capture_source_state(lane.dataset)
         try:
             payload = pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
@@ -256,3 +256,8 @@ class IterableLaneRuntime:
             stacklevel=4,
         )
         self.loader._iterable_restart_notice_emitted = True
+
+    def _worker_context(self, identity: int, dataset: Any, seed: int | None) -> Any:
+        if self.loader.num_workers == 0:
+            return nullcontext()
+        return lane_worker_info(identity, self.lane_count, dataset, seed)

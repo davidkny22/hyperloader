@@ -17,6 +17,7 @@ from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .frontier import FrontierRuntime, binding_cause
 from .sizing import delivery_length, frontier_ceiling, frontier_depth
+from .user_collation import next_process_batch
 
 
 class ProcessIterator(Iterator[Any]):
@@ -54,10 +55,13 @@ class ProcessIterator(Iterator[Any]):
         )
         self._schedule: FrontierRuntime | None = None
         self._worker_batches = False
+        self._user_collation = loader.collate_fn is not None
         self._last_delivery_ns = time.perf_counter_ns()
         self._delivery_telemetry = build_delivery_telemetry(loader)
         if self._length:
             prepare_process_pool(loader)
+            if self._user_collation:
+                return
             depth = frontier_depth(loader)
             batch_size = loader._process_pool.batch_size
             self._worker_batches = batch_size is not None
@@ -141,6 +145,8 @@ class ProcessIterator(Iterator[Any]):
             if self._position >= self._length:
                 self._finish_epoch()
                 raise StopIteration
+            if self._user_collation:
+                return self._next_user_batch()
             if self._on_completion:
                 ordinal, value, delivered_samples = self._completion.next_batch()
                 self._position += delivered_samples
@@ -174,6 +180,10 @@ class ProcessIterator(Iterator[Any]):
         except BaseException:
             self._loader.close()
             raise
+
+    def _next_user_batch(self) -> Any:
+        """Execute one process-owned user collation command."""
+        return next_process_batch(self)
 
     def _next_sample(self, expected_position: int) -> Any:
         status, payload, worker = self._next_completion(expected_position)

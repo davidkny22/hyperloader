@@ -33,13 +33,24 @@ class UserBatchSamplerIterator(Iterator[Any]):
         batch = self._runtime.batch(self._ordinal)
         sample_offset = self._runtime.sample_offset(self._ordinal)
         try:
-            values = [
-                self._loader._process_pool.execute(
-                    self._epoch, sample_offset + offset, index
+            if self._loader.collate_fn is not None:
+                value = self._loader._process_pool.execute_collated(
+                    self._epoch,
+                    self._ordinal,
+                    tuple(
+                        (sample_offset + offset, index)
+                        for offset, index in enumerate(batch)
+                    ),
+                    auto_collation=True,
                 )
-                for offset, index in enumerate(batch)
-            ]
-            value = self._loader._collate_batch(values)
+            else:
+                values = [
+                    self._loader._process_pool.execute(
+                        self._epoch, sample_offset + offset, index
+                    )
+                    for offset, index in enumerate(batch)
+                ]
+                value = self._loader._collate_batch(values)
         except BaseException:
             self._loader.close()
             raise
