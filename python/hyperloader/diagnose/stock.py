@@ -10,7 +10,7 @@ from .workers import snapshot_workers
 def observe_stock(loader: Any) -> dict[str, object]:
     """Read stock loader and iterator state without advancing either object."""
     iterator = getattr(loader, "_iterator", None)
-    workers = () if iterator is None else _worker_pids(iterator)
+    workers = () if iterator is None else tuple(getattr(iterator, "_workers", ()))
     capacity = _capacity(loader, iterator)
     ready = _ready_batches(iterator)
     outstanding = _integer(iterator, "_tasks_outstanding")
@@ -70,21 +70,16 @@ def _integer(value: Any | None, attribute: str) -> int | None:
     return raw if isinstance(raw, int) else None
 
 
-def _worker_pids(iterator: Any) -> tuple[int, ...]:
-    return tuple(
-        int(worker.pid)
-        for worker in getattr(iterator, "_workers", ())
-        if getattr(worker, "pid", None) is not None
-    )
-
-
 def _steps(loader: Any, ready: int, in_flight: int | None) -> list[dict[str, object]]:
     return [
         {"name": "source", "detail": type(loader.dataset).__qualname__},
         {"name": "sampler", "detail": type(loader.sampler).__qualname__},
         {
             "name": "worker_fetch",
-            "detail": {"in_flight_batches": in_flight, "num_workers": loader.num_workers},
+            "detail": {
+                "in_flight_batches": in_flight,
+                "num_workers": loader.num_workers,
+            },
         },
         {"name": "pin_memory", "detail": bool(loader.pin_memory)},
         {"name": "delivery", "detail": {"ready_batches": ready}},

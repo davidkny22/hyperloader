@@ -31,7 +31,9 @@ def observe_native(loader: Any) -> dict[str, object]:
     }
     controller = telemetry.get("controller")
     binding = controller.get("binding") if isinstance(controller, dict) else None
-    gil_events = summary.get("gil_restore_events") if isinstance(summary, dict) else None
+    gil_events = (
+        summary.get("gil_restore_events") if isinstance(summary, dict) else None
+    )
     gil_release = {
         "basis": (
             "Native telemetry records GIL restoration events but does not infer a time "
@@ -48,7 +50,7 @@ def observe_native(loader: Any) -> dict[str, object]:
         "saturation": saturation,
         "steps": _steps(loader, summary, frontier),
         "telemetry": telemetry,
-        "workers": snapshot_workers(_worker_pids(loader)),
+        "workers": snapshot_workers(_worker_processes(loader)),
     }
 
 
@@ -83,10 +85,14 @@ def _active_schedule(loader: Any) -> Any | None:
     return None
 
 
-def _worker_pids(loader: Any) -> tuple[int, ...]:
+def _worker_processes(loader: Any) -> tuple[Any, ...]:
     for attribute in ("_process_pool", "_compat_lane_pool"):
         pool = getattr(loader, attribute, None)
         if pool is not None:
+            worker_set = getattr(pool, "_worker_set", None)
+            processes = getattr(worker_set, "processes", None)
+            if processes is not None:
+                return tuple(processes)
             return tuple(pool.worker_pids)
     return ()
 

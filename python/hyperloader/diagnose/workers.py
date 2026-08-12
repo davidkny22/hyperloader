@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 if os.name == "nt":
     import ctypes
@@ -34,16 +35,23 @@ if os.name == "nt":
     _KERNEL.OpenProcess.restype = wintypes.HANDLE
 
 
-def snapshot_workers(pids: tuple[int, ...]) -> list[dict[str, int | bool | None]]:
+def snapshot_workers(workers: tuple[Any, ...]) -> list[dict[str, int | bool | None]]:
     """Read CPU time and resident bytes without signaling worker processes."""
     return [
-        {"worker": worker, **_snapshot_process(pid)} for worker, pid in enumerate(pids)
+        {"worker": index, **_snapshot_process(process)}
+        for index, process in enumerate(workers)
     ]
 
 
-def _snapshot_process(pid: int) -> dict[str, int | bool | None]:
+def _snapshot_process(process: Any) -> dict[str, int | bool | None]:
+    pid = process if isinstance(process, int) else getattr(process, "pid", None)
+    if not isinstance(pid, int):
+        return {"pid": 0, "alive": False, "cpu_ns": None, "rss_bytes": None}
     if os.name == "nt":
-        return _snapshot_windows(pid)
+        handle = (
+            None if isinstance(process, int) else getattr(process, "sentinel", None)
+        )
+        return _snapshot_windows(pid, handle)
     return _snapshot_procfs(pid)
 
 
@@ -68,8 +76,10 @@ def _procfs_rss(path: Path) -> int | None:
     return None
 
 
-def _snapshot_windows(pid: int) -> dict[str, int | bool | None]:
-    handle = _KERNEL.OpenProcess(0x1000, False, pid)
+def _snapshot_windows(
+    pid: int, borrowed_handle: int | None = None
+) -> dict[str, int | bool | None]:
+    handle = borrowed_handle or _KERNEL.OpenProcess(0x1000, False, pid)
     if not handle:
         return {"pid": pid, "alive": False, "cpu_ns": None, "rss_bytes": None}
     try:
@@ -95,4 +105,5 @@ def _snapshot_windows(pid: int) -> dict[str, int | bool | None]:
             "rss_bytes": int(memory.working_set_size) if rss_ok else None,
         }
     finally:
-        _KERNEL.CloseHandle(handle)
+        if borrowed_handle is None:
+            _KERNEL.CloseHandle(handle)
