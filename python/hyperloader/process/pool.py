@@ -183,6 +183,11 @@ class ProcessPool:
             else self._probe_position
         )
 
+    @property
+    def has_pending(self) -> bool:
+        """Report whether an abandoned iterator left commands in flight."""
+        return bool(self._pending)
+
     def try_submit(
         self,
         epoch: int,

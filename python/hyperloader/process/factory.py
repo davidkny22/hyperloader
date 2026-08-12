@@ -11,6 +11,10 @@ from .sizing import delivery_length, frontier_budget, frontier_ceiling, frontier
 
 def prepare_process_pool(loader: Any) -> None:
     """Spawn and probe the process tier once when its map plan is executable."""
+    pool = loader._process_pool
+    if pool is not None and pool.has_pending:
+        pool.close()
+        loader._process_pool = None
     if (
         loader._process_pool is not None
         or loader._plan is None

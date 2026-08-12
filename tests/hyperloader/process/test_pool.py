@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import math
+import os
 import random
 import tempfile
 import time
@@ -14,13 +14,12 @@ from unittest import mock
 
 import numpy as np
 import torch
-from torch.utils.data import get_worker_info
-
 from hyperloader import DataLoader, HyperConfig, _hyperloader
 from hyperloader.config import SchedulerConfig
 from hyperloader.process import ProcessPool
 from hyperloader.process.random_surface import PhiloxRandom
 from hyperloader.process.sizing import frontier_depth
+from torch.utils.data import get_worker_info
 
 
 class RandomDataset:
@@ -209,7 +208,7 @@ class ProcessPoolTest(unittest.TestCase):
             loader.close()
 
         expected = [
-            torch.utils.data.default_collate([dataset[index] for index in range(0, 2)]),
+            torch.utils.data.default_collate([dataset[index] for index in range(2)]),
             torch.utils.data.default_collate([dataset[index] for index in range(2, 4)]),
             torch.utils.data.default_collate([dataset[4]]),
         ]
@@ -419,6 +418,21 @@ class ProcessPoolTest(unittest.TestCase):
         )
         self.assertNotEqual(first_sample["torch"], resumed[0]["torch"])
 
+    def test_temporary_abandoned_iterator_restarts_its_pending_pool(self) -> None:
+        loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
+        first_sample = next(iter(loader))
+        try:
+            with self.assertWarnsRegex(UserWarning, "advanced the epoch"):
+                resumed = list(loader)
+        finally:
+            loader.close()
+
+        self.assertEqual(int(first_sample["index"].item()), 0)
+        self.assertEqual(
+            [int(batch["index"].item()) for batch in resumed], [0, 1, 2, 3]
+        )
+        self.assertNotEqual(first_sample["torch"], resumed[0]["torch"])
+
     def test_empty_abandoned_iterator_replays_without_a_notice(self) -> None:
         loader = DataLoader(PublicDataset(), batch_size=1, num_workers=2, seed=41)
         first_iterator = iter(loader)
@@ -475,9 +489,8 @@ class ProcessPoolTest(unittest.TestCase):
         try:
             with mock.patch.object(
                 ProcessPool, "try_submit", side_effect=RuntimeError("severed dispatch")
-            ):
-                with self.assertRaisesRegex(RuntimeError, "severed dispatch"):
-                    iter(loader)
+            ), self.assertRaisesRegex(RuntimeError, "severed dispatch"):
+                iter(loader)
         finally:
             loader.close()
 
