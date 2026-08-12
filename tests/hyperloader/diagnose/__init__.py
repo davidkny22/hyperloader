@@ -1,0 +1,1 @@
+"""Loader diagnosis tests."""

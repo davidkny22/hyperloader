@@ -3,6 +3,7 @@
 from ._hyperloader import package_version
 from .api import DataLoader
 from .config import AUTO, HyperConfig
+from .diagnose import DiagnosisReport, diagnose
 from .rng import rng
 from .stages import (
     Collate,
@@ -21,12 +22,14 @@ __all__ = [
     "Collate",
     "DataLoader",
     "Decode",
+    "DiagnosisReport",
     "HyperConfig",
     "Pipeline",
     "Source",
     "StageIO",
     "ThreadSafety",
     "Transform",
+    "diagnose",
     "package_version",
     "pipeline",
     "rng",
