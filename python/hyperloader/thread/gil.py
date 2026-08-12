@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import sys
+import sysconfig
 import threading
 from typing import Any
+
+
+def free_threaded_build() -> bool:
+    """Return whether this interpreter was compiled without the mandatory GIL."""
+    return sysconfig.get_config_var("Py_GIL_DISABLED") == 1
 
 
 def gil_enabled() -> bool | None:
@@ -18,7 +24,7 @@ class GilRestorationDetector:
 
     def __init__(self, recorder: Any | None) -> None:
         self._recorder = recorder
-        self._started_free_threaded = gil_enabled() is False
+        self._free_threaded_build = free_threaded_build()
         self._reported = False
         self._lock = threading.Lock()
 
@@ -26,7 +32,7 @@ class GilRestorationDetector:
         """Record the first false-to-true runtime transition."""
         if (
             self._recorder is None
-            or not self._started_free_threaded
+            or not self._free_threaded_build
             or self._reported
             or gil_enabled() is not True
         ):
