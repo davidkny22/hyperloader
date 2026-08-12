@@ -86,6 +86,7 @@ def _config() -> TrainingCellConfig:
         data_class="pretokenized-text",
         batch_size=2,
         sequence_length=4,
+        input_resolution=None,
         model_width=8,
         model_depth=1,
         attention_heads=2,
@@ -97,6 +98,9 @@ def _config() -> TrainingCellConfig:
         model_name="tiny transformer",
         model_parameters=999,
         dataset_rows=4,
+        dataset_identity=PretokenizedRows(
+            rows=4, sequence_length=4, vocabulary_size=17, seed=3
+        ).identity,
         seed=3,
         resident_batches=2,
         warmup_steps=1,

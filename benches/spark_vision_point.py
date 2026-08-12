@@ -1,68 +1,61 @@
-"""Collect one portable Spark token-training comparison point."""
+"""Collect one portable Spark ResNet image-folder comparison point."""
 
 from __future__ import annotations
 
 import argparse
 import platform
-from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
-from torch import nn
 
-from benches.training_eval.dial import TransformerDialPoint, default_dial
-from benches.training_eval.gpt import GPT2_124M, GPT2_355M, GptLanguageModel
+from benches.training_eval.image_folder import TrainingImageFolder
 from benches.training_eval.models import (
     DecisionRule,
     TrainingCellConfig,
     TrainingEnvironment,
 )
-from benches.training_eval.token_point import collect_token_point
-from benches.training_eval.token_source import token_source_identity
-from benches.training_eval.transformer import DialTransformer
+from benches.training_eval.vision_model import build_resnet18
+from benches.training_eval.vision_point import collect_vision_point
 
 
 def main() -> None:
-    """Parse runtime facts and collect one null, dial, or GPT comparison."""
+    """Parse runtime facts and collect one ResNet-18 loader comparison."""
     arguments = _parser().parse_args()
-    point, model_factory = _point(arguments)
-    subject = "null-b" if arguments.kind == "null" else arguments.subject
-    reference = "null-a" if arguments.kind == "null" else "counterfactual"
-    mode = "absolute" if arguments.kind == "null" else "upper"
+    torch.manual_seed(arguments.seed)
+    dataset = TrainingImageFolder(arguments.image_root, resolution=arguments.resolution)
+    rows = arguments.bank_batches * arguments.batch_size
+    model = build_resnet18(classes=dataset.class_count)
     config = TrainingCellConfig(
         evaluation_id=arguments.evaluation_id,
-        point_id=point["point_id"],
-        comparison_kind="null" if arguments.kind == "null" else "loader-tax",
-        subject=subject,
-        reference=reference,
-        workload_family=point["family"],
-        data_class="pretokenized-text",
-        batch_size=point["batch_size"],
-        sequence_length=point["sequence_length"],
-        input_resolution=None,
-        model_width=point["width"],
-        model_depth=point["depth"],
-        attention_heads=point["heads"],
+        point_id="resnet18-image-folder-finetuning",
+        comparison_kind="loader-tax",
+        subject=arguments.subject,
+        reference="counterfactual",
+        workload_family="vision-finetuning",
+        data_class="image-folder-standard-augmentation",
+        batch_size=arguments.batch_size,
+        sequence_length=None,
+        input_resolution=arguments.resolution,
+        model_width=None,
+        model_depth=18,
+        attention_heads=None,
         precision=arguments.precision,
         optimizer="AdamW(lr=0.0003)",
         learning_rate=0.0003,
         delivery="pinned" if arguments.pin_memory else "pageable",
         device=arguments.device,
-        model_name=str(point["model_name"]),
-        model_parameters=int(point["model_parameters"]),
-        dataset_rows=arguments.bank_batches * int(point["batch_size"]),
-        dataset_identity=token_source_identity(
-            rows=arguments.bank_batches * int(point["batch_size"]),
-            sequence_length=int(point["sequence_length"]),
-            vocabulary_size=int(point["vocabulary_size"]),
-            seed=arguments.seed,
+        model_name="ResNet-18",
+        model_parameters=sum(
+            value.numel() for value in model.parameters() if value.requires_grad
         ),
+        dataset_rows=rows,
+        dataset_identity=dataset.identity_for_rows(rows),
         seed=arguments.seed,
         resident_batches=arguments.bank_batches,
         warmup_steps=arguments.warmup_steps,
-        subject_workers=0 if arguments.kind == "null" else arguments.subject_workers,
+        subject_workers=arguments.subject_workers,
         reference_workers=0,
         subject_prefetch=arguments.subject_prefetch,
         reference_prefetch=1,
@@ -77,7 +70,6 @@ def main() -> None:
             max_half_width_percent=arguments.max_half_width_percent,
             bootstrap_draws=arguments.bootstrap_draws,
             bootstrap_seed=arguments.bootstrap_seed,
-            mode=mode,
         ),
     )
     environment = TrainingEnvironment(
@@ -101,14 +93,12 @@ def main() -> None:
         ambient_probe_id=arguments.ambient_probe_id,
     )
     arguments.output.mkdir(parents=True, exist_ok=True)
-    result = collect_token_point(
+    result = collect_vision_point(
         config,
         environment,
-        model_factory=model_factory,
+        dataset=dataset,
+        model=model,
         device=torch.device(arguments.device),
-        seed=arguments.seed,
-        bank_batches=arguments.bank_batches,
-        warmup_steps=arguments.warmup_steps,
         pin_memory=arguments.pin_memory,
         observations_path=arguments.output / "observations.jsonl",
         decision_path=arguments.output / "decision.json",
@@ -116,57 +106,12 @@ def main() -> None:
     print(asdict(result))
 
 
-def _point(
-    arguments: argparse.Namespace,
-) -> tuple[dict[str, int | str], Callable[[], nn.Module]]:
-    if arguments.kind in {"null", "dial"}:
-        point = default_dial()[arguments.dial_index - 1]
-        values = {
-            "point_id": "null" if arguments.kind == "null" else point.point_id,
-            "family": "transformer-dial",
-            "batch_size": point.batch_size,
-            "sequence_length": point.sequence_length,
-            "width": point.width,
-            "depth": point.depth,
-            "heads": point.attention_heads,
-            "model_name": "synthetic transformer dial",
-            "model_parameters": _dial_parameter_count(point),
-            "vocabulary_size": point.vocabulary_size,
-        }
-        return values, lambda: DialTransformer(point)
-    gpt = GPT2_124M if arguments.kind == "gpt2-124m" else GPT2_355M
-    batch_size = 8 if arguments.kind == "gpt2-124m" else 2
-    values = {
-        "point_id": f"{arguments.kind}-pretraining",
-        "family": "gpt-pretraining",
-        "batch_size": batch_size,
-        "sequence_length": 256,
-        "width": gpt.width,
-        "depth": gpt.depth,
-        "heads": gpt.attention_heads,
-        "model_name": gpt.name,
-        "model_parameters": gpt.parameter_count(),
-        "vocabulary_size": gpt.vocabulary_size,
-    }
-    return values, lambda: GptLanguageModel(gpt)
-
-
-def _dial_parameter_count(point: TransformerDialPoint) -> int:
-    width = point.width
-    vocabulary = point.vocabulary_size
-    per_layer = 12 * width * width + 13 * width
-    return 2 * vocabulary * width + vocabulary + point.depth * per_layer + 2 * width
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--kind", choices=("null", "dial", "gpt2-124m", "gpt2-355m"), required=True
+        "--subject", choices=("torch", "hyperloader", "spdl"), required=True
     )
-    parser.add_argument(
-        "--subject", choices=("torch", "hyperloader", "spdl"), default="hyperloader"
-    )
-    parser.add_argument("--dial-index", type=int, choices=range(1, 9), default=1)
+    parser.add_argument("--image-root", type=Path, required=True)
     parser.add_argument("--evaluation-id", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--machine", required=True)
@@ -181,6 +126,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--precision", choices=("float32", "float16", "bfloat16"), default="bfloat16"
     )
+    parser.add_argument("--resolution", type=int, default=224)
+    parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--subject-workers", type=int, default=2)
     parser.add_argument("--subject-prefetch", type=int, default=2)
     parser.add_argument("--half-seconds", type=float, default=45.0)
@@ -189,7 +136,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-pairs", type=int, default=10)
     parser.add_argument("--max-pairs", type=int, default=40)
     parser.add_argument("--max-half-width-percent", type=float, default=0.15)
-    parser.add_argument("--threshold-percent", type=float, required=True)
+    parser.add_argument("--threshold-percent", type=float, default=2.0)
     parser.add_argument("--bootstrap-draws", type=int, default=10_000)
     parser.add_argument("--bootstrap-seed", type=int, default=0)
     parser.add_argument("--tuning-trials", type=int, default=0)

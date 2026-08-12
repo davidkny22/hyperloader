@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import torch
 from torch.utils.data import Dataset
 
@@ -33,3 +35,24 @@ class PretokenizedRows(Dataset[torch.Tensor]):
 
     def __getitem__(self, index: int) -> torch.Tensor:
         return self._tokens[index]
+
+    @property
+    def identity(self) -> str:
+        """Return a digest of the exact finite token source."""
+        digest = hashlib.sha256()
+        digest.update(str(self._tokens.dtype).encode())
+        digest.update(str(tuple(self._tokens.shape)).encode())
+        digest.update(self._tokens.numpy().tobytes())
+        return digest.hexdigest()
+
+
+def token_source_identity(
+    *, rows: int, sequence_length: int, vocabulary_size: int, seed: int
+) -> str:
+    """Materialize the specified token source and return its exact digest."""
+    return PretokenizedRows(
+        rows=rows,
+        sequence_length=sequence_length,
+        vocabulary_size=vocabulary_size,
+        seed=seed,
+    ).identity

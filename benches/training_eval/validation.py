@@ -41,10 +41,6 @@ def validate_observations(observations: Sequence[TrainingObservation]) -> None:
 def _validate_config(config: TrainingCellConfig) -> None:
     positive = (
         config.batch_size,
-        config.sequence_length,
-        config.model_width,
-        config.model_depth,
-        config.attention_heads,
         config.model_parameters,
         config.dataset_rows,
         config.resident_batches,
@@ -54,9 +50,29 @@ def _validate_config(config: TrainingCellConfig) -> None:
         raise TrainingProtocolError(
             "training configuration dimensions must be positive"
         )
-    required = (config.device, config.model_name, config.optimizer, config.delivery)
+    required = (
+        config.device,
+        config.model_name,
+        config.optimizer,
+        config.delivery,
+        config.dataset_identity,
+    )
     if not all(required):
         raise TrainingProtocolError("training configuration identity is incomplete")
+    if config.data_class == "pretokenized-text":
+        token_dimensions = (
+            config.sequence_length,
+            config.model_width,
+            config.model_depth,
+            config.attention_heads,
+        )
+        if config.input_resolution is not None or any(
+            value is None or value <= 0 for value in token_dimensions
+        ):
+            raise TrainingProtocolError("token configuration dimensions are invalid")
+    elif config.data_class == "image-folder-standard-augmentation":
+        if config.sequence_length is not None or not config.input_resolution:
+            raise TrainingProtocolError("image configuration dimensions are invalid")
 
 
 def _validate_pair(observation: TrainingObservation) -> None:

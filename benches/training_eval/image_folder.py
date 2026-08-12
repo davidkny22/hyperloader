@@ -39,12 +39,16 @@ class TrainingImageFolder(Dataset[tuple[torch.Tensor, int, str]]):
         )
         self._root = root.resolve()
         self._dataset = ImageFolder(self._root, transform=transform)
-        self._digests = tuple(
-            hashlib.sha256(
-                f"{Path(path).resolve().relative_to(self._root).as_posix()}\0{label}".encode()
-            ).hexdigest()
-            for path, label in self._dataset.samples
-        )
+        digests = []
+        for path, label in self._dataset.samples:
+            resolved = Path(path).resolve()
+            digest = hashlib.sha256()
+            digest.update(
+                f"{resolved.relative_to(self._root).as_posix()}\0{label}\0".encode()
+            )
+            digest.update(hashlib.sha256(resolved.read_bytes()).digest())
+            digests.append(digest.hexdigest())
+        self._digests = tuple(digests)
 
     def __len__(self) -> int:
         return len(self._dataset)
@@ -52,6 +56,20 @@ class TrainingImageFolder(Dataset[tuple[torch.Tensor, int, str]]):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int, str]:
         image, label = self._dataset[index]
         return image, int(label), self._digests[index]
+
+    @property
+    def class_count(self) -> int:
+        """Return the number of image-folder classes."""
+        return len(self._dataset.classes)
+
+    def identity_for_rows(self, rows: int) -> str:
+        """Digest the exact ordered source subset used by one point."""
+        if not 0 < rows <= len(self._digests):
+            raise ValueError("image source row count is outside the dataset")
+        digest = hashlib.sha256()
+        for source_digest in self._digests[:rows]:
+            digest.update(bytes.fromhex(source_digest))
+        return digest.hexdigest()
 
 
 def collate_image_batch(rows: list[tuple[torch.Tensor, int, str]]) -> ImageBatch:

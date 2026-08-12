@@ -32,10 +32,11 @@ class TrainingCellConfig:
     workload_family: str
     data_class: str
     batch_size: int
-    sequence_length: int
-    model_width: int
-    model_depth: int
-    attention_heads: int
+    sequence_length: int | None
+    input_resolution: int | None
+    model_width: int | None
+    model_depth: int | None
+    attention_heads: int | None
     precision: str
     optimizer: str
     learning_rate: float
@@ -44,6 +45,7 @@ class TrainingCellConfig:
     model_name: str
     model_parameters: int
     dataset_rows: int
+    dataset_identity: str
     seed: int
     resident_batches: int
     warmup_steps: int
