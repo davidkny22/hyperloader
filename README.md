@@ -26,7 +26,8 @@ python -m pip install hyperloader-0.1.0-py3-none-any.whl
 
 PyTorch is the runtime dependency. Native wheels are defined for CPython 3.10 through 3.15,
 including 3.14t and 3.15t, on Linux, macOS, and Windows. The universal fallback carries the
-same public contracts through a pure-Python process engine.
+same public contracts through a pure-Python process engine. Every compressed wheel has a
+5 MiB size ceiling.
 
 ## Use
 

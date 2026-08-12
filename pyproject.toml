@@ -7,11 +7,24 @@ name = "hyperloader"
 version = "0.1.0"
 description = "A deterministic, high-performance PyTorch data loader."
 requires-python = ">=3.10"
+readme = "README.md"
 license = "MIT"
+dependencies = [
+    "numpy>=2.0",
+    "torch>=2.10,<2.14",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Rust",
     "Typing :: Typed",
 ]

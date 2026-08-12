@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[3]
 RELEASE_DOCUMENTS = (
     ROOT / "README.md",

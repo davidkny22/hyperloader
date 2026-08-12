@@ -25,7 +25,8 @@ jobs:
           command: build
           args: --release --interpreter python --out dist
           manylinux: "2014"
-      - run: python -m pip install --force-reinstall --no-deps dist/*
+      - run: python tools/verify_wheel.py --kind native dist/*
+      - run: python -m pip install --force-reinstall dist/*
       - run: python -c "from hyperloader import DataLoader, _hyperloader; assert not getattr(_hyperloader, 'IS_FALLBACK', True); assert list(DataLoader(range(4), batch_size=2, num_workers=0))"
       - uses: actions/upload-artifact@v4
         with:
@@ -40,7 +41,8 @@ jobs:
         with:
           python-version: "3.14"
       - run: python tools/build_fallback_wheel.py --output dist
-      - run: python -m pip install --force-reinstall --no-deps dist/*
+      - run: python tools/verify_wheel.py --kind fallback dist/*
+      - run: python -m pip install --force-reinstall dist/*
       - run: python tests/hyperloader/packaging/fallback_install_runner.py
       - run: python -m pytest tests/hyperloader/packaging/test_fallback_wheel.py -q
       - uses: actions/upload-artifact@v4

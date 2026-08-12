@@ -7,9 +7,10 @@ import base64
 import csv
 import hashlib
 import io
-import tomllib
 import zipfile
 from pathlib import Path
+
+import tomllib
 
 
 def _digest(data: bytes) -> str:
@@ -35,22 +36,26 @@ def build_wheel(root: Path, output: Path) -> Path:
             continue
         relative = path.relative_to(package).as_posix()
         entries[f"hyperloader/{relative}"] = path.read_bytes()
-    entries[f"{dist_info}/METADATA"] = (
-        "Metadata-Version: 2.4\n"
-        f"Name: {project['name']}\n"
-        f"Version: {version}\n"
-        f"Summary: {project['description']}\n"
-        f"Requires-Python: {project['requires-python']}\n"
-        "License-Expression: MIT\n"
-        "\n"
-    ).encode()
+    metadata = [
+        "Metadata-Version: 2.4",
+        f"Name: {project['name']}",
+        f"Version: {version}",
+        f"Summary: {project['description']}",
+        f"Requires-Python: {project['requires-python']}",
+        "License-Expression: MIT",
+        "Description-Content-Type: text/markdown",
+    ]
+    metadata.extend(f"Requires-Dist: {item}" for item in project["dependencies"])
+    description = (root / str(project["readme"])).read_text(encoding="utf-8")
+    entries[f"{dist_info}/METADATA"] = ("\n".join(metadata) + f"\n\n{description}\n").encode()
     entries[f"{dist_info}/WHEEL"] = (
-        "Wheel-Version: 1.0\n"
-        "Generator: hyperloader fallback builder\n"
-        "Root-Is-Purelib: true\n"
-        "Tag: py3-none-any\n\n"
-    ).encode()
+        b"Wheel-Version: 1.0\n"
+        b"Generator: hyperloader fallback builder\n"
+        b"Root-Is-Purelib: true\n"
+        b"Tag: py3-none-any\n\n"
+    )
     entries[f"{dist_info}/licenses/LICENSE"] = (root / "LICENSE").read_bytes()
+    entries[f"{dist_info}/licenses/NOTICE"] = (root / "NOTICE").read_bytes()
     record_path = f"{dist_info}/RECORD"
     record = io.StringIO(newline="")
     writer = csv.writer(record, lineterminator="\n")
