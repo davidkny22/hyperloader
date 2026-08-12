@@ -8,6 +8,7 @@ import weakref
 from collections.abc import Iterator
 from typing import Any
 
+from . import _hyperloader
 from .config import AUTO, Auto, HyperConfig
 from .constructor import validate_constructor
 from .control.machine_keeping import attach_machine_keeping
@@ -124,6 +125,7 @@ class DataLoader:
         self.device = device
         self.config = resolved_config
         self.delivery_memory = resolved.delivery_memory
+        self._fallback_engine = bool(getattr(_hyperloader, "IS_FALLBACK", False))
         self.root_seed = (
             0 if mode == "torch-compat" else resolve_root_seed(resolved_seed, generator)
         )
@@ -167,7 +169,8 @@ class DataLoader:
         self._memory_ledger = (
             ByteLedger("contiguous-tensor", "view")
             if (
-                isinstance(self._plan, TensorPlan)
+                not self._fallback_engine
+                and isinstance(self._plan, TensorPlan)
                 and not self._plan.shuffle
                 and self._map_placement.identity
             )
@@ -187,9 +190,13 @@ class DataLoader:
                 "thread_safe=True conflicts with an isolated pipeline sample stage"
             )
         self._sample_thread_safe = (
-            self._plan.sample_thread_safe
-            if isinstance(self._plan, StagePlan)
-            else thread_safe
+            False
+            if self._fallback_engine
+            else (
+                self._plan.sample_thread_safe
+                if isinstance(self._plan, StagePlan)
+                else thread_safe
+            )
         )
         self._decoder_selections = select_decoder_pins(
             dataset, resolved_config.determinism.decoder_pins
@@ -197,14 +204,15 @@ class DataLoader:
         self._execution_dataset = bind_decoder_selections(
             self._execution_dataset, self._decoder_selections
         )
-        from .structured import bind_native_pipeline
+        if not self._fallback_engine:
+            from .structured import bind_native_pipeline
 
-        self._execution_dataset = bind_native_pipeline(
-            self._execution_dataset,
-            shuffle=bool(shuffle),
-            worker_count=num_workers,
-            growth=resolved_config.memory.growth,
-        )
+            self._execution_dataset = bind_native_pipeline(
+                self._execution_dataset,
+                shuffle=bool(shuffle),
+                worker_count=num_workers,
+                growth=resolved_config.memory.growth,
+            )
         self._dataset_fingerprint = build_dataset_fingerprint(
             dataset, resolved_config.determinism.fingerprint
         )
@@ -233,7 +241,10 @@ class DataLoader:
             dict[str, int | float | str | bool | None] | None
         ) = None
         if (
-            isinstance(self._plan, (BlackBoxPlan, StagePlan, StructurePlan))
+            (
+                self._fallback_engine
+                or isinstance(self._plan, (BlackBoxPlan, StagePlan, StructurePlan))
+            )
             and num_workers is not AUTO
             and num_workers > 0
             and sampler is None
@@ -305,6 +316,8 @@ class DataLoader:
                 if self.batch_sampler is not None
                 else StreamingSamplerIterator(self)
             )
+        elif self._fallback_engine:
+            iterator = ProcessIterator(self)
         elif isinstance(self._plan, TensorPlan):
             iterator = TensorIterator(self)
         elif is_native_batch_path(self) and self._map_placement.identity:
@@ -315,7 +328,7 @@ class DataLoader:
             iterator = ThreadIterator(self)
         else:
             iterator = ProcessIterator(self)
-        if self._calibration is None:
+        if self._calibration is None and not self._fallback_engine:
             self._calibration = resolve_calibration(self._machine_identity)
         pinned_delivery = configure_pinned_delivery(self)
         iterator = attach_pinned_delivery(pinned_delivery, iterator)
@@ -458,8 +471,6 @@ class DataLoader:
         """Collate an engine-produced batch through the native contract mirror."""
         if isinstance(self.dataset, Pipeline):
             return self.dataset.collate(batch)
-        from . import _hyperloader
-
         return _hyperloader._default_collate(batch)
 
     def _map_coordinate(self, position: int) -> int:

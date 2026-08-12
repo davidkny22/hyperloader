@@ -346,7 +346,11 @@ class ProcessPool:
         """Close controls and drop native owners after every shutdown mode."""
         self._completion_signals.clear()
         self._pending.clear()
+        resources = self._resources
         self._resources = None
+        close = getattr(resources, "close", None)
+        if close is not None:
+            close()
 
     def _receive_probe(
         self,
