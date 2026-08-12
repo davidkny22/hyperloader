@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import queue
 from collections import deque
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -35,13 +34,11 @@ class ProcessResources:
         self._payload_capacity = payload_capacity
         self._exception_capacity = exception_capacity
         self._slot_stride = payload_capacity + exception_capacity
-        self._manager = mp.Manager()
-        self._dispatch = [
-            self._manager.Queue(queue_capacity) for _ in range(worker_count)
-        ]
-        self._completion = [
-            self._manager.Queue(queue_capacity) for _ in range(worker_count)
-        ]
+        channels = [self._make_channels() for _ in range(worker_count)]
+        self._dispatch_recv = [channel[0] for channel in channels]
+        self._dispatch_send = [channel[1] for channel in channels]
+        self._completion_recv = [channel[2] for channel in channels]
+        self._completion_send = [channel[3] for channel in channels]
         self._arena = SharedMemory(
             create=True,
             size=worker_count * queue_capacity * self._slot_stride,
@@ -54,8 +51,8 @@ class ProcessResources:
         """Return serializable attachment inputs for one worker."""
         self._validate_worker(worker)
         return (
-            self._dispatch[worker],
-            self._completion[worker],
+            self._dispatch_recv[worker],
+            self._completion_send[worker],
             self._arena.name,
             worker,
             self._queue_capacity,
@@ -97,12 +94,10 @@ class ProcessResources:
     def try_receive(self, worker: int) -> tuple[int, int, bytes, int] | None:
         """Copy one completed slot and release it to the bounded arena."""
         self._validate_worker(worker)
-        try:
-            position, status, produced, cost_ns, slot = self._completion[
-                worker
-            ].get_nowait()
-        except queue.Empty:
+        completion = self._completion_recv[worker]
+        if not completion.poll():
             return None
+        position, status, produced, cost_ns, slot = completion.recv()
         expected = self._pending.pop((worker, position), None)
         if expected is None or expected != slot:
             raise RuntimeError("worker completed an unknown command coordinate")
@@ -122,8 +117,7 @@ class ProcessResources:
             slot = self._pending.pop((worker, position))
             if slot not in self._free[worker]:
                 self._free[worker].append(slot)
-        self._drain(self._dispatch[worker])
-        self._drain(self._completion[worker])
+        self._replace_channels(worker)
         return positions
 
     def restart_worker(self, worker: int) -> list[int]:
@@ -139,7 +133,14 @@ class ProcessResources:
             self._arena.close()
             self._arena.unlink()
         finally:
-            self._manager.shutdown()
+            for channel in (
+                self._dispatch_recv,
+                self._dispatch_send,
+                self._completion_recv,
+                self._completion_send,
+            ):
+                for endpoint in channel:
+                    endpoint.close()
 
     def _submit(self, command: WorkerCommand, payload: bytes | None) -> bool:
         if self._closed:
@@ -164,8 +165,8 @@ class ProcessResources:
         if payload is not None:
             self._write(worker, slot, payload, exception=False)
         try:
-            self._dispatch[worker].put_nowait(command)
-        except queue.Full:
+            self._dispatch_send[worker].send(command)
+        except (BrokenPipeError, EOFError, OSError):
             self._free[worker].appendleft(slot)
             return False
         self._pending[key] = slot
@@ -196,12 +197,26 @@ class ProcessResources:
             raise ValueError(f"worker {worker} is out of range")
 
     @staticmethod
-    def _drain(channel: Any) -> None:
-        while True:
-            try:
-                channel.get_nowait()
-            except queue.Empty:
-                return
+    def _make_channels() -> tuple[Any, Any, Any, Any]:
+        dispatch_recv, dispatch_send = mp.Pipe(duplex=False)
+        completion_recv, completion_send = mp.Pipe(duplex=False)
+        return dispatch_recv, dispatch_send, completion_recv, completion_send
+
+    def _replace_channels(self, worker: int) -> None:
+        for channel in (
+            self._dispatch_recv,
+            self._dispatch_send,
+            self._completion_recv,
+            self._completion_send,
+        ):
+            channel[worker].close()
+        dispatch_recv, dispatch_send, completion_recv, completion_send = (
+            self._make_channels()
+        )
+        self._dispatch_recv[worker] = dispatch_recv
+        self._dispatch_send[worker] = dispatch_send
+        self._completion_recv[worker] = completion_recv
+        self._completion_send[worker] = completion_send
 
     def __del__(self) -> None:
         try:

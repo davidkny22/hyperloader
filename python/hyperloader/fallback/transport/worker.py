@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import queue
 from multiprocessing.shared_memory import SharedMemory
 from typing import Any
 
@@ -33,10 +32,9 @@ class WorkerEndpoint:
 
     def try_recv(self) -> WorkerCommand | None:
         """Receive one dispatch without blocking control handling."""
-        try:
-            return self._dispatch.get_nowait()
-        except queue.Empty:
+        if not self._dispatch.poll():
             return None
+        return self._dispatch.recv()
 
     def read_command(self, command: WorkerCommand) -> bytes:
         """Read owner-written command bytes."""
@@ -76,16 +74,18 @@ class WorkerEndpoint:
 
     def close(self) -> None:
         """Release the worker mapping without unlinking owner storage."""
+        self._dispatch.close()
+        self._completion.close()
         self._arena.close()
 
     def _complete(
         self, command: WorkerCommand, status: int, produced: int, cost_ns: int
     ) -> bool:
         try:
-            self._completion.put_nowait(
+            self._completion.send(
                 (command.position, status, produced, cost_ns, command.slot)
             )
-        except queue.Full:
+        except (BrokenPipeError, EOFError, OSError):
             return False
         return True
 
