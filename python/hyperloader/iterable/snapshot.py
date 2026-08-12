@@ -62,9 +62,7 @@ class SnapshotRing:
     def discard_before(self, delivered_arrival: int) -> None:
         """Discard obsolete states while retaining the newest delivered anchor."""
         selected = self.select(delivered_arrival)
-        future = [
-            entry for entry in self._entries if entry.arrival > delivered_arrival
-        ]
+        future = [entry for entry in self._entries if entry.arrival > delivered_arrival]
         self._entries.clear()
         if selected is not None:
             self._entries.append(selected)

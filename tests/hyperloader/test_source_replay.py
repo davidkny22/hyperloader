@@ -14,7 +14,7 @@ from unittest import mock
 
 import hyperloader
 from hyperloader import DataLoader, HyperConfig, _hyperloader
-from hyperloader.config import FactorConfig
+from hyperloader.config import DistributedConfig, FactorConfig
 from hyperloader.iterable.runtime import IterableLaneRuntime
 
 
@@ -50,14 +50,15 @@ class ReplaySource:
         self.position = int(state["position"])
 
 
-def _loader(*, lanes: int = 2) -> DataLoader:
+def _loader(*, lanes: int = 2, world_size: int = 1) -> DataLoader:
     return DataLoader(
         ReplaySource(),
         batch_size=2,
         num_workers=lanes,
         seed=1051,
         config=HyperConfig(
-            factors=FactorConfig(f_snap=3, f_snap_bytes=256)
+            factors=FactorConfig(f_snap=3, f_snap_bytes=256),
+            distributed=DistributedConfig(rank=0, world_size=world_size),
         ),
     )
 
@@ -136,7 +137,24 @@ class SourceReplayGate(unittest.TestCase):
                 encoding="utf-8",
             )
 
-    def test_resume_rejects_changed_logical_lane_count(self) -> None:
+    def test_lane_recovery_uses_the_delivered_checkpoint(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            baseline_loader = _loader()
+            try:
+                baseline = _stream(baseline_loader)
+            finally:
+                baseline_loader.close()
+            source = _loader()
+            iterator = iter(source)
+            try:
+                prefix = [_batch(next(iterator)) for _ in range(5)]
+                iterator.recover_lane(0)
+                self.assertEqual(prefix + [_batch(batch) for batch in iterator], baseline)
+            finally:
+                source.close()
+
+    def test_resume_rejects_changed_topology(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             source = _loader()
@@ -144,15 +162,19 @@ class SourceReplayGate(unittest.TestCase):
             next(iterator)
             state = source.state_dict()
             source.close()
-            changed = _loader(lanes=1)
-            try:
-                with self.assertRaisesRegex(
-                    ValueError,
-                    "fingerprint|logical lane count",
+            for changed in (_loader(lanes=1), _loader(world_size=2)):
+                with self.subTest(
+                    lanes=changed.num_workers,
+                    world_size=changed.config.distributed.world_size,
                 ):
-                    changed.load_state_dict(state)
-            finally:
-                changed.close()
+                    try:
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "fingerprint|logical lane count|world_size",
+                        ):
+                            changed.load_state_dict(state)
+                    finally:
+                        changed.close()
 
 
 if __name__ == "__main__":

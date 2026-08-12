@@ -148,9 +148,7 @@ class IterableStateTest(unittest.TestCase):
         lanes = state["lanes"]
         self.assertIsNotNone(lanes[0]["snapshot"])
         self.assertIsNone(lanes[1]["snapshot"])
-        self.assertLess(
-            lanes[0]["snapshot_arrival"], lanes[0]["delivered_arrival"]
-        )
+        self.assertLess(lanes[0]["snapshot_arrival"], lanes[0]["delivered_arrival"])
         self.assertTrue(any("f_snap_bytes" in str(item.message) for item in caught))
 
         resumed = _loader(cadence=3, maximum_bytes=256, large_lane=1)

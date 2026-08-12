@@ -68,9 +68,7 @@ class IterableLaneRuntime:
                     lane=identity,
                     delivered_arrival=delivered,
                     stateful=ring.stateful,
-                    snapshot_arrival=(
-                        None if selected is None else selected.arrival
-                    ),
+                    snapshot_arrival=(None if selected is None else selected.arrival),
                     snapshot=None if selected is None else selected.payload,
                 )
             )
@@ -90,21 +88,17 @@ class IterableLaneRuntime:
         lane_order: tuple[int, ...],
     ) -> deque[IterableLane]:
         """Rebuild an active lane from its delivered source checkpoint."""
-        if identity not in self.all_lanes:
+        if identity not in lane_order:
             raise ValueError("iterable recovery lane is not active")
         ring = self.rings[identity]
         if not ring.stateful:
             self._restart_notice()
             self.all_lanes.clear()
             self.rings.clear()
-            self.delivered_arrivals = {
-                lane: 0 for lane in range(self.lane_count)
-            }
+            self.delivered_arrivals = {lane: 0 for lane in range(self.lane_count)}
             for lane in range(self.lane_count):
                 self._build_lane(lane, None)
-            return deque(
-                self.all_lanes[lane] for lane in range(self.lane_count)
-            )
+            return deque(self.all_lanes[lane] for lane in range(self.lane_count))
         delivered = self.delivered_arrivals[identity]
         selected = ring.select(delivered)
         checkpoint = LaneCheckpoint(
@@ -138,7 +132,9 @@ class IterableLaneRuntime:
                 self.loader.worker_init_fn(identity)
         stateful = has_state_pair(dataset)
         if checkpoint is not None and checkpoint.stateful != stateful:
-            raise ValueError("iterable source stateful protocol changed since checkpoint")
+            raise ValueError(
+                "iterable source stateful protocol changed since checkpoint"
+            )
         start, selected = self._restore_selected(identity, dataset, checkpoint)
         with lane_worker_info(identity, self.lane_count, dataset, None):
             iterator = iter(dataset)

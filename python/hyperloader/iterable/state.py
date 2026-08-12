@@ -45,9 +45,7 @@ class LaneCheckpoint:
             raise TypeError("iterable lane snapshot must be bytes or None")
         raw_arrival = payload.get("snapshot_arrival")
         snapshot_arrival = (
-            None
-            if raw_arrival is None
-            else _integer(payload, "snapshot_arrival")
+            None if raw_arrival is None else _integer(payload, "snapshot_arrival")
         )
         if (snapshot is None) != (snapshot_arrival is None):
             raise ValueError(
