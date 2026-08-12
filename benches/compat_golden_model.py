@@ -12,6 +12,12 @@ from typing import Any
 FORMAT = "hyperloader.torch-golden"
 
 
+def canonical_system(value: str) -> str:
+    """Return the release-platform name for an operating-system label."""
+    normalized = value.strip().lower()
+    return "macos" if normalized == "darwin" else normalized
+
+
 def encode_value(value: Any) -> dict[str, Any]:
     """Encode one result with structural identity and exact numeric bits."""
     try:

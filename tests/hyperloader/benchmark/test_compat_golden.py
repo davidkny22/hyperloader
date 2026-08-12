@@ -15,12 +15,13 @@ import torch
 from benches.compat_golden_cases import generate_cases
 from benches.compat_golden_model import (
     FORMAT,
+    canonical_system,
     encode_value,
     read_document,
     validate_document,
     write_document,
 )
-from benches.generate_compat_golden import build_document, canonical_system
+from benches.generate_compat_golden import build_document
 from benches.verify_compat_golden import first_difference, verify_artifact
 
 

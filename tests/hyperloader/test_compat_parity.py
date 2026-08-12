@@ -12,7 +12,7 @@ import hyperloader
 import torch
 
 from benches.compat_candidate_cases import generate_candidate_cases
-from benches.compat_golden_model import read_document
+from benches.compat_golden_model import canonical_system, read_document
 from benches.verify_compat_golden import first_difference
 
 
@@ -48,7 +48,7 @@ class CompatParityGateTest(unittest.TestCase):
 
 def _artifact_path(*, torch_minor: str | None = None) -> Path:
     root = Path(__file__).parents[2]
-    system = platform.system().lower()
+    system = canonical_system(platform.system())
     minor = torch_minor or ".".join(torch.__version__.split("+")[0].split(".")[:2])
     path = root / "oracles" / "torch-golden" / system / f"torch-{minor}.json"
     if not path.is_file():

@@ -11,13 +11,7 @@ from pathlib import Path
 import torch
 
 from benches.compat_golden_cases import generate_cases, supports_in_order
-from benches.compat_golden_model import FORMAT, write_document
-
-
-def canonical_system(value: str) -> str:
-    """Return the release-platform name for an operating-system label."""
-    normalized = value.strip().lower()
-    return "macos" if normalized == "darwin" else normalized
+from benches.compat_golden_model import FORMAT, canonical_system, write_document
 
 
 def build_document(expected_minor: str, expected_system: str) -> dict[str, object]:
