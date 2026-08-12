@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import statistics
+from collections import Counter
 import time
 from collections.abc import Callable
 from typing import Any
@@ -122,15 +123,9 @@ def summarize_clocks(
         if (value := item.get("power_watts")) is not None
     ]
     count = len(samples)
-    bands = {
-        "at_least_2390_percent": 100 * sum(value >= 2390 for value in clocks) / count,
-        "2370_to_2389_percent": 100
-        * sum(2370 <= value < 2390 for value in clocks)
-        / count,
-        "2350_to_2369_percent": 100
-        * sum(2350 <= value < 2370 for value in clocks)
-        / count,
-        "below_2350_percent": 100 * sum(value < 2350 for value in clocks) / count,
+    residency = {
+        f"{clock:g}": 100.0 * occurrences / count
+        for clock, occurrences in sorted(Counter(clocks).items())
     }
     buckets = []
     start = 0.0
@@ -178,7 +173,7 @@ def summarize_clocks(
         ),
         "mean_power_watts": statistics.fmean(powers) if powers else None,
         "spark_hwmon_means": _rail_means(samples),
-        "residency": bands,
+        "residency_percent_by_clock_mhz": residency,
         "time_buckets": buckets,
     }
 

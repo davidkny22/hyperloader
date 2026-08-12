@@ -40,23 +40,26 @@ class DominanceGpuTimelineTest(unittest.TestCase):
 
     def test_clock_samples_are_assigned_to_ordered_halves(self) -> None:
         samples = [
-            {"elapsed_seconds": 1.0, "clock_mhz": 2380, "utilization_percent": 50},
-            {"elapsed_seconds": 44.0, "clock_mhz": 2360, "utilization_percent": 55},
-            {"elapsed_seconds": 46.0, "clock_mhz": 2340, "utilization_percent": 75},
-            {"elapsed_seconds": 89.0, "clock_mhz": 2330, "utilization_percent": 77},
+            {"elapsed_seconds": 1.0, "clock_mhz": 101, "utilization_percent": 50},
+            {"elapsed_seconds": 44.0, "clock_mhz": 97, "utilization_percent": 55},
+            {"elapsed_seconds": 46.0, "clock_mhz": 89, "utilization_percent": 75},
+            {"elapsed_seconds": 89.0, "clock_mhz": 83, "utilization_percent": 77},
         ]
 
         report = segments.split_clock_samples(samples, ("hyperloader", "torch"), 45.0)
 
         self.assertEqual(report["hyperloader"]["samples"], 2)
         self.assertEqual(report["torch"]["samples"], 2)
-        self.assertEqual(report["torch"]["residency"]["below_2350_percent"], 100.0)
+        self.assertEqual(
+            report["torch"]["residency_percent_by_clock_mhz"],
+            {"83": 50.0, "89": 50.0},
+        )
 
     def test_clock_summary_preserves_optional_machine_state(self) -> None:
         samples = [
             {
                 "elapsed_seconds": 1.0,
-                "clock_mhz": 2380,
+                "clock_mhz": 101,
                 "memory_clock_mhz": None,
                 "utilization_percent": 50,
                 "power_watts": 31.5,
@@ -64,7 +67,7 @@ class DominanceGpuTimelineTest(unittest.TestCase):
             },
             {
                 "elapsed_seconds": 2.0,
-                "clock_mhz": 2360,
+                "clock_mhz": 97,
                 "memory_clock_mhz": None,
                 "utilization_percent": 55,
                 "power_watts": 32.5,
@@ -94,12 +97,12 @@ class DominanceGpuTimelineTest(unittest.TestCase):
                         "clock_samples": [
                             {
                                 "elapsed_seconds": 1.0,
-                                "clock_mhz": 2380,
+                                "clock_mhz": 101,
                                 "utilization_percent": 50,
                             },
                             {
                                 "elapsed_seconds": 46.0,
-                                "clock_mhz": 2340,
+                                "clock_mhz": 89,
                                 "utilization_percent": 75,
                             },
                         ]

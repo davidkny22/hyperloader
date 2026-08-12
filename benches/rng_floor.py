@@ -164,8 +164,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--performance", type=Path, required=True)
     parser.add_argument("--efficiency", type=Path, required=True)
-    parser.add_argument("--performance-core", type=int, default=19)
-    parser.add_argument("--efficiency-core", type=int, default=0)
+    parser.add_argument("--performance-core", type=int, required=True)
+    parser.add_argument("--efficiency-core", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     result = evaluate_reports(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.metadata
-import os
 import time
 import unittest
 
@@ -19,10 +18,6 @@ def forbidden_decode(_value: torch.Tensor) -> torch.Tensor:
     raise AssertionError("selected decoder did not execute")
 
 
-@unittest.skipUnless(
-    os.environ.get("HYPERLOADER_SPARK_HARDWARE") == "1",
-    "requires the explicit Spark hardware assurance environment",
-)
 class SparkMachineDeliveryTest(unittest.TestCase):
     """Exercise calibrated controls through the installed public loader."""
 

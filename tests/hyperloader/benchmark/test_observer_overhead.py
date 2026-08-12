@@ -67,8 +67,8 @@ def _report(penalty: float = 0.0) -> dict[str, object]:
             "pair_count": 20,
             "platform": "test",
             "public_path_verified": True,
-            "python": "3.12.test",
-            "torch": "2.test",
+            "python": "runtime-version-from-record",
+            "torch": "torch-version-from-record",
         },
     }
 

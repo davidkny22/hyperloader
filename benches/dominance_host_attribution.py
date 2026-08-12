@@ -134,7 +134,7 @@ def main() -> None:
     parser.add_argument("--state-seconds", type=float, default=30.0)
     parser.add_argument("--profile-seconds", type=float, default=5.0)
     parser.add_argument("--spinner-library", type=Path, required=True)
-    parser.add_argument("--spinner-cores", type=int, nargs="+", default=(17, 18))
+    parser.add_argument("--spinner-cores", type=int, nargs="+", required=True)
     arguments = parser.parse_args()
     if arguments.state_seconds <= 0 or arguments.profile_seconds <= 0:
         raise ValueError("state and profile durations must be positive")

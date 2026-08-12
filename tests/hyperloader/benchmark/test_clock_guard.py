@@ -20,16 +20,17 @@ class SparkClockGuardTest(unittest.TestCase):
         failed = subprocess.CalledProcessError(7, ["benchmark"])
         with TemporaryDirectory() as directory:
             evidence = Path(directory) / "clock.json"
-            with patch(
-                "benches.spark_clock_guard._run",
-                side_effect=[no_processes, success, success],
-            ) as control, patch(
-                "benches.spark_clock_guard.subprocess.run", side_effect=failed
+            with (
+                patch(
+                    "benches.spark_clock_guard._run",
+                    side_effect=[no_processes, success, success],
+                ) as control,
+                patch("benches.spark_clock_guard.subprocess.run", side_effect=failed),
             ):
                 with self.assertRaises(subprocess.CalledProcessError):
                     run_guard(
                         evidence=evidence,
-                        clock_mhz=2400,
+                        clock_mhz=997,
                         command=["benchmark"],
                     )
 

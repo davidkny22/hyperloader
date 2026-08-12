@@ -32,6 +32,7 @@ def write_report(
     seed_no_draw_ns: float = 500.0,
     seed_component_ns: float = 1_000.0,
     seed_all_ns: float = 2_000.0,
+    numpy_version: str = "numpy-version-from-record",
 ) -> None:
     """Write one complete deterministic paired-core fixture."""
     with path.open("w", newline="", encoding="utf-8") as stream:
@@ -39,9 +40,9 @@ def write_report(
         for key, value in {
             "core": core,
             "governor": "performance",
-            "python": "3.12.3",
-            "torch": "2.10.0",
-            "numpy": "2.2.0",
+            "python": "runtime-version-from-record",
+            "torch": "torch-version-from-record",
+            "numpy": numpy_version,
             "gil_disabled_build": "False",
             "gil_enabled": "True",
             "iterations": 100,
@@ -94,9 +95,7 @@ class ShimFloorReportTest(unittest.TestCase):
             passing = MODULE.evaluate_pair(performance, efficiency, 19, 0)
             self.assertEqual(passing["decision"], "PASS")
             self.assertLessEqual(
-                passing["decisions"]["process"][
-                    "aggregate_eff_core_equivalents"
-                ],
+                passing["decisions"]["process"]["aggregate_eff_core_equivalents"],
                 MODULE.AGGREGATE_LIMIT,
             )
             self.assertEqual(
@@ -129,9 +128,7 @@ class ShimFloorReportTest(unittest.TestCase):
                 MODULE.read_report(path, 18)
             lines = path.read_text(encoding="utf-8").splitlines()
             path.write_text(
-                "\n".join(
-                    line for line in lines if ",thread_seed_all," not in line
-                )
+                "\n".join(line for line in lines if ",thread_seed_all," not in line)
                 + "\n",
                 encoding="utf-8",
             )
@@ -148,7 +145,10 @@ class ShimFloorReportTest(unittest.TestCase):
             cases = (
                 (
                     "unknown",
-                    [line.replace("process_seed_no_draw", "foreign_metric", 1) for line in lines],
+                    [
+                        line.replace("process_seed_no_draw", "foreign_metric", 1)
+                        for line in lines
+                    ],
                     "unknown shim-floor metric",
                 ),
                 (
@@ -163,7 +163,12 @@ class ShimFloorReportTest(unittest.TestCase):
                 ),
                 (
                     "governor",
-                    [line.replace("meta,governor,performance", "meta,governor,powersave") for line in lines],
+                    [
+                        line.replace(
+                            "meta,governor,performance", "meta,governor,powersave"
+                        )
+                        for line in lines
+                    ],
                     "governor",
                 ),
                 (
@@ -181,7 +186,14 @@ class ShimFloorReportTest(unittest.TestCase):
 
             duplicate = root / "duplicate.csv"
             duplicate.write_text(
-                "\n".join((*lines, next(line for line in lines if ",process_seed_no_draw,0," in line)))
+                "\n".join(
+                    (
+                        *lines,
+                        next(
+                            line for line in lines if ",process_seed_no_draw,0," in line
+                        ),
+                    )
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -205,12 +217,10 @@ class ShimFloorReportTest(unittest.TestCase):
             performance = root / "performance.csv"
             efficiency = root / "efficiency.csv"
             write_report(performance, 19)
-            write_report(efficiency, 0)
-            efficiency.write_text(
-                efficiency.read_text(encoding="utf-8").replace(
-                    "meta,numpy,2.2.0", "meta,numpy,2.3.0"
-                ),
-                encoding="utf-8",
+            write_report(
+                efficiency,
+                0,
+                numpy_version="different-numpy-version-from-record",
             )
             with self.assertRaisesRegex(ValueError, "disagree on numpy"):
                 MODULE.evaluate_pair(performance, efficiency, 19, 0)
@@ -220,7 +230,9 @@ class ShimFloorReportTest(unittest.TestCase):
             for path in (performance, efficiency):
                 path.write_text(
                     path.read_text(encoding="utf-8")
-                    .replace("meta,gil_disabled_build,False", "meta,gil_disabled_build,True")
+                    .replace(
+                        "meta,gil_disabled_build,False", "meta,gil_disabled_build,True"
+                    )
                     .replace("meta,gil_enabled,True", "meta,gil_enabled,False"),
                     encoding="utf-8",
                 )

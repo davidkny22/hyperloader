@@ -9,7 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
-from dominance_feeders import build_feeder, native_thread_affinity
+from dominance_feeders import (
+    available_worker_cpus,
+    build_feeder,
+    native_thread_affinity,
+)
 from dominance_protocol import SelectedConfig
 from dominance_tensor_memory import (
     RegisteredHostStorages,
@@ -140,7 +144,7 @@ def main() -> None:
     }
     live_observations = []
     live_sampler = ClockSampler()
-    with native_thread_affinity():
+    with native_thread_affinity(available_worker_cpus()):
         prefetch_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="hyperloader-tensor-prefetch"
         )

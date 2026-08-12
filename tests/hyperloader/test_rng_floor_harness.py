@@ -12,6 +12,8 @@ from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).parents[2]
+PERFORMANCE_CORE = 3
+EFFICIENCY_CORE = 5
 
 
 def _load_analyzer() -> ModuleType:
@@ -39,9 +41,9 @@ def _write_report(
     metadata = {
         "label": label,
         "core": str(core),
-        "cpu_model": "Synthetic Spark core",
+        "cpu_model": "synthetic-core",
         "governor": governor,
-        "max_freq_khz": "4000000" if label == "perf" else "2800000",
+        "max_freq_khz": "1000" if label == "perf" else "700",
         "trials": str(trials),
         "iterations": "100000",
         "warmup_iterations": "10000",
@@ -89,8 +91,8 @@ class RngFloorHarnessTest(unittest.TestCase):
         directory = Path(self.temporary.name)
         self.performance_path = directory / "perf.csv"
         self.efficiency_path = directory / "eff.csv"
-        _write_report(self.performance_path, "perf", 19)
-        _write_report(self.efficiency_path, "eff", 0, sample_ns=30.0)
+        _write_report(self.performance_path, "perf", PERFORMANCE_CORE)
+        _write_report(self.efficiency_path, "eff", EFFICIENCY_CORE, sample_ns=30.0)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -99,8 +101,8 @@ class RngFloorHarnessTest(unittest.TestCase):
         result = analyzer.evaluate_reports(
             analyzer.parse_report(self.performance_path),
             analyzer.parse_report(self.efficiency_path),
-            19,
-            0,
+            PERFORMANCE_CORE,
+            EFFICIENCY_CORE,
         )
         self.assertEqual(result["decision"], "PASS")
         self.assertEqual(
@@ -108,33 +110,44 @@ class RngFloorHarnessTest(unittest.TestCase):
         )
 
     def test_sample_bound_failure_is_red(self) -> None:
-        _write_report(self.performance_path, "perf", 19, sample_ns=26.0)
+        _write_report(self.performance_path, "perf", PERFORMANCE_CORE, sample_ns=26.0)
         result = analyzer.evaluate_reports(
             analyzer.parse_report(self.performance_path),
             analyzer.parse_report(self.efficiency_path),
-            19,
-            0,
+            PERFORMANCE_CORE,
+            EFFICIENCY_CORE,
         )
         self.assertEqual(result["decision"], "FAIL")
 
     def test_nonperformance_governor_is_rejected(self) -> None:
-        _write_report(self.performance_path, "perf", 19, governor="powersave")
+        _write_report(
+            self.performance_path,
+            "perf",
+            PERFORMANCE_CORE,
+            governor="powersave",
+        )
         with self.assertRaisesRegex(ValueError, "governor"):
             analyzer.validate_report(
-                analyzer.parse_report(self.performance_path), "perf", 19
+                analyzer.parse_report(self.performance_path),
+                "perf",
+                PERFORMANCE_CORE,
             )
 
     def test_wrong_core_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "wrong cluster or core"):
             analyzer.validate_report(
-                analyzer.parse_report(self.performance_path), "perf", 18
+                analyzer.parse_report(self.performance_path),
+                "perf",
+                EFFICIENCY_CORE,
             )
 
     def test_missing_trials_are_rejected(self) -> None:
-        _write_report(self.performance_path, "perf", 19, trials=9)
+        _write_report(self.performance_path, "perf", PERFORMANCE_CORE, trials=9)
         with self.assertRaisesRegex(ValueError, "repetition count"):
             analyzer.validate_report(
-                analyzer.parse_report(self.performance_path), "perf", 19
+                analyzer.parse_report(self.performance_path),
+                "perf",
+                PERFORMANCE_CORE,
             )
 
     def test_frequency_drop_is_rejected(self) -> None:
@@ -146,7 +159,7 @@ class RngFloorHarnessTest(unittest.TestCase):
             report.checksums,
         )
         with self.assertRaisesRegex(ValueError, "pinned window"):
-            analyzer.validate_report(changed, "perf", 19)
+            analyzer.validate_report(changed, "perf", PERFORMANCE_CORE)
 
     def test_contract_metadata_assumptions_are_rejected(self) -> None:
         report = analyzer.parse_report(self.performance_path)
@@ -166,7 +179,7 @@ class RngFloorHarnessTest(unittest.TestCase):
                     report.checksums,
                 )
                 with self.assertRaisesRegex(ValueError, message):
-                    analyzer.validate_report(changed, "perf", 19)
+                    analyzer.validate_report(changed, "perf", PERFORMANCE_CORE)
 
     def test_incomplete_metric_set_is_rejected(self) -> None:
         report = analyzer.parse_report(self.performance_path)
@@ -176,7 +189,7 @@ class RngFloorHarnessTest(unittest.TestCase):
             report.metadata, measurements, report.frequencies, report.checksums
         )
         with self.assertRaisesRegex(ValueError, "every required operation"):
-            analyzer.validate_report(changed, "perf", 19)
+            analyzer.validate_report(changed, "perf", PERFORMANCE_CORE)
 
     def test_zero_checksums_are_rejected(self) -> None:
         report = analyzer.parse_report(self.performance_path)
@@ -187,7 +200,7 @@ class RngFloorHarnessTest(unittest.TestCase):
             [0] * len(report.checksums),
         )
         with self.assertRaisesRegex(ValueError, "observable work"):
-            analyzer.validate_report(changed, "perf", 19)
+            analyzer.validate_report(changed, "perf", PERFORMANCE_CORE)
 
     def test_planted_metric_mutation_changes_the_decision(self) -> None:
         previous = os.environ.get("HYPERLOADER_RNG_FLOOR_MUTATION")
@@ -196,8 +209,8 @@ class RngFloorHarnessTest(unittest.TestCase):
             result = analyzer.evaluate_reports(
                 analyzer.parse_report(self.performance_path),
                 analyzer.parse_report(self.efficiency_path),
-                19,
-                0,
+                PERFORMANCE_CORE,
+                EFFICIENCY_CORE,
             )
         finally:
             if previous is None:

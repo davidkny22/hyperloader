@@ -14,6 +14,7 @@ cpu_idle = importlib.import_module("dominance_cpu_idle")
 wait_workload = importlib.import_module("dominance_wait_workload")
 alu_spinner = importlib.import_module("dominance_alu_spinner")
 wake_latency = importlib.import_module("dominance_wake_latency")
+SYNTHETIC_CPUS = (41, 73)
 
 
 class _SequencedEvent:
@@ -35,7 +36,7 @@ class DominanceWakeLatencyTest(unittest.TestCase):
     def test_cpuidle_snapshot_and_diff_preserve_every_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for cpu in (0, 19):
+            for cpu in SYNTHETIC_CPUS:
                 for state in (0, 1):
                     path = root / f"cpu{cpu}" / "cpuidle" / f"state{state}"
                     path.mkdir(parents=True)
@@ -52,14 +53,17 @@ class DominanceWakeLatencyTest(unittest.TestCase):
                     for name, value in values.items():
                         (path / name).write_text(value + "\n", encoding="utf-8")
             before = cpu_idle.snapshot_cpuidle(root)
-            state = root / "cpu19" / "cpuidle" / "state1"
-            (state / "time").write_text("120120\n", encoding="utf-8")
-            (state / "usage").write_text("31\n", encoding="utf-8")
+            state = root / f"cpu{SYNTHETIC_CPUS[1]}" / "cpuidle" / "state1"
+            initial_time = 100 + SYNTHETIC_CPUS[1] + 1
+            (state / "time").write_text(f"{initial_time + 120_000}\n", encoding="utf-8")
+            (state / "usage").write_text(f"{10 + 1 + 20}\n", encoding="utf-8")
             after = cpu_idle.snapshot_cpuidle(root)
 
         report = cpu_idle.diff_cpuidle(before, after, 1.0)
         row = next(
-            item for item in report["rows"] if item["cpu"] == 19 and item["state"] == 1
+            item
+            for item in report["rows"]
+            if item["cpu"] == SYNTHETIC_CPUS[1] and item["state"] == 1
         )
         self.assertEqual(len(report["rows"]), 4)
         self.assertEqual(row["time_delta_us"], 120000)
@@ -108,7 +112,7 @@ class DominanceWakeLatencyTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no longer than the period"):
             alu_spinner.DutyCycleAluSpinner(
                 Path("missing"),
-                19,
+                SYNTHETIC_CPUS[0],
                 active_microseconds=1_001,
                 period_microseconds=1_000,
             )

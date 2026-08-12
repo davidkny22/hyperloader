@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from benches.spark_cpuidle_guard import run_guard
 
+SYNTHETIC_CPUS = (41, 73)
+
 
 class SparkCpuIdleGuardTest(unittest.TestCase):
     """Require exact targets, evidence, and restoration on command failure."""
@@ -19,7 +21,7 @@ class SparkCpuIdleGuardTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory) / "cpu"
             targets = []
-            for cpu in (0, 19):
+            for cpu in SYNTHETIC_CPUS:
                 for state in (0, 1, 2):
                     path = root / f"cpu{cpu}" / "cpuidle" / f"state{state}" / "disable"
                     path.parent.mkdir(parents=True)
@@ -33,13 +35,16 @@ class SparkCpuIdleGuardTest(unittest.TestCase):
                 return str(value)
 
             failed = subprocess.CalledProcessError(7, ["diagnostic"])
-            with patch(
-                "benches.spark_cpuidle_guard._write_value", side_effect=write_value
-            ), patch("benches.spark_cpuidle_guard.subprocess.run", side_effect=failed):
+            with (
+                patch(
+                    "benches.spark_cpuidle_guard._write_value", side_effect=write_value
+                ),
+                patch("benches.spark_cpuidle_guard.subprocess.run", side_effect=failed),
+            ):
                 with self.assertRaises(subprocess.CalledProcessError):
                     run_guard(
                         evidence=evidence,
-                        cpus=(0, 19),
+                        cpus=SYNTHETIC_CPUS,
                         minimum_state=1,
                         command=["diagnostic"],
                         cpu_root=root,

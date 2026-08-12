@@ -28,15 +28,15 @@ class OverheadReportTest(TestCase):
 
     def _cell(self, ordinal: int) -> dict[str, object]:
         environment = EnvironmentMetadata(
-            captured_at="2026-08-12T00:00:00+00:00",
-            machine="spark",
-            operating_system="Linux",
-            kernel="6.11",
-            architecture="aarch64",
-            python="3.12.3",
-            commit="abcdef0",
-            cpu_governor="performance",
-            gpu_clock="locked-2400MHz",
+            captured_at="captured-at-from-record",
+            machine="machine-under-test",
+            operating_system="operating-system-under-test",
+            kernel="kernel-from-record",
+            architecture="architecture-under-test",
+            python="runtime-version-from-record",
+            commit="source-revision-from-record",
+            cpu_governor="governor-from-record",
+            gpu_clock="clock-from-record",
             cache_regime="warm",
             benchmark_mode=True,
             concurrent_load=False,
@@ -76,7 +76,7 @@ class OverheadReportTest(TestCase):
             )
         )
         cell["raw"] = {
-            "clock_samples": [{"clock_mhz": 2392, "utilization_percent": 99}],
+            "clock_samples": [{"clock_mhz": 997, "utilization_percent": 99}],
             "llc_bytes": 24,
             "resident_bytes": 192,
             "byte_split": {
@@ -138,3 +138,19 @@ class OverheadReportTest(TestCase):
             )
             with self.assertRaisesRegex(AssertionError, "copied-byte ceiling"):
                 overhead_report.verify_regime(campaign, "compute")
+
+    def test_control_validation_uses_the_run_record(self) -> None:
+        clock_request_mhz = 997
+        validated_mhz = overhead_report._validate_controls(
+            {
+                "gpu_clock": f"locked-{clock_request_mhz}MHz",
+                "cpu_governor": "governor-from-run",
+            },
+            {
+                "requested_mhz": clock_request_mhz,
+                "command_returncode": 0,
+                "reset_stdout": "reset-complete",
+            },
+            expected_cpu_governor="governor-from-run",
+        )
+        self.assertEqual(validated_mhz, clock_request_mhz)

@@ -46,7 +46,6 @@ def main() -> None:
     environment["HYPERLOADER_EXPECTED_INSTALL_ROOT"] = str(
         arguments.install_root.resolve()
     )
-    environment["HYPERLOADER_FRONTIER_METRICS"] = str(evidence / "metrics.json")
     environment["COVERAGE_FILE"] = str(evidence / ".coverage")
 
     include = ",".join(
@@ -77,6 +76,31 @@ def main() -> None:
     if verification.returncode != 0:
         raise SystemExit(verification.returncode)
 
+    measurement = _run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "--append",
+            "--branch",
+            f"--include={include}",
+            "scripts/frontier_budget_measurement.py",
+            "--metrics",
+            str(evidence / "metrics.json"),
+            "--expected-install-root",
+            str(arguments.install_root.resolve()),
+        ],
+        root,
+        environment,
+    )
+    (evidence / "measurement.txt").write_text(
+        measurement.stdout + measurement.stderr,
+        encoding="utf-8",
+    )
+    if measurement.returncode != 0:
+        raise SystemExit(measurement.returncode)
+
     coverage_result = _run(
         [
             sys.executable,
@@ -96,15 +120,15 @@ def main() -> None:
         raise SystemExit(coverage_result.returncode)
 
     mutation_environment = environment.copy()
-    mutation_environment.pop("HYPERLOADER_FRONTIER_METRICS")
     mutation_environment["HYPERLOADER_FRONTIER_MUTATION"] = "ignore-ceiling"
     mutation = _run(
         [
             sys.executable,
-            "-m",
-            "unittest",
-            "tests.hyperloader.test_frontier_budget",
-            "-v",
+            "scripts/frontier_budget_measurement.py",
+            "--metrics",
+            str(evidence / "mutation-metrics.json"),
+            "--expected-install-root",
+            str(arguments.install_root.resolve()),
         ],
         root,
         mutation_environment,

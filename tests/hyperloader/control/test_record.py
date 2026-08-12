@@ -38,7 +38,7 @@ def _record(machine: MachineIdentity) -> CalibrationRecord:
     return CalibrationRecord(
         machine=machine,
         source="measured fixture",
-        measured_at="2026-08-10",
+        measured_at="measurement-time-from-record",
         steal_curves=(
             StealCurve("all", "compute", compute),
             StealCurve("all", "stream", stream),

@@ -136,7 +136,7 @@ def main() -> None:
     parser.add_argument("--profile-ready-file", type=Path)
     parser.add_argument("--profiler-timeout-seconds", type=float, default=30.0)
     parser.add_argument("--spinner-library", type=Path, required=True)
-    parser.add_argument("--spinner-cores", type=int, nargs="+", default=(17, 18))
+    parser.add_argument("--spinner-cores", type=int, nargs="+", required=True)
     arguments = parser.parse_args()
     if arguments.half_seconds <= 0:
         raise ValueError("half duration must be positive")

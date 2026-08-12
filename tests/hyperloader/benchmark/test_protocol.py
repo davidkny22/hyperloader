@@ -22,15 +22,15 @@ from benches.benchmark_protocol import (
 def environment() -> EnvironmentMetadata:
     """Return pinned synthetic metadata for protocol checks."""
     return EnvironmentMetadata(
-        captured_at="2026-08-09T00:00:00+00:00",
-        machine="spark",
-        operating_system="Linux",
-        kernel="6.11",
-        architecture="aarch64",
-        python="3.12.3",
-        commit="0123456",
-        cpu_governor="performance",
-        gpu_clock="locked-2500MHz",
+        captured_at="captured-at-from-record",
+        machine="machine-under-test",
+        operating_system="operating-system-under-test",
+        kernel="kernel-from-record",
+        architecture="architecture-under-test",
+        python="runtime-version-from-record",
+        commit="source-revision-from-record",
+        cpu_governor="governor-from-record",
+        gpu_clock="clock-from-record",
         cache_regime="warm",
         benchmark_mode=True,
         concurrent_load=False,
@@ -91,10 +91,11 @@ class BenchmarkProtocolTest(unittest.TestCase):
         self.assertEqual(sum(cell.transport_bound for cell in WORKLOAD_MATRIX), 3)
 
     def test_environment_capture_records_host_and_controls(self) -> None:
+        source_revision = "source-revision-from-run"
         captured = capture_environment(
-            commit="abcdef0",
-            cpu_governor="performance",
-            gpu_clock="locked",
+            commit=source_revision,
+            cpu_governor="governor-from-run",
+            gpu_clock="clock-from-run",
             cache_regime="warm",
             benchmark_mode=True,
             concurrent_load=False,
@@ -102,7 +103,7 @@ class BenchmarkProtocolTest(unittest.TestCase):
         self.assertTrue(captured.machine)
         self.assertTrue(captured.operating_system)
         self.assertTrue(captured.architecture)
-        self.assertEqual(captured.commit, "abcdef0")
+        self.assertEqual(captured.commit, source_revision)
 
     def test_minimum_replication_and_upper_bound_decide(self) -> None:
         self.assertEqual(

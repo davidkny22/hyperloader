@@ -12,7 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).parents[3]
 BUILDER_PATH = ROOT / "tools" / "build_fallback_wheel.py"
 VERIFIER_PATH = ROOT / "tools" / "verify_wheel.py"
-SPEC = importlib.util.spec_from_file_location("fallback_wheel_builder_test", BUILDER_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "fallback_wheel_builder_test", BUILDER_PATH
+)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"cannot load {BUILDER_PATH}")
 BUILDER = importlib.util.module_from_spec(SPEC)
@@ -34,11 +36,11 @@ class FallbackWheelTest(unittest.TestCase):
     def test_wheel_is_reproducible_bounded_and_product_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            first = BUILDER.build_wheel(ROOT, output).read_bytes()
+            path = BUILDER.build_wheel(ROOT, output)
+            first = path.read_bytes()
             second = BUILDER.build_wheel(ROOT, output).read_bytes()
             self.assertEqual(first, second)
             self.assertLess(len(first), 5 * 1024 * 1024)
-            path = output / "hyperloader-0.1.0-py3-none-any.whl"
             report = VERIFIER.verify_wheel(path, kind="fallback", root=ROOT)
             self.assertEqual(report["native_files"], 0)
             with zipfile.ZipFile(path) as wheel:
@@ -48,9 +50,13 @@ class FallbackWheelTest(unittest.TestCase):
                 self.assertFalse(
                     any(name.endswith((".so", ".pyd", ".dylib")) for name in names)
                 )
-                self.assertIn("Root-Is-Purelib: true", wheel.read(
-                    "hyperloader-0.1.0.dist-info/WHEEL"
-                ).decode())
+                wheel_metadata = next(
+                    name for name in names if name.endswith(".dist-info/WHEEL")
+                )
+                self.assertIn(
+                    "Root-Is-Purelib: true",
+                    wheel.read(wheel_metadata).decode(),
+                )
 
     def test_build_graph_excludes_the_test_tree(self) -> None:
         reachable = VERIFIER.verify_build_graph(ROOT)
@@ -62,7 +68,9 @@ class FallbackWheelTest(unittest.TestCase):
             output = Path(directory)
             path = BUILDER.build_wheel(ROOT, output)
             with zipfile.ZipFile(path, "a") as wheel:
-                wheel.writestr("hyperloader/tests/test_leak.py", b"raise AssertionError\n")
+                wheel.writestr(
+                    "hyperloader/tests/test_leak.py", b"raise AssertionError\n"
+                )
             with self.assertRaises(AssertionError):
                 VERIFIER.verify_wheel(path, kind="fallback", root=ROOT)
 

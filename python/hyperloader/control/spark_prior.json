@@ -1,0 +1,75 @@
+{
+  "calibration": {
+    "bandwidth_curve": [
+      {
+        "bandwidth_loss_fraction": 0.0,
+        "bytes_per_second": 0.0,
+        "compute_loss_fraction": 0.0
+      },
+      {
+        "bandwidth_loss_fraction": 0.0011,
+        "bytes_per_second": 1000000000.0,
+        "compute_loss_fraction": 0.0023
+      }
+    ],
+    "bandwidth_provenance": "derived-prior",
+    "idle_state_tax": {
+      "loss_fraction": 0.23617,
+      "minimum_gap_nanoseconds": 1930000,
+      "powered_down_residency_fraction": 0.68708,
+      "warm_duty_fraction": 0.05
+    },
+    "measured_at": "2026-08-11",
+    "pin_cost": {
+      "bytes": 268435456,
+      "nanoseconds": 9000000
+    },
+    "schema": 2,
+    "source": "DGX Spark anchor and fixed-text campaigns",
+    "spawn_nanoseconds": 13800000,
+    "staged_copy_tax": {
+      "batch_bytes": 262144,
+      "loss_fraction": 0.1329
+    },
+    "steal_curves": [
+      {
+        "cluster": "performance-first",
+        "points": [
+          {"cores": 1, "loss_fraction": 0.0204},
+          {"cores": 4, "loss_fraction": 0.061},
+          {"cores": 8, "loss_fraction": 0.14},
+          {"cores": 16, "loss_fraction": 0.216}
+        ],
+        "provenance": "derived-prior",
+        "work_shape": "compute"
+      },
+      {
+        "cluster": "efficiency",
+        "points": [
+          {"cores": 1, "loss_fraction": 0.0075},
+          {"cores": 4, "loss_fraction": 0.013}
+        ],
+        "provenance": "derived-prior",
+        "work_shape": "compute"
+      },
+      {
+        "cluster": "performance-first",
+        "points": [
+          {"cores": 4, "loss_fraction": 0.204},
+          {"cores": 8, "loss_fraction": 0.32},
+          {"cores": 16, "loss_fraction": 0.404}
+        ],
+        "provenance": "derived-prior",
+        "work_shape": "stream"
+      }
+    ]
+  },
+  "match": {
+    "efficiency_frequency_hz": 2808000000,
+    "kernel_architecture": "aarch64",
+    "logical_cpus": 20,
+    "memory_range_bytes": [123480309760, 139586437120],
+    "model_markers": ["nvidia grace", "cortex-x925", "cortex-a725"],
+    "performance_frequency_hz": 4004000000
+  }
+}

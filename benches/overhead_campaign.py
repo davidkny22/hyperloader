@@ -14,8 +14,6 @@ from overhead_environment import cpu_governor, platform_facts, total_llc_bytes
 from overhead_results import clock_samples_valid, summarize_splits
 from paired_benchmark import decode_observation
 
-REQUESTED_GPU_CLOCK_MHZ = 2400
-
 
 def _environment(arguments: argparse.Namespace) -> EnvironmentMetadata:
     facts = platform_facts()
@@ -24,7 +22,7 @@ def _environment(arguments: argparse.Namespace) -> EnvironmentMetadata:
         machine=arguments.machine,
         commit=arguments.commit,
         cpu_governor=cpu_governor(),
-        gpu_clock=f"locked-{REQUESTED_GPU_CLOCK_MHZ}MHz",
+        gpu_clock=f"locked-{arguments.gpu_clock_mhz}MHz",
         cache_regime="warm",
         benchmark_mode=True,
         concurrent_load=False,
@@ -63,7 +61,9 @@ def _run_regime(
         with cell_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(cell, sort_keys=True) + "\n")
         if not clock_samples_valid(cell["raw"]["clock_samples"]):
-            raise RuntimeError(f"{regime} cell {ordinal} has no loaded GPU clock samples")
+            raise RuntimeError(
+                f"{regime} cell {ordinal} has no loaded GPU clock samples"
+            )
         if smoke:
             return {"status": "smoke", "cells": 1}
         observations.append(decode_observation(cell))
@@ -86,6 +86,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--machine", required=True)
+    parser.add_argument("--gpu-clock-mhz", type=int, required=True)
     parser.add_argument("--threshold-percent", type=float, default=2.0)
     parser.add_argument("--half-seconds", type=float, default=45.0)
     parser.add_argument("--smoke", action="store_true")

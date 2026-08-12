@@ -74,7 +74,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=("spinner", "quiet"), required=True)
     parser.add_argument("--half-seconds", type=float, default=45.0)
     parser.add_argument("--spinner-library", type=Path)
-    parser.add_argument("--spinner-cores", type=int, nargs="*", default=(17, 18))
+    parser.add_argument("--spinner-cores", type=int, nargs="+", required=True)
     arguments = parser.parse_args()
     if arguments.half_seconds <= 0:
         raise ValueError("half duration must be positive")

@@ -10,7 +10,6 @@ from pathlib import Path
 
 from benchmark_protocol import EnvironmentMetadata, evaluate
 from identity_cell import WORKLOAD_REGIMES, run_identity_cell
-from overhead_campaign import REQUESTED_GPU_CLOCK_MHZ
 from overhead_environment import cpu_governor, platform_facts, total_llc_bytes
 from overhead_results import clock_samples_valid
 from paired_benchmark import decode_observation
@@ -28,7 +27,7 @@ def _environment(arguments: argparse.Namespace) -> EnvironmentMetadata:
         machine=arguments.machine,
         commit=arguments.commit,
         cpu_governor=cpu_governor(),
-        gpu_clock=f"locked-{REQUESTED_GPU_CLOCK_MHZ}MHz",
+        gpu_clock=f"locked-{arguments.gpu_clock_mhz}MHz",
         cache_regime="warm",
         benchmark_mode=True,
         concurrent_load=False,
@@ -81,6 +80,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--machine", required=True)
+    parser.add_argument("--gpu-clock-mhz", type=int, required=True)
     parser.add_argument("--half-seconds", type=float, default=45.0)
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()

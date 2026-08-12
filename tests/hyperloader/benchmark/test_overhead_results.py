@@ -21,8 +21,8 @@ class OverheadResultsTest(unittest.TestCase):
         self.assertTrue(
             clock_samples_valid(
                 [
-                    {"clock_mhz": 208, "utilization_percent": 0},
-                    {"clock_mhz": 2255, "utilization_percent": 98},
+                    {"clock_mhz": 101, "utilization_percent": 0},
+                    {"clock_mhz": 997, "utilization_percent": 98},
                 ]
             )
         )
@@ -30,7 +30,7 @@ class OverheadResultsTest(unittest.TestCase):
             clock_samples_valid([{"clock_mhz": 0, "utilization_percent": 99}])
         )
         self.assertFalse(
-            clock_samples_valid([{"clock_mhz": 208, "utilization_percent": 0}])
+            clock_samples_valid([{"clock_mhz": 101, "utilization_percent": 0}])
         )
 
     def test_split_summary_averages_equal_duration_cells(self) -> None:
@@ -69,23 +69,21 @@ class OverheadResultsTest(unittest.TestCase):
             import overhead_campaign
 
             environment = EnvironmentMetadata(
-                captured_at="2026-08-09T00:00:00+00:00",
-                machine="spark",
-                operating_system="Linux",
-                kernel="6.11",
-                architecture="aarch64",
-                python="3.12.3",
-                commit="abcdef0",
-                cpu_governor="performance",
-                gpu_clock="locked-2400MHz",
+                captured_at="captured-at-from-record",
+                machine="machine-under-test",
+                operating_system="operating-system-under-test",
+                kernel="kernel-from-record",
+                architecture="architecture-under-test",
+                python="runtime-version-from-record",
+                commit="source-revision-from-record",
+                cpu_governor="governor-from-record",
+                gpu_clock="clock-from-record",
                 cache_regime="warm",
                 benchmark_mode=True,
                 concurrent_load=False,
             )
             rejected = {
-                "raw": {
-                    "clock_samples": [{"clock_mhz": 2392, "utilization_percent": 0}]
-                }
+                "raw": {"clock_samples": [{"clock_mhz": 997, "utilization_percent": 0}]}
             }
             with (
                 TemporaryDirectory() as directory,
@@ -102,7 +100,7 @@ class OverheadResultsTest(unittest.TestCase):
                         llc_bytes=24 * 1024 * 1024,
                         smoke=True,
                     )
-                self.assertIn("2392", (output / "compute-cells.jsonl").read_text())
+                self.assertIn("997", (output / "compute-cells.jsonl").read_text())
         finally:
             sys.path.remove(str(BENCHES))
 

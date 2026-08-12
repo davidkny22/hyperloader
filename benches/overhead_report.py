@@ -36,25 +36,40 @@ def verify_regime(campaign: Path, regime: str) -> dict[str, Any]:
     """Recompute one terminal decision and validate its raw protocol evidence."""
     cells = _read_cells(campaign / f"{regime}-cells.jsonl")
     expected_orders = [
-        ("counterfactual", "loader") if ordinal % 2 == 0 else ("loader", "counterfactual")
+        ("counterfactual", "loader")
+        if ordinal % 2 == 0
+        else ("loader", "counterfactual")
         for ordinal in range(len(cells))
     ]
-    observed_orders = [(cell["first"]["system"], cell["second"]["system"]) for cell in cells]
+    observed_orders = [
+        (cell["first"]["system"], cell["second"]["system"]) for cell in cells
+    ]
     if observed_orders != expected_orders:
         raise AssertionError(f"{regime} feeder order did not alternate")
     for ordinal, cell in enumerate(cells):
         if cell["ordinal"] != ordinal or cell["uninterrupted"] is not True:
-            raise AssertionError(f"{regime} cell {ordinal} broke continuity or ordinal order")
-        if cell["first"]["duration_seconds"] != 45.0 or cell["second"]["duration_seconds"] != 45.0:
-            raise AssertionError(f"{regime} cell {ordinal} did not use 45-second halves")
+            raise AssertionError(
+                f"{regime} cell {ordinal} broke continuity or ordinal order"
+            )
+        if (
+            cell["first"]["duration_seconds"] != 45.0
+            or cell["second"]["duration_seconds"] != 45.0
+        ):
+            raise AssertionError(
+                f"{regime} cell {ordinal} did not use 45-second halves"
+            )
         if not cell["first"]["warmed"] or not cell["second"]["warmed"]:
             raise AssertionError(f"{regime} cell {ordinal} includes an unwarmed half")
         if not clock_samples_valid(cell["raw"]["clock_samples"]):
-            raise AssertionError(f"{regime} cell {ordinal} has invalid loaded clock samples")
+            raise AssertionError(
+                f"{regime} cell {ordinal} has invalid loaded clock samples"
+            )
         resident_bytes = int(cell["raw"]["resident_bytes"])
         llc_bytes = int(cell["raw"]["llc_bytes"])
         if resident_bytes < 8 * llc_bytes:
-            raise AssertionError(f"{regime} cell {ordinal} did not defeat LLC residency")
+            raise AssertionError(
+                f"{regime} cell {ordinal} did not defeat LLC residency"
+            )
 
     recomputed = evaluate(
         [decode_observation(cell) for cell in cells],
@@ -88,26 +103,44 @@ def verify_regime(campaign: Path, regime: str) -> dict[str, Any]:
     }
 
 
-def verify_campaign(campaign: Path, clock_control: Path) -> dict[str, Any]:
-    """Verify the guard record and both phase-type terminal decisions."""
-    environment = _read_json(campaign / "environment.json")
-    if environment["gpu_clock"] != "locked-2400MHz":
-        raise AssertionError("campaign environment does not name the 2400 MHz lock")
-    if environment["cpu_governor"] != "performance":
-        raise AssertionError("campaign did not use the performance governor")
-    guard = _read_json(clock_control)
-    if guard.get("requested_mhz") != 2400 or guard.get("command_returncode") != 0:
+def _validate_controls(
+    environment: dict[str, Any],
+    guard: dict[str, Any],
+    *,
+    expected_cpu_governor: str,
+) -> int:
+    requested_mhz = int(guard.get("requested_mhz", 0))
+    if requested_mhz <= 0 or guard.get("command_returncode") != 0:
         raise AssertionError("clock guard did not execute the requested campaign")
+    if environment["gpu_clock"] != f"locked-{requested_mhz}MHz":
+        raise AssertionError("campaign environment and clock guard disagree")
+    if environment["cpu_governor"] != expected_cpu_governor:
+        raise AssertionError("campaign did not use the requested CPU governor")
     if not guard.get("reset_stdout"):
         raise AssertionError("clock guard has no reset evidence")
+    return requested_mhz
+
+
+def verify_campaign(
+    campaign: Path,
+    clock_control: Path,
+    *,
+    expected_cpu_governor: str,
+) -> dict[str, Any]:
+    """Verify the guard record and both phase-type terminal decisions."""
+    environment = _read_json(campaign / "environment.json")
+    guard = _read_json(clock_control)
+    requested_mhz = _validate_controls(
+        environment,
+        guard,
+        expected_cpu_governor=expected_cpu_governor,
+    )
     return {
         "commit": environment["commit"],
         "machine": environment["machine"],
-        "gpu_clock_request_mhz": guard["requested_mhz"],
+        "gpu_clock_request_mhz": requested_mhz,
         "clock_reset": True,
-        "regimes": {
-            regime: verify_regime(campaign, regime) for regime in REGIMES
-        },
+        "regimes": {regime: verify_regime(campaign, regime) for regime in REGIMES},
     }
 
 
@@ -115,9 +148,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--campaign", type=Path, required=True)
     parser.add_argument("--clock-control", type=Path, required=True)
+    parser.add_argument("--expected-cpu-governor", required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
-    report = verify_campaign(arguments.campaign, arguments.clock_control)
+    report = verify_campaign(
+        arguments.campaign,
+        arguments.clock_control,
+        expected_cpu_governor=arguments.expected_cpu_governor,
+    )
     arguments.output.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

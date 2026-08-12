@@ -30,9 +30,9 @@ def write_report(path: Path, core: int, full_seeded_ns: float = 5_000.0) -> None
         for key, value in {
             "core": core,
             "governor": "performance",
-            "python": "3.12.3",
-            "torch": "2.10.0",
-            "numpy": "2.2.0",
+            "python": "runtime-version-from-record",
+            "torch": "torch-version-from-record",
+            "numpy": "numpy-version-from-record",
             "iterations": 100,
             "warmup_iterations": 10,
             "trials": 10,
@@ -83,9 +83,7 @@ class RngInstallReportTest(unittest.TestCase):
                 MODULE.read_report(path, 18)
             lines = path.read_text(encoding="utf-8").splitlines()
             path.write_text(
-                "\n".join(
-                    line for line in lines if ",full_seeded_sample," not in line
-                )
+                "\n".join(line for line in lines if ",full_seeded_sample," not in line)
                 + "\n",
                 encoding="utf-8",
             )

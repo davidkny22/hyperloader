@@ -14,7 +14,9 @@ ROOT = Path(__file__).parents[3]
 
 def _load_report_module() -> ModuleType:
     path = ROOT / "benches" / "telemetry_overhead_report.py"
-    spec = importlib.util.spec_from_file_location("telemetry_overhead_report_test", path)
+    spec = importlib.util.spec_from_file_location(
+        "telemetry_overhead_report_test", path
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
@@ -26,7 +28,9 @@ def _load_report_module() -> ModuleType:
 report_module = _load_report_module()
 
 
-def _report(*, telemetry_penalty: float = 0.0, cpu_ns_per_batch: float = 100.0) -> dict[str, object]:
+def _report(
+    *, telemetry_penalty: float = 0.0, cpu_ns_per_batch: float = 100.0
+) -> dict[str, object]:
     batches = 4096
     baseline_wall = 100_000_000
     baseline_cpu = 90_000_000
@@ -79,10 +83,10 @@ def _report(*, telemetry_penalty: float = 0.0, cpu_ns_per_batch: float = 100.0) 
             "platform": "test-platform",
             "process_clock_resolution_ns": 100,
             "public_path_verified": True,
-            "python": "3.12.test",
+            "python": "runtime-version-from-record",
             "target_sample_rate": 80_000,
             "telemetry_summary_verified": True,
-            "torch": "2.test",
+            "torch": "torch-version-from-record",
             "wall_batches_per_half": 128,
         },
         "cpu_pairs": [dict(pair) for pair in telemetry_pairs],
