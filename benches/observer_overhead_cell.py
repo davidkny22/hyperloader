@@ -43,6 +43,7 @@ def _close(loader: Any, iterator: Any) -> None:
 def _half(kind: str, dataset: torch.Tensor, observed: bool) -> dict[str, int]:
     loader = _loader(kind, dataset)
     iterator = iter(loader)
+    observe = (lambda: diagnose(loader)) if observed else (lambda: None)
     checksum = 0
     batches = 0
     next(iterator)
@@ -52,9 +53,12 @@ def _half(kind: str, dataset: torch.Tensor, observed: bool) -> dict[str, int]:
         for batch in iterator:
             checksum += int(batch[0].item()) + int(batch[-1].item())
             batches += 1
-            if observed and batches == dataset.shape[0] // BATCH_SIZE // 2:
-                report = diagnose(loader)
-                if report.record["observation_mode"] != "passive":
+            if batches == dataset.shape[0] // BATCH_SIZE // 2:
+                report = observe()
+                if (
+                    report is not None
+                    and report.record["observation_mode"] != "passive"
+                ):
                     raise AssertionError("observer did not use the passive path")
         wall_ns = time.perf_counter_ns() - started_wall
         cpu_ns = time.process_time_ns() - started_cpu
