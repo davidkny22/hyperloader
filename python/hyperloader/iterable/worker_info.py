@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from hyperloader.process.worker_info import WorkerInfoContext
+
 
 @contextmanager
 def lane_worker_info(
@@ -15,16 +17,9 @@ def lane_worker_info(
     seed: int | None,
 ) -> Iterator[None]:
     """Publish one immutable logical-lane identity around user code."""
-    from torch.utils.data._utils import worker as worker_module
-
-    prior = worker_module._worker_info
-    worker_module._worker_info = worker_module.WorkerInfo(
-        id=lane,
-        num_workers=lane_count,
-        seed=seed,
-        dataset=dataset,
-    )
+    context = WorkerInfoContext(lane, lane_count, dataset)
+    context.begin_sample(seed)
     try:
         yield
     finally:
-        worker_module._worker_info = prior
+        context.clear()

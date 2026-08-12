@@ -2,5 +2,12 @@
 
 from .factory import logical_lane_count, prepare_iterable_source
 from .iterator import IterableIterator
+from .rng import IterableRngSession, iterable_coordinate
 
-__all__ = ["IterableIterator", "logical_lane_count", "prepare_iterable_source"]
+__all__ = [
+    "IterableIterator",
+    "IterableRngSession",
+    "iterable_coordinate",
+    "logical_lane_count",
+    "prepare_iterable_source",
+]

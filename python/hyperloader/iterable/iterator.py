@@ -7,8 +7,11 @@ from collections import deque
 from collections.abc import Iterator
 from typing import Any
 
+from hyperloader.rng import _user_code_context
+
 from .factory import logical_lane_count
 from .lane import IterableLane
+from .rng import IterableRngSession
 from .worker_info import lane_worker_info
 
 
@@ -97,20 +100,34 @@ class IterableIterator(Iterator[Any]):
         width = self._loader.batch_size or 1
         values = []
         exhausted = False
-        while len(values) < width:
-            with lane_worker_info(
-                lane.identity,
-                self._lane_count,
-                lane.dataset,
-                None,
-            ):
-                try:
-                    value = next(lane.iterator)
-                except StopIteration:
-                    exhausted = True
-                    break
-            values.append(value)
-            lane.arrival += 1
+        session = IterableRngSession()
+        try:
+            while len(values) < width:
+                sample = session.install(
+                    self._loader.root_seed,
+                    self._epoch,
+                    self._loader._distributed_topology.rank,
+                    lane.identity,
+                    lane.arrival,
+                )
+                with (
+                    lane_worker_info(
+                        lane.identity,
+                        self._lane_count,
+                        lane.dataset,
+                        sample[0],
+                    ),
+                    _user_code_context(sample),
+                ):
+                    try:
+                        value = next(lane.iterator)
+                    except StopIteration:
+                        exhausted = True
+                        break
+                values.append(value)
+                lane.arrival += 1
+        finally:
+            session.close()
         return values, exhausted
 
     def _finish_epoch(self) -> None:
