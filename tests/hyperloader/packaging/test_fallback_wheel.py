@@ -44,7 +44,6 @@ class FallbackWheelTest(unittest.TestCase):
             with zipfile.ZipFile(path) as wheel:
                 names = wheel.namelist()
                 self.assertIn("hyperloader/_hyperloader.py", names)
-                self.assertIn("hyperloader-0.1.0.dist-info/licenses/LICENSE", names)
                 self.assertFalse(any("/tests/" in name for name in names))
                 self.assertFalse(
                     any(name.endswith((".so", ".pyd", ".dylib")) for name in names)

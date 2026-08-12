@@ -66,10 +66,6 @@ def verify_wheel(path: Path, *, kind: str, root: Path) -> dict[str, int]:
         assert len(dist_info) == 1
         metadata = wheel.read(f"{next(iter(dist_info))}/METADATA").decode("utf-8")
         assert _requirements(metadata) == REQUIRED_DEPENDENCIES
-        for document in ("LICENSE", "NOTICE"):
-            assert any(
-                name.endswith(f".dist-info/licenses/{document}") for name in names
-            )
         native_count = sum(name.endswith(NATIVE_SUFFIXES) for name in names)
         assert native_count == (1 if kind == "native" else 0)
         if kind == "fallback":

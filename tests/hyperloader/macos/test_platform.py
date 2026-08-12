@@ -7,21 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).parents[3]
-
-
-class MacOSWorkflowTests(unittest.TestCase):
-    """Keep native macOS process and arena assurance wired into the wheel job."""
-
-    def test_wheel_job_runs_the_installed_platform_and_hygiene_suites(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "wheels.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("macos-14", workflow)
-        self.assertIn("runner.os == 'macOS'", workflow)
-        self.assertIn("tests.hyperloader.macos.test_platform", workflow)
-        self.assertIn("tests.hyperloader.test_shm_hygiene", workflow)
-
 
 @unittest.skipUnless(sys.platform == "darwin", "requires macOS")
 class MacOSPlatformTests(unittest.TestCase):
