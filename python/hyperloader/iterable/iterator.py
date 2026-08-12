@@ -9,6 +9,7 @@ from typing import Any
 
 from hyperloader.rng import _user_code_context
 
+from . import sharding
 from .factory import logical_lane_count
 from .lane import IterableLane
 from .rng import IterableRngSession
@@ -90,6 +91,12 @@ class IterableIterator(Iterator[Any]):
     def _build_lane(self, identity: int) -> IterableLane:
         payload = self._loader._iterable_payload
         dataset = self._loader.dataset if payload is None else pickle.loads(payload)
+        dataset = sharding.apply_source_shard(
+            dataset,
+            self._loader._distributed_topology,
+            identity,
+            self._lane_count,
+        )
         with lane_worker_info(identity, self._lane_count, dataset, None):
             if self._loader.worker_init_fn is not None:
                 self._loader.worker_init_fn(identity)
