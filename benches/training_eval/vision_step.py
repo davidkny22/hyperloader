@@ -1,4 +1,4 @@
-"""Forward, backward, optimizer, and device-transfer execution for the dial."""
+"""Forward, backward, and optimizer execution for vision anchors."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import torch
 from torch import nn
 from torch.nn import functional
 
-from .feeders import TokenBatch
+from .image_batches import ImageBatch
 
 
-class TransformerStepRunner:
-    """Keep one model and optimizer alive across all feeder halves."""
+class VisionStepRunner:
+    """Keep one vision model and AdamW optimizer alive across feeder halves."""
 
     def __init__(
         self,
@@ -27,9 +27,8 @@ class TransformerStepRunner:
         if precision not in {"float32", "float16", "bfloat16"}:
             raise ValueError("precision must be float32, float16, or bfloat16")
         if precision == "float16" and device.type != "cuda":
-            raise ValueError("float16 dial execution requires CUDA")
+            raise ValueError("float16 vision execution requires CUDA")
         self.model = model.to(device)
-        self.vocabulary_size = int(model.vocabulary_size)
         self.device = device
         self.precision = precision
         self.non_blocking = non_blocking
@@ -38,18 +37,14 @@ class TransformerStepRunner:
             "cuda", enabled=precision == "float16"
         )
 
-    def step(self, batch: TokenBatch) -> torch.Tensor:
-        """Execute one real next-token forward, backward, and optimizer step."""
-        tokens = batch.tokens.to(self.device, non_blocking=self.non_blocking)
-        inputs = tokens[:, :-1]
-        targets = tokens[:, 1:]
+    def step(self, batch: ImageBatch) -> torch.Tensor:
+        """Execute one real image-classification optimizer step."""
+        batch.validate()
+        images = batch.images.to(self.device, non_blocking=self.non_blocking)
+        labels = batch.labels.to(self.device, non_blocking=self.non_blocking)
         self.optimizer.zero_grad(set_to_none=True)
         with self._autocast():
-            logits = self.model(inputs)
-            loss = functional.cross_entropy(
-                logits.reshape(-1, self.vocabulary_size),
-                targets.reshape(-1),
-            )
+            loss = functional.cross_entropy(self.model(images), labels)
         self._scaler.scale(loss).backward()
         self._scaler.step(self.optimizer)
         self._scaler.update()
