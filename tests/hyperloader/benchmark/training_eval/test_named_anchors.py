@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from unittest.mock import patch
 
 import torch
 
@@ -62,3 +63,17 @@ def test_resnet_finetune_step_and_image_collation_are_executable() -> None:
         non_blocking=False,
     )
     assert math.isfinite(runner.finish(runner.step(batch)))
+
+
+def test_image_batch_exposes_the_public_pinning_protocol() -> None:
+    batch = ImageBatch(
+        torch.zeros((2, 3, 4, 4)),
+        torch.zeros(2, dtype=torch.int64),
+        hashlib.sha256(b"images").hexdigest(),
+    )
+    with patch.object(
+        torch.Tensor, "pin_memory", side_effect=lambda: torch.empty(1)
+    ) as pin:
+        pinned = batch.pin_memory()
+    assert pinned.digest == batch.digest
+    assert pin.call_count == 2

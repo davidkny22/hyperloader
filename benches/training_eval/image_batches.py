@@ -32,3 +32,11 @@ class ImageBatch:
     def samples(self) -> int:
         """Return the number of images in this batch."""
         return int(self.images.shape[0])
+
+    def pin_memory(self) -> ImageBatch:
+        """Return the same logical batch backed by accelerator-pinned host memory."""
+        return ImageBatch(
+            self.images.pin_memory(),
+            self.labels.pin_memory(),
+            self.digest,
+        )

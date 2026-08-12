@@ -36,6 +36,10 @@ class TokenBatch:
         """Return the number of training samples in the batch."""
         return int(self.tokens.shape[0])
 
+    def pin_memory(self) -> TokenBatch:
+        """Return the same logical batch backed by accelerator-pinned host memory."""
+        return TokenBatch(self.tokens.pin_memory(), self.digest)
+
 
 def collate_token_batch(rows: list[torch.Tensor]) -> TokenBatch:
     """Stack pre-tokenized samples and hash the delivered tensor exactly."""

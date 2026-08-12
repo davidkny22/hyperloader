@@ -126,14 +126,10 @@ def _pinning_collate(
 ) -> Callable[[list[Any]], TrainingBatch]:
     def pinned(rows: list[Any]) -> TrainingBatch:
         batch = collate(rows)
-        tokens = getattr(batch, "tokens", None)
-        if tokens is not None:
-            return type(batch)(tokens.pin_memory(), batch.digest)
-        images = getattr(batch, "images", None)
-        labels = getattr(batch, "labels", None)
-        if images is not None and labels is not None:
-            return type(batch)(images.pin_memory(), labels.pin_memory(), batch.digest)
-        raise TypeError("pinned SPDL delivery requires a tensor-backed training batch")
+        pin = getattr(batch, "pin_memory", None)
+        if pin is None:
+            raise TypeError("pinned SPDL delivery requires a pinnable training batch")
+        return pin()
 
     return pinned
 
