@@ -7,7 +7,10 @@ import re
 import zipfile
 from pathlib import Path, PurePosixPath
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised by the CPython 3.10 CI cell.
+    import tomli as tomllib
 
 WHEEL_SIZE_LIMIT = 5 * 1024 * 1024
 REQUIRED_DEPENDENCIES = {
@@ -15,6 +18,7 @@ REQUIRED_DEPENDENCIES = {
     "torch": frozenset({">=2.10", "<2.14"}),
 }
 NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
+BUILD_ARTIFACT_SUFFIXES = NATIVE_SUFFIXES + (".pdb",)
 
 
 def verify_build_graph(root: Path) -> set[str]:
@@ -32,7 +36,7 @@ def verify_build_graph(root: Path) -> set[str]:
         for path in package_root.rglob("*")
         if path.is_file()
         and "__pycache__" not in path.parts
-        and not path.name.endswith(NATIVE_SUFFIXES)
+        and not path.name.endswith(BUILD_ARTIFACT_SUFFIXES)
     }
 
 

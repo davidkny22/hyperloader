@@ -13,27 +13,88 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-2025]
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15-dev", "3.14t", "3.15t-dev"]
+        python:
+          - { setup: "3.10", maturin: "3.10" }
+          - { setup: "3.11", maturin: "3.11" }
+          - { setup: "3.12", maturin: "3.12" }
+          - { setup: "3.13", maturin: "3.13" }
+          - { setup: "3.14", maturin: "3.14" }
+          - { setup: "3.15-dev", maturin: "3.15" }
+          - { setup: "3.14t", maturin: "3.14t" }
+          - { setup: "3.15t-dev", maturin: "3.15t" }
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python }}
-      - uses: PyO3/maturin-action@v1
+          python-version: ${{ matrix.python.setup }}
+      - if: matrix.python.setup == '3.10'
+        run: python -m pip install "tomli>=2"
+      - if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --interpreter ${{ matrix.python.maturin }} --out dist
+          manylinux: "2014"
+      - if: runner.os != 'Linux'
+        uses: PyO3/maturin-action@v1
         with:
           command: build
           args: --release --interpreter python --out dist
-          manylinux: "2014"
       - run: python tools/verify_wheel.py --kind native dist/*
-      - run: python -m pip install --force-reinstall dist/*
-      - run: python -c "from hyperloader import DataLoader, _hyperloader; assert not getattr(_hyperloader, 'IS_FALLBACK', True); assert list(DataLoader(range(4), batch_size=2, num_workers=0))"
-      - if: runner.os == 'macOS'
+      - if: runner.os == 'Linux' || !startsWith(matrix.python.setup, '3.15')
+        run: python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu "numpy>=2.0" "torch>=2.10,<2.14"
+      - if: runner.os == 'Linux' || !startsWith(matrix.python.setup, '3.15')
+        run: python -m pip install dist/*
+      - if: runner.os == 'Linux' || !startsWith(matrix.python.setup, '3.15')
+        run: python -m pip check
+      - if: runner.os == 'Linux' || !startsWith(matrix.python.setup, '3.15')
+        run: python -c "from hyperloader import DataLoader, _hyperloader; assert _hyperloader.IS_FALLBACK is False; assert list(DataLoader(range(4), batch_size=2, num_workers=0))"
+      - if: runner.os == 'macOS' && !startsWith(matrix.python.setup, '3.15')
         run: python -m unittest tests.hyperloader.macos.test_platform tests.hyperloader.test_shm_hygiene -v
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.os }}-${{ matrix.python }}
+          name: wheel-${{ matrix.os }}-${{ matrix.python.setup }}
           path: dist/*
+
+  macos-contracts:
+    needs: native
+    strategy:
+      fail-fast: false
+      matrix:
+        torch:
+          - { minor: "2.10", next: "2.11" }
+          - { minor: "2.11", next: "2.12" }
+          - { minor: "2.12", next: "2.13" }
+          - { minor: "2.13", next: "2.14" }
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-macos-14-3.12
+          path: dist
+      - run: python -m pip install "numpy>=2.0" "torch>=${{ matrix.torch.minor }},<${{ matrix.torch.next }}"
+      - run: python -m pip install dist/*
+      - run: python -m pip check
+      - run: python benches/generate_compat_golden.py --torch-minor ${{ matrix.torch.minor }} --system macos --output oracles/torch-golden/macos/torch-${{ matrix.torch.minor }}.json
+      - run: python benches/verify_compat_golden.py oracles/torch-golden/macos/torch-${{ matrix.torch.minor }}.json
+      - run: echo "HYPERLOADER_EXPECTED_INSTALL=$(python -c 'import hyperloader; from pathlib import Path; print(Path(hyperloader.__file__).resolve().parent.parent)')" >> "$GITHUB_ENV"
+      - run: python -m unittest tests.hyperloader.test_compat_parity -v
+      - if: matrix.torch.minor == '2.13'
+        run: python -m unittest tests.hyperloader.parity.test_tiers -v
+      - if: matrix.torch.minor == '2.13'
+        run: "! HYPERLOADER_PARITY_MUTATE=1 python -m unittest tests.hyperloader.parity.test_tiers.TierParityGate.test_process_and_severed_fallback_match_admissible_streams -v"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-contracts-torch-${{ matrix.torch.minor }}
+          path: oracles/torch-golden/macos/torch-${{ matrix.torch.minor }}.json
 
   fallback:
     runs-on: ubuntu-24.04
@@ -46,7 +107,7 @@ jobs:
       - run: python tools/verify_wheel.py --kind fallback dist/*
       - run: python -m pip install --force-reinstall dist/*
       - run: python tests/hyperloader/packaging/fallback_install_runner.py
-      - run: python -m pytest tests/hyperloader/packaging/test_fallback_wheel.py -q
+      - run: python -m unittest tests.hyperloader.packaging.test_fallback_wheel -v
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-fallback

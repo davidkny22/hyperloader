@@ -117,6 +117,7 @@ fn default_collate<'py>(py: Python<'py>, batch: &Bound<'py, PyAny>) -> PyResult<
 
 /// Register the stable native functions exposed by the extension module.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add("IS_FALLBACK", false)?;
     module.add_function(wrap_pyfunction!(package_version, module)?)?;
     module.add_function(wrap_pyfunction!(rng_block, module)?)?;
     module.add_function(wrap_pyfunction!(rng_block_from_key, module)?)?;
