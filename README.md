@@ -104,12 +104,12 @@ deterministic bootstrap 95 percent interval.
 | Fixed-text identity throughput over Torch | 5.488% faster | [5.376%, 5.604%] |
 | NumPy identity throughput over Torch | 18.339% faster | [18.219%, 18.464%] |
 | Arrow identity throughput over Torch | 18.601% faster | [18.472%, 18.728%] |
-| Fixed-text compute penalty against a free resident feeder | 0.130% | [0.015%, 0.314%] |
-| Fixed-text bandwidth penalty against a free resident feeder | 0.027% | [-0.058%, 0.085%] |
+| Fixed-text compute penalty against a free resident feeder | 0.222% | [0.115%, 0.405%] |
+| Fixed-text bandwidth penalty against a free resident feeder | 0.714% | [0.578%, 0.822%] |
 
 Identity comparisons use four workers and batch shape `int64[64,512]`. The resident feeder
 uses at least eight times the 24 MiB last-level cache. The overhead cells run one uninterrupted
-GPU workload for 90 seconds and swap feeders at midpoint. The compute result contains 19
+GPU workload for 90 seconds and swap feeders at midpoint. The compute result contains 18
 pairs; the bandwidth result contains 10 pairs.
 
 These figures describe the named Spark configuration. They do not claim the same magnitude
