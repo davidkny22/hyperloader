@@ -13,7 +13,7 @@ from .control.machine_keeping import attach_machine_keeping
 from .control.runtime import resolve_calibration
 from .decoder import bind_decoder_selections, select_decoder_pins
 from .distributed import build_map_placement
-from .distributed.runtime import validate_runtime_topology
+from .distributed.runtime import capture_topology, validate_runtime_topology
 from .epoch import EpochState
 from .fingerprint import build_contract_fingerprint, build_dataset_fingerprint
 from .memory import ByteLedger
@@ -121,11 +121,21 @@ class DataLoader:
         self._active_iterator_ref: Any = None
         self._plan = build_plan(dataset, shuffle)
         self._distributed_topology: Any = None
+        if self._plan is None:
+            self._distributed_topology = capture_topology(
+                resolved_config.distributed.rank,
+                resolved_config.distributed.world_size,
+            )
         self._map_placement = (
             None
             if self._plan is None or sampler is not None or batch_sampler is not None
             else build_map_placement(self)
         )
+        self._iterable_payload: bytes | None = None
+        if self._plan is None:
+            from .iterable import prepare_iterable_source
+
+            self._iterable_payload = prepare_iterable_source(self)
         self._memory_ledger = (
             ByteLedger("contiguous-tensor", "view")
             if (
@@ -214,7 +224,8 @@ class DataLoader:
         from .structured import StructuredIterator, is_native_batch_path
         from .tensor import TensorIterator
 
-        if self.num_workers is AUTO or self.num_workers == 0:
+        iterable = self._plan is None
+        if not iterable and (self.num_workers is AUTO or self.num_workers == 0):
             raise RuntimeError(
                 "the requested hyperloader execution tier is not initialized"
             )
@@ -222,13 +233,15 @@ class DataLoader:
             raise RuntimeError(
                 "the requested hyperloader execution mode is not initialized"
             )
-        if self._plan is None:
-            raise RuntimeError("iterable planning is not initialized")
         if self.collate_fn is not None:
             raise RuntimeError("user collation planning is not initialized")
         if self._distributed_topology is not None:
             validate_runtime_topology(self._distributed_topology)
-        auto_advanced = self._epoch_state.begin_iteration()
+        auto_advanced = False
+        if iterable:
+            self._epoch_state.begin_iterable_iteration()
+        else:
+            auto_advanced = self._epoch_state.begin_iteration()
         if auto_advanced and not self._abandon_notice_emitted:
             warnings.warn(
                 "A fresh iterator after partial delivery advanced the epoch. "
@@ -242,7 +255,11 @@ class DataLoader:
         )
         if active is not None and not active.complete:
             self.close()
-        if self.sampler is not None or self.batch_sampler is not None:
+        if iterable:
+            from .iterable import IterableIterator
+
+            iterator = IterableIterator(self)
+        elif self.sampler is not None or self.batch_sampler is not None:
             from .state import (
                 StreamingSamplerIterator,
                 UserBatchSamplerIterator,

@@ -28,6 +28,12 @@ class EpochState:
         self._active_delivered = False
         return advanced
 
+    def begin_iterable_iteration(self) -> None:
+        """Begin an iterable epoch without advancing an abandoned source."""
+        self._pending_override = None
+        self._active_epoch = self._current
+        self._active_delivered = False
+
     def mark_delivered(self, epoch: int) -> None:
         """Record a successful delivery from the active iterator."""
         if self._active_epoch == epoch:
