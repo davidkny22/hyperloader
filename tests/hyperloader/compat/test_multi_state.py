@@ -50,6 +50,7 @@ class CompatMultiStateTest(unittest.TestCase):
             )
         state = source.state_dict()
         self.assertEqual(source.state_dict(), state)
+        self.assertGreater(state["sampler_position"], state["delivered_cursor"])
         source.close()
 
         resumed = DataLoader(

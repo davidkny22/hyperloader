@@ -385,6 +385,10 @@ class DataLoader:
         if active is not None:
             active.invalidate()
         self._active_iterator_ref = None
+        compat_lane_pool = getattr(self, "_compat_lane_pool", None)
+        if compat_lane_pool is not None:
+            compat_lane_pool.close()
+            self._compat_lane_pool = None
         self._sampler_runtime = None
         self._native_batch_probe = None
         if getattr(self, "_pinned_delivery", None) is not None:

@@ -15,6 +15,8 @@ from hyperloader.fingerprint import (
     require_fingerprint_match,
 )
 
+from .lane_pool import CompatLanePool
+from .lane_runtime import CompatLaneRuntime
 from .multi_iterator import CompatMultiIterator
 from .multi_loader import reference_loader, worker_loader
 from .multi_state import CompatMultiCheckpoint
@@ -72,12 +74,103 @@ def prepare(loader: Any, workers: int) -> None:
     )
     loader._compat_reference = reference_loader(loader)
     loader._compat_loader = None
+    loader._compat_lane_pool: CompatLanePool | None = None
+    loader._compat_base_seed: int | None = None
     loader._compat_has_started = False
     loader._fingerprint = build_contract_fingerprint(loader)
 
 
 def iterate(loader: Any) -> CompatMultiIterator:
     """Create one worker iterator or restore a strict delivered prefix."""
+    if isinstance(loader.dataset, torch.utils.data.IterableDataset):
+        return _iterate_torch(loader)
+    return _iterate_native_map(loader)
+
+
+def _iterate_native_map(loader: Any) -> CompatMultiIterator:
+    active = (
+        None if loader._active_iterator_ref is None else loader._active_iterator_ref()
+    )
+    pool = loader._compat_lane_pool
+    retain_workers = loader.persistent_workers and pool is not None and not pool.closed
+    if active is not None and not active.complete:
+        active.invalidate(shutdown=not retain_workers)
+    if retain_workers:
+        pool.drain()
+    elif pool is not None:
+        pool.close()
+        pool = None
+        loader._compat_lane_pool = None
+
+    resume = loader._resume_compat_multi_state
+    if resume is None:
+        iterator_generator = capture_torch_source(loader._compat_generator)
+        reused_base_seed = bool(loader._compat_has_started and retain_workers)
+        if pool is None:
+            base_seed = _draw_base_seed(loader._compat_generator)
+            pool = CompatLanePool(
+                loader,
+                base_seed,
+                {},
+                capture_state=loader.config.determinism.compat_resume == "on",
+            )
+            loader._compat_lane_pool = pool
+            loader._compat_base_seed = base_seed
+        else:
+            base_seed = loader._compat_base_seed
+            if base_seed is None:
+                raise RuntimeError("persistent compat lanes lost their base seed")
+        runtime = CompatLaneRuntime(loader, pool)
+        wrapper = CompatMultiIterator(
+            loader,
+            runtime,
+            iterator_generator,
+            tagged=loader.config.determinism.compat_resume == "on",
+            reused_base_seed=reused_base_seed,
+            base_seed=base_seed,
+        )
+    else:
+        restore_torch_source(loader._compat_generator, resume.iterator_generator)
+        if resume.reused_base_seed:
+            base_seed = resume.base_seed
+            if base_seed is None:
+                raise RuntimeError("compat checkpoint lost its reused base seed")
+        else:
+            base_seed = _draw_base_seed(loader._compat_generator)
+            if resume.base_seed is not None and base_seed != resume.base_seed:
+                raise ValueError("compat checkpoint base seed does not reproduce")
+        _validate_lane_seeds(base_seed, resume.lane_seeds)
+        pool = CompatLanePool(
+            loader,
+            base_seed,
+            resume.lane_states,
+            capture_state=True,
+        )
+        loader._compat_lane_pool = pool
+        loader._compat_base_seed = base_seed
+        runtime = CompatLaneRuntime(
+            loader,
+            pool,
+            skip=resume.delivered_batches,
+            phase=resume.assignment_phase,
+            prefetch=resume.sampler_position - resume.delivered_batches,
+        )
+        wrapper = CompatMultiIterator(
+            loader,
+            runtime,
+            resume.iterator_generator,
+            delivered=resume.delivered_batches,
+            reused_base_seed=resume.reused_base_seed,
+            base_seed=base_seed,
+        )
+        restore_torch_source(loader._compat_generator, resume.current_generator)
+    loader._resume_compat_multi_state = None
+    loader._compat_has_started = True
+    loader._active_iterator_ref = weakref.ref(wrapper)
+    return wrapper
+
+
+def _iterate_torch(loader: Any) -> CompatMultiIterator:
     active = (
         None if loader._active_iterator_ref is None else loader._active_iterator_ref()
     )
@@ -138,6 +231,16 @@ def iterate(loader: Any) -> CompatMultiIterator:
     return wrapper
 
 
+def _draw_base_seed(generator: Any) -> int:
+    return int(torch.empty((), dtype=torch.int64).random_(generator=generator).item())
+
+
+def _validate_lane_seeds(base_seed: int, lane_seeds: dict[int, int]) -> None:
+    for lane, seed in lane_seeds.items():
+        if seed != base_seed + lane:
+            raise ValueError("compat checkpoint lane seed does not match base seed")
+
+
 def capture_state(loader: Any) -> dict[str, object]:
     """Capture an opt-in same-width worker continuation."""
     if loader.config.determinism.compat_resume != "on":
@@ -154,10 +257,12 @@ def capture_state(loader: Any) -> dict[str, object]:
         return loader._resume_compat_multi_state.to_dict()
     state = capture_torch_source(loader._compat_generator)
     return CompatMultiCheckpoint(
+        sampler_position=0,
         delivered_batches=0,
         worker_count=loader.num_workers,
         assignment_phase=0,
         reused_base_seed=False,
+        base_seed=None,
         iterator_generator=state,
         current_generator=state,
         lane_states={},
@@ -183,6 +288,10 @@ def restore_state(loader: Any, payload: dict[str, object]) -> None:
     if active is not None:
         active.invalidate()
     loader._active_iterator_ref = None
+    if loader._compat_lane_pool is not None:
+        loader._compat_lane_pool.close()
+        loader._compat_lane_pool = None
+    loader._compat_base_seed = None
     loader._compat_loader = None
     restore_torch_source(loader._compat_generator, state.current_generator)
     loader._resume_compat_multi_state = state

@@ -11,10 +11,12 @@ from hyperloader.fingerprint import ContractFingerprint
 class CompatMultiCheckpoint:
     """Carry a strict delivered prefix and per-lane restore snapshots."""
 
+    sampler_position: int
     delivered_batches: int
     worker_count: int
     assignment_phase: int
     reused_base_seed: bool
+    base_seed: int | None
     iterator_generator: bytes
     current_generator: bytes
     lane_states: dict[int, bytes]
@@ -25,11 +27,12 @@ class CompatMultiCheckpoint:
         """Return the public multi-worker checkpoint representation."""
         return {
             "kind": "compat-multi",
-            "sampler_position": self.delivered_batches,
+            "sampler_position": self.sampler_position,
             "delivered_cursor": self.delivered_batches,
             "num_workers": self.worker_count,
             "assignment_phase": self.assignment_phase,
             "reused_base_seed": self.reused_base_seed,
+            "base_seed": self.base_seed,
             "iterator_generator": self.iterator_generator,
             "current_generator": self.current_generator,
             "lane_states": dict(self.lane_states),
@@ -45,8 +48,9 @@ class CompatMultiCheckpoint:
         if payload.get("kind") != "compat-multi":
             raise ValueError("compat worker state requires kind='compat-multi'")
         delivered = _nonnegative_integer(payload, "delivered_cursor")
-        if _nonnegative_integer(payload, "sampler_position") != delivered:
-            raise ValueError("compat sampler position must match delivered cursor")
+        sampler_position = _nonnegative_integer(payload, "sampler_position")
+        if sampler_position < delivered:
+            raise ValueError("compat sampler position precedes delivered cursor")
         workers = _positive_integer(payload, "num_workers")
         phase = _nonnegative_integer(payload, "assignment_phase")
         if phase != delivered % workers:
@@ -54,6 +58,13 @@ class CompatMultiCheckpoint:
         reused_base_seed = payload.get("reused_base_seed")
         if not isinstance(reused_base_seed, bool):
             raise TypeError("compat reused_base_seed must be a boolean")
+        base_seed = payload.get("base_seed")
+        if base_seed is not None and (
+            isinstance(base_seed, bool) or not isinstance(base_seed, int)
+        ):
+            raise TypeError("compat base_seed must be an integer or None")
+        if reused_base_seed and base_seed is None:
+            raise ValueError("compat reused base seed is missing")
         lane_states = payload.get("lane_states")
         if not isinstance(lane_states, dict):
             raise TypeError("compat lane states must be a dictionary")
@@ -73,10 +84,12 @@ class CompatMultiCheckpoint:
         if not isinstance(fingerprint, dict):
             raise TypeError("loader state fingerprint must be a dictionary")
         return cls(
+            sampler_position=sampler_position,
             delivered_batches=delivered,
             worker_count=workers,
             assignment_phase=phase,
             reused_base_seed=reused_base_seed,
+            base_seed=base_seed,
             iterator_generator=_bytes(payload, "iterator_generator"),
             current_generator=_bytes(payload, "current_generator"),
             lane_states=validated,

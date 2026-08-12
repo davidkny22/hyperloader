@@ -23,6 +23,7 @@ class CompatMultiIterator(Iterator[Any]):
         dummy_batches: int = 0,
         tagged: bool = True,
         reused_base_seed: bool = False,
+        base_seed: int | None = None,
     ) -> None:
         self._loader = loader
         self._iterator = iterator
@@ -31,6 +32,7 @@ class CompatMultiIterator(Iterator[Any]):
         self._dummy_batches = dummy_batches
         self._tagged = tagged
         self._reused_base_seed = reused_base_seed
+        self._base_seed = base_seed
         self._lookahead: list[TaggedBatch] = []
         self._complete = False
         self._valid = True
@@ -70,7 +72,9 @@ class CompatMultiIterator(Iterator[Any]):
                 raise TypeError("compat worker returned an untagged batch")
             if batch.dummy:
                 if self._dummy_batches == 0:
-                    raise RuntimeError("compat worker returned an unexpected dummy batch")
+                    raise RuntimeError(
+                        "compat worker returned an unexpected dummy batch"
+                    )
                 self._dummy_batches -= 1
                 continue
             return batch
@@ -86,29 +90,39 @@ class CompatMultiIterator(Iterator[Any]):
         """Capture the first undelivered restore point for every active lane."""
         if not self._tagged:
             raise RuntimeError("compat snapshot capture requires tagged worker lanes")
-        lane_states = {batch.worker: batch.state for batch in self._lookahead}
-        lane_seeds = {batch.worker: batch.seed for batch in self._lookahead}
+        capture_points = getattr(self._iterator, "capture_points", None)
+        if capture_points is None:
+            batches = self._capture_lookahead()
+        else:
+            batches = capture_points()
+        lane_states = {batch.worker: batch.state for batch in batches}
+        lane_seeds = {batch.worker: batch.seed for batch in batches}
+        return CompatMultiCheckpoint(
+            sampler_position=getattr(
+                self._iterator, "sampler_position", self._delivered
+            ),
+            delivered_batches=self._delivered,
+            worker_count=self._loader.num_workers,
+            assignment_phase=self._delivered % self._loader.num_workers,
+            reused_base_seed=self._reused_base_seed,
+            base_seed=self._base_seed,
+            iterator_generator=self._iterator_generator,
+            current_generator=capture_torch_source(self._loader._compat_generator),
+            lane_states=lane_states,
+            lane_seeds=lane_seeds,
+            fingerprint=self._loader._fingerprint,
+        )
+
+    def _capture_lookahead(self) -> tuple[TaggedBatch, ...]:
+        lane_states = {batch.worker for batch in self._lookahead}
         while len(lane_states) < self._loader.num_workers and not self._complete:
             try:
                 batch = self._next_from_iterator()
             except StopIteration:
                 break
             self._lookahead.append(batch)
-            lane_states.setdefault(batch.worker, batch.state)
-            lane_seeds.setdefault(batch.worker, batch.seed)
-        return CompatMultiCheckpoint(
-            delivered_batches=self._delivered,
-            worker_count=self._loader.num_workers,
-            assignment_phase=self._delivered % self._loader.num_workers,
-            reused_base_seed=self._reused_base_seed,
-            iterator_generator=self._iterator_generator,
-            current_generator=capture_torch_source(
-                self._loader._compat_generator
-            ),
-            lane_states=lane_states,
-            lane_seeds=lane_seeds,
-            fingerprint=self._loader._fingerprint,
-        )
+            lane_states.add(batch.worker)
+        return tuple(self._lookahead)
 
     @property
     def complete(self) -> bool:

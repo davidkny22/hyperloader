@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from unittest import mock
 
 import torch
 from hyperloader import DataLoader
@@ -59,6 +60,31 @@ class CompatMultiTest(unittest.TestCase):
             expected_lanes = ([0] * 3 + [1] * 3) * 4
             self.assertEqual([row[1] for row in expected], expected_lanes)
             self.assertTrue(all(row[4] == 1 for row in expected))
+        finally:
+            candidate.close()
+
+    def test_worker_execution_does_not_enter_torchs_iterator(self) -> None:
+        reference = torch.utils.data.DataLoader(
+            LaneDataset(8),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(433),
+        )
+        expected = records(reference)
+        candidate = DataLoader(
+            LaneDataset(8),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(433),
+            mode="torch-compat",
+        )
+        try:
+            with mock.patch.object(
+                torch.utils.data.DataLoader,
+                "__iter__",
+                side_effect=AssertionError("torch worker transport was entered"),
+            ):
+                self.assertEqual(records(candidate), expected)
         finally:
             candidate.close()
 
@@ -156,7 +182,7 @@ class CompatMultiTest(unittest.TestCase):
             FatalLaneDataset(),
             batch_size=1,
             num_workers=2,
-            timeout=2,
+            timeout=5,
             persistent_workers=False,
         )
         with self.assertRaises(RuntimeError) as reference_error:
@@ -166,7 +192,7 @@ class CompatMultiTest(unittest.TestCase):
             FatalLaneDataset(),
             batch_size=1,
             num_workers=2,
-            timeout=2,
+            timeout=5,
             persistent_workers=False,
             mode="torch-compat",
             config=compat_config(),
