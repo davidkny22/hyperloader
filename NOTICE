@@ -1,0 +1,41 @@
+hyperloader
+Copyright (c) 2026 David
+
+This product incorporates ideas and behavioral reference points from the projects and
+publications below. The references acknowledge mechanism lineage and do not imply that their
+authors endorse hyperloader.
+
+- Tomasulo's reorder-buffer work and PyTorch DataLoader provide the out-of-order execution
+  and in-order commit discipline. PyTorch also provides the public compatibility reference,
+  process-loader semantics, shared-memory transport, and out-of-order delivery precedent.
+- Salmon et al., "Parallel Random Numbers: As Easy as 1, 2, 3," provide Philox.
+- Black and Rogaway's cycle walking, the FFX family, NIST SP 800-38G, and Grain
+  `index_shuffle` provide format-preserving permutation precedent.
+- Graham's LPT scheduling rule provides cost-descending dispatch ordering.
+- SPDL provides staged thread and process execution precedent.
+- PyTorch pull request 161044 and the Polylithic RFC provide thread-worker RNG and hybrid
+  placement precedent.
+- torch.multiprocessing, ppwwyyxx's copy-on-write analysis, SPDL, and FFCV provide shared
+  arenas, preallocated recycling, and decode-into-place precedent.
+- StatefulDataLoader provides loader checkpoint and worker-state precedent.
+- MosaicML Streaming provides canonical logical partitioning precedent.
+- MinatoLoader provides loader head-of-line blocking analysis precedent.
+- tf.data AUTOTUNE and Plumber provide feedback and analytical pipeline tuning precedent.
+- Cachew and Pecan provide cost-aware data-pipeline optimization precedent.
+- RINAS provides out-of-order fetch precedent.
+- Google Grain and tf.data stateless operations provide pure-function sampling,
+  per-record randomness, and index-based checkpointing precedent.
+- NoPFS provides the precedent for exploiting an RNG-known access sequence ahead of use.
+- NVIDIA DALI and SPDL stage graphs provide typed operator-pipeline precedent.
+- MegaScale-Data and TensorSocket provide node-local sharing precedent.
+- BatchWeave provides distributed deterministic-replay vocabulary at batch grain.
+- PyTorch Profiler and HTA provide loader bottleneck and GPU-idle attribution precedent.
+- hypertok provides the exact-contract tier and compatibility-shim pattern.
+- WebDataset, Lightning LitData, Ray Data, FastFlow, GoldMiner, Revamper, CoorDL, DIESEL,
+  Mixtera, GetBatch, Arrow Plasma, and the Ray object store were surveyed as neighboring
+  systems rather than adopted lineage.
+- io_uring provides the command ring's submission-and-completion queue precedent.
+
+hyperloader applies these ideas to a drop-in loader with coordinate-state determinism,
+cross-tier parity gates, persistent profiles, adaptive resource pricing, and contract-backed
+fallback execution. Third-party projects retain their own copyrights and licenses.
