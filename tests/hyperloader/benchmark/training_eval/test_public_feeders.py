@@ -45,6 +45,38 @@ def test_public_feeder_cycles_at_complete_epoch_boundaries() -> None:
         feeder.close()
 
 
+def test_hyperloader_public_feeder_restores_with_a_changed_worker_count() -> None:
+    expected = _collect("torch", workers=0)
+    source = build_public_feeder(
+        "hyperloader",
+        _TokenRows(),
+        batch_size=2,
+        workers=2,
+        prefetch=2,
+        collate=collate_token_batch,
+    )
+    try:
+        first = source.next_batch()
+        state = source.state_dict()
+    finally:
+        source.close()
+    resumed = build_public_feeder(
+        "hyperloader",
+        _TokenRows(),
+        batch_size=2,
+        workers=1,
+        prefetch=2,
+        collate=collate_token_batch,
+    )
+    try:
+        resumed.load_state_dict(state)
+        second = resumed.next_batch()
+    finally:
+        resumed.close()
+    assert (first.tokens.tolist(), first.digest) == expected[0]
+    assert (second.tokens.tolist(), second.digest) == expected[1]
+
+
 def _collect(system: str, *, workers: int) -> list[tuple[list[list[int]], str]]:
     feeder = build_public_feeder(
         system,

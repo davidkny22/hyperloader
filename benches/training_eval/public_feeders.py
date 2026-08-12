@@ -22,8 +22,9 @@ class TrainingBatch(Protocol):
 class PublicLoaderFeeder:
     """Cycle one already-constructed public loader over complete epochs."""
 
-    def __init__(self, system: str, loader: Any) -> None:
+    def __init__(self, system: str, loader: Any, worker_count: int) -> None:
         self.system = system
+        self.worker_count = worker_count
         self._loader = loader
         self._iterator = iter(loader)
 
@@ -49,6 +50,21 @@ class PublicLoaderFeeder:
         iterator_close = getattr(self._iterator, "close", None)
         if iterator_close is not None:
             iterator_close()
+
+    def state_dict(self) -> dict[str, object]:
+        """Capture an exact public loader coordinate when the system supports it."""
+        capture = getattr(self._loader, "state_dict", None)
+        if capture is None:
+            raise RuntimeError(f"{self.system} does not expose resumable loader state")
+        return capture()
+
+    def load_state_dict(self, state: dict[str, object]) -> None:
+        """Restore a public loader coordinate and reopen its iterator."""
+        restore = getattr(self._loader, "load_state_dict", None)
+        if restore is None:
+            raise RuntimeError(f"{self.system} does not expose resumable loader state")
+        restore(state)
+        self._iterator = iter(self._loader)
 
 
 def build_public_feeder(
@@ -98,7 +114,7 @@ def build_public_feeder(
         )
     else:
         raise ValueError(f"unknown training feeder {system!r}")
-    return PublicLoaderFeeder(system, loader)
+    return PublicLoaderFeeder(system, loader, workers)
 
 
 def _validate_controls(batch_size: int, workers: int, prefetch: int) -> None:
