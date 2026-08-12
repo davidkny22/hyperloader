@@ -189,6 +189,8 @@ def restore_state(loader: Any, payload: dict[str, object]) -> None:
 
 
 def _require_stateless_map_resume(loader: Any) -> None:
+    if not loader.in_order:
+        raise RuntimeError("multi-worker compat resume requires in_order=True")
     if isinstance(loader.dataset, torch.utils.data.IterableDataset):
         raise RuntimeError(
             "multi-worker compat resume requires a map-style dataset without "

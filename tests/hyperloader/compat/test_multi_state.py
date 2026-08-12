@@ -178,6 +178,22 @@ class CompatMultiStateTest(unittest.TestCase):
         finally:
             candidate.close()
 
+    def test_out_of_order_resume_rejects_an_ambiguous_delivered_cursor(self) -> None:
+        candidate = DataLoader(
+            LaneDataset(8),
+            batch_size=2,
+            num_workers=2,
+            persistent_workers=False,
+            in_order=False,
+            mode="torch-compat",
+            config=compat_config(),
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "in_order=True"):
+                candidate.state_dict()
+        finally:
+            candidate.close()
+
 
 if __name__ == "__main__":
     unittest.main()
