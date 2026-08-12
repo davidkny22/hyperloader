@@ -59,6 +59,28 @@ def restore_generator(generator: object, payload: bytes | None) -> None:
     generator.set_state(_torch_state_tensor(payload))
 
 
+def capture_torch_source(generator: object) -> bytes:
+    """Serialize an explicit or ambient torch CPU generator canonically."""
+    state = torch.get_rng_state() if generator is None else generator.get_state()
+    return _torch_state_bytes(state)
+
+
+def restore_torch_source(generator: object, payload: bytes) -> None:
+    """Restore an explicit or ambient torch CPU generator."""
+    state = _torch_state_tensor(payload)
+    if generator is None:
+        torch.set_rng_state(state)
+    else:
+        generator.set_state(state)
+
+
+def clone_torch_source(payload: bytes) -> torch.Generator:
+    """Create an isolated CPU generator at one canonical state."""
+    generator = torch.Generator()
+    generator.set_state(_torch_state_tensor(payload))
+    return generator
+
+
 def _torch_state_bytes(state: torch.Tensor) -> bytes:
     """Return a storage-identity-free byte representation of one torch RNG state."""
     return state.detach().cpu().contiguous().numpy().tobytes()

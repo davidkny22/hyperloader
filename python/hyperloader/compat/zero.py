@@ -87,9 +87,10 @@ def prepare(loader: Any) -> None:
     """Build torch's zero-worker loader without native planning side effects."""
     workers = 0 if loader.num_workers is AUTO else int(loader.num_workers)
     if workers != 0:
-        raise RuntimeError("multi-worker torch compatibility is not initialized")
+        raise ValueError("zero-worker compatibility requires num_workers=0")
     loader.num_workers = 0
-    loader.persistent_workers = False
+    if not loader._persistent_workers_explicit:
+        loader.persistent_workers = False
     loader.prefetch_factor = None
     generator = loader.generator
     if generator is None and loader.seed is not None:

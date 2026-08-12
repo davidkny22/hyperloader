@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import warnings
 import weakref
 from collections.abc import Iterator
@@ -25,6 +26,8 @@ from .profile import build_cost_profile, save_cost_profile
 from .stages import Pipeline
 from .telemetry import build_telemetry, telemetry_snapshot
 
+_PERSISTENT_DEFAULT = object()
+
 
 class DataLoader:
     """Load batches through hyperloader's contract-preserving execution engine."""
@@ -46,7 +49,7 @@ class DataLoader:
         generator: Any = None,
         *,
         prefetch_factor: int | None | Auto = AUTO,
-        persistent_workers: bool = True,
+        persistent_workers: bool | object = _PERSISTENT_DEFAULT,
         pin_memory_device: str = "",
         in_order: bool = True,
         seed: int | None = None,
@@ -97,7 +100,14 @@ class DataLoader:
         self.multiprocessing_context = multiprocessing_context
         self.generator = generator
         self.prefetch_factor = prefetch_factor
-        self.persistent_workers = persistent_workers
+        self._persistent_workers_explicit = (
+            persistent_workers is not _PERSISTENT_DEFAULT
+        )
+        self.persistent_workers = (
+            mode != "torch-compat"
+            if persistent_workers is _PERSISTENT_DEFAULT
+            else bool(persistent_workers)
+        )
         self.pin_memory_device = pin_memory_device
         self.in_order = in_order
         self.seed = resolved_seed
@@ -319,7 +329,14 @@ class DataLoader:
         """Select an epoch and reset the next iterator to its first batch."""
         self._epoch_state.set_epoch(epoch)
         if self.mode == "torch-compat":
-            setter = getattr(self._compat_loader.sampler, "set_epoch", None)
+            compat_loader = self._compat_loader
+            if compat_loader is None:
+                compat_loader = getattr(self, "_compat_reference", None)
+            setter = getattr(
+                None if compat_loader is None else compat_loader.sampler,
+                "set_epoch",
+                None,
+            )
             if setter is not None:
                 setter(epoch)
             self._resume_compat_state = None
@@ -444,3 +461,13 @@ class DataLoader:
 
     def __del__(self) -> None:
         self.close()
+
+
+_PUBLIC_SIGNATURE = inspect.signature(DataLoader.__init__)
+_PUBLIC_PARAMETERS = []
+for _parameter in tuple(_PUBLIC_SIGNATURE.parameters.values())[1:]:
+    if _parameter.name == "persistent_workers":
+        _parameter = _parameter.replace(default=True)
+    _PUBLIC_PARAMETERS.append(_parameter)
+DataLoader.__signature__ = _PUBLIC_SIGNATURE.replace(parameters=_PUBLIC_PARAMETERS)
+del _PUBLIC_PARAMETERS, _PUBLIC_SIGNATURE, _parameter
