@@ -122,6 +122,12 @@ class IterableLaneTest(unittest.TestCase):
         finally:
             loader.close()
 
+        sparse = DataLoader(ShardedIterable(2), batch_size=1, num_workers=4)
+        try:
+            self.assertEqual(_batches(sparse), [(0,), (1,)])
+        finally:
+            sparse.close()
+
     def test_drop_last_applies_per_lane(self) -> None:
         loader = DataLoader(
             ShardedIterable(),
@@ -143,6 +149,7 @@ class IterableLaneTest(unittest.TestCase):
             worker_init_fn=_set_lane_offset,
         )
         try:
+            self.assertEqual(_batches(loader), [(0,), (10,), (20,)])
             self.assertEqual(_batches(loader), [(0,), (10,), (20,)])
             self.assertEqual(dataset.offset, 0)
         finally:
@@ -171,6 +178,12 @@ class IterableLaneTest(unittest.TestCase):
             self.assertEqual(_batches(loader), [(1,)])
         finally:
             loader.close()
+
+        automatic = DataLoader(ShardedIterable(3), batch_size=2)
+        try:
+            self.assertEqual(_batches(automatic), [(0, 1), (2,)])
+        finally:
+            automatic.close()
 
     def test_abandoned_iterable_replays_the_same_epoch(self) -> None:
         loader = DataLoader(ShardedIterable(6), batch_size=1, num_workers=2)
