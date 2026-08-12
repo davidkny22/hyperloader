@@ -75,6 +75,7 @@ def build_public_feeder(
     workers: int,
     prefetch: int,
     collate: Callable[[list[Any]], TrainingBatch],
+    pin_memory: bool = False,
 ) -> PublicLoaderFeeder:
     """Construct Torch, hyperloader, or SPDL through its public import path."""
     _validate_controls(batch_size, workers, prefetch)
@@ -86,6 +87,7 @@ def build_public_feeder(
             batch_size=batch_size,
             num_workers=workers,
             collate_fn=collate,
+            pin_memory=pin_memory,
             **_process_controls(workers, prefetch),
         )
     elif system == "hyperloader":
@@ -96,6 +98,7 @@ def build_public_feeder(
             batch_size=batch_size,
             num_workers=workers,
             collate_fn=collate,
+            pin_memory=pin_memory,
             **_process_controls(workers, prefetch),
         )
     elif system == "spdl":
@@ -103,11 +106,12 @@ def build_public_feeder(
             raise ValueError("SPDL reference execution requires at least one worker")
         from spdl.dataloader import DataLoader
 
+        aggregator = _pinning_collate(collate) if pin_memory else collate
         loader = DataLoader(
             range(len(dataset)),
             preprocessor=dataset.__getitem__,
             batch_size=batch_size,
-            aggregator=collate,
+            aggregator=aggregator,
             buffer_size=workers * prefetch,
             num_threads=workers,
             output_order="input",
@@ -117,9 +121,24 @@ def build_public_feeder(
     return PublicLoaderFeeder(system, loader, workers)
 
 
+def _pinning_collate(
+    collate: Callable[[list[Any]], TrainingBatch],
+) -> Callable[[list[Any]], TrainingBatch]:
+    def pinned(rows: list[Any]) -> TrainingBatch:
+        batch = collate(rows)
+        tokens = getattr(batch, "tokens", None)
+        if tokens is None:
+            raise TypeError("pinned SPDL token delivery requires a token batch")
+        return type(batch)(tokens.pin_memory(), batch.digest)
+
+    return pinned
+
+
 def _validate_controls(batch_size: int, workers: int, prefetch: int) -> None:
     if batch_size <= 0 or workers < 0 or prefetch <= 0:
-        raise ValueError("batch size and prefetch must be positive and workers nonnegative")
+        raise ValueError(
+            "batch size and prefetch must be positive and workers nonnegative"
+        )
 
 
 def _process_controls(workers: int, prefetch: int) -> dict[str, Any]:
