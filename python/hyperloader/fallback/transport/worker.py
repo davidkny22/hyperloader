@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from multiprocessing.connection import wait
 from multiprocessing.shared_memory import SharedMemory
 from typing import Any
 
@@ -35,6 +36,10 @@ class WorkerEndpoint:
         if not self._dispatch.poll():
             return None
         return self._dispatch.recv()
+
+    def wait_for_activity(self, control: Any, timeout: float) -> None:
+        """Park until dispatch, shutdown, or the liveness timeout."""
+        wait((control, self._dispatch), timeout)
 
     def read_command(self, command: WorkerCommand) -> bytes:
         """Read owner-written command bytes."""

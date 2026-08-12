@@ -120,6 +120,7 @@ def run_commands(
     collate_fn: Any,
 ) -> None:
     """Poll control and dispatch channels without blocking shutdown."""
+    wait_for_activity = getattr(endpoint, "wait_for_activity", None)
     while True:
         if control.poll():
             command = control.recv()
@@ -128,7 +129,10 @@ def run_commands(
             raise RuntimeError("worker received an invalid control command")
         dispatch = endpoint.try_recv()
         if dispatch is None:
-            time.sleep(0.0005)
+            if wait_for_activity is None:
+                time.sleep(0.0005)
+            else:
+                wait_for_activity(control, 0.0005)
             continue
         started = time.perf_counter_ns()
         if startup_error is not None:
