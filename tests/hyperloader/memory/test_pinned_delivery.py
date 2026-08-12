@@ -29,6 +29,15 @@ class _Runtime:
         return 0
 
 
+class _PinnableBatch:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def pin_memory(self) -> str:
+        self.calls += 1
+        return "pinned-batch"
+
+
 class PinnedDeliveryTest(unittest.TestCase):
     """Prove selection, write-free identity, refusal fallback, and held buffers."""
 
@@ -100,6 +109,15 @@ class PinnedDeliveryTest(unittest.TestCase):
             third = pool.stage(source + 2)
 
         self.assertEqual(third.data_ptr(), first_pointer)
+
+    def test_custom_batch_uses_the_public_pinning_protocol(self) -> None:
+        pool = PinnedTensorPool()
+        batch = _PinnableBatch()
+
+        delivered = pool.stage(batch)
+
+        self.assertEqual(delivered, "pinned-batch")
+        self.assertEqual(batch.calls, 1)
 
     def test_delivery_stage_bytes_compose_with_unequal_execution_components(
         self,

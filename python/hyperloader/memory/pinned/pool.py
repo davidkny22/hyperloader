@@ -93,6 +93,9 @@ class PinnedTensorPool:
             return [
                 self._stage(item, (*path, index)) for index, item in enumerate(value)
             ]
+        pin = getattr(value, "pin_memory", None)
+        if callable(pin):
+            return pin()
         return value
 
     def _stage_tensor(self, source: Any, path: tuple[object, ...]) -> Any:
