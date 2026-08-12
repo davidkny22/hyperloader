@@ -4,6 +4,7 @@ use crate::{collate, rng};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+mod io;
 mod machine_keeper;
 mod native_arena;
 mod process;
@@ -125,6 +126,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(permutation_index, module)?)?;
     module.add_function(wrap_pyfunction!(rank_placements, module)?)?;
     module.add_function(wrap_pyfunction!(default_collate, module)?)?;
+    io::register(module)?;
     process::register(module)?;
     native_arena::register(module)?;
     module.add_class::<profile::PyCostProfile>()?;
