@@ -88,6 +88,15 @@ impl WorkerEndpoint {
         }
     }
 
+    /// Read owner-written command metadata before overwriting the result slot.
+    fn read_command(&mut self, command: &WorkerCommand) -> PyResult<Vec<u8>> {
+        let length = usize::try_from(command.message.index)
+            .map_err(|_| PyValueError::new_err("command payload length is too large"))?;
+        self.writer
+            .read(command.message.slot, length)
+            .map_err(runtime_error)
+    }
+
     /// Write a successful payload and attempt to publish its completion.
     fn try_complete_ready(
         &mut self,

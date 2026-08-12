@@ -183,6 +183,17 @@ impl ProcessResources {
         super::delivery::try_receive(self, py, worker)
     }
 
+    /// Copy command metadata into the result slot and dispatch its exact byte length.
+    fn try_submit_command(
+        &mut self,
+        position: u64,
+        stage_plan: u32,
+        worker: u32,
+        payload: &[u8],
+    ) -> PyResult<bool> {
+        self.submit_command(position, stage_plan, worker, payload)
+    }
+
     /// Reclaim reservations only after the operating-system worker is confirmed dead.
     fn reclaim_dead_worker(&mut self, worker: u32) -> PyResult<Vec<u64>> {
         self.transport(worker)?;
@@ -250,6 +261,91 @@ impl ProcessResources {
             .expect("one requested view is returned")
             .to_vec()
             .map_err(runtime_error)
+    }
+
+    fn submit_command(
+        &mut self,
+        position: u64,
+        stage_plan: u32,
+        worker: u32,
+        payload: &[u8],
+    ) -> PyResult<bool> {
+        if payload.is_empty() {
+            return Err(PyValueError::new_err("command payload must not be empty"));
+        }
+        if payload.len() > self.payload_capacity {
+            return Err(PyValueError::new_err(format!(
+                "command payload is {} bytes but capacity is {} bytes",
+                payload.len(),
+                self.payload_capacity
+            )));
+        }
+        if self.pending.contains_key(&(worker, position)) {
+            return Err(PyValueError::new_err(
+                "worker already has this position pending",
+            ));
+        }
+        self.transport(worker)?;
+        let primary = self
+            .allocator
+            .reserve(self.payload_capacity, worker)
+            .map_err(runtime_error)?;
+        let exception = match self.allocator.reserve(self.exception_capacity, worker) {
+            Ok(slot) => slot,
+            Err(error) => {
+                let _ = self.allocator.cancel(primary, worker);
+                return Err(runtime_error(error));
+            }
+        };
+        // SAFETY: the owner holds this fresh reservation exclusively and completes the copy
+        // before the dispatch frame makes the slot visible to its worker.
+        let (pointer, capacity) = unsafe {
+            self.allocator
+                .writing_ptr_len(primary, worker)
+                .map_err(runtime_error)?
+        };
+        if payload.len() > capacity {
+            let _ = self.allocator.cancel(primary, worker);
+            let _ = self.allocator.cancel(exception, worker);
+            return Err(PyValueError::new_err(
+                "command payload exceeds its arena slot",
+            ));
+        }
+        // SAFETY: the checked payload fits the exclusive mapped reservation.
+        unsafe {
+            std::ptr::copy_nonoverlapping(payload.as_ptr(), pointer.as_ptr(), payload.len());
+        }
+        let message = DispatchMessage {
+            position,
+            epoch: 0,
+            stage_plan,
+            index: payload.len() as u64,
+            worker,
+            batch_len: 0,
+            slot: primary,
+            exception_slot: exception,
+        };
+        match self.transport(worker)?.try_send_dispatch(message) {
+            Ok(()) => {
+                self.pending
+                    .insert((worker, position), PendingSlots { primary, exception });
+                Ok(true)
+            }
+            Err(TransportError::DispatchFull) => {
+                self.allocator
+                    .cancel(primary, worker)
+                    .map_err(runtime_error)?;
+                self.allocator
+                    .cancel(exception, worker)
+                    .map_err(runtime_error)?;
+                Ok(false)
+            }
+            Err(error) => {
+                let _ = self.allocator.cancel(primary, worker);
+                let _ = self.allocator.cancel(exception, worker);
+                Err(runtime_error(error))
+            }
+        }
     }
 
     pub(super) fn deliver_slot(&self, slot: SlotRef) -> PyResult<DeliveryView> {

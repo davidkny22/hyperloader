@@ -25,6 +25,32 @@ impl ArenaWriter {
         self.write_at(slot, 0, payload)
     }
 
+    /// Read owner-written command metadata from an exclusively assigned slot.
+    pub fn read(&mut self, slot: SlotRef, length: usize) -> Result<Vec<u8>, ArenaWriterError> {
+        validate_slot(slot, 0, length)?;
+        let payload_size = usize::try_from(slot.region_size)
+            .map_err(|_| ArenaWriterError::InvalidSlot("region size"))?;
+        if !self.regions.contains_key(&slot.region_sequence) {
+            let region = NamedRegion::attach(self.token, slot.region_sequence, payload_size)?;
+            self.regions.insert(slot.region_sequence, region);
+        }
+        let region = self
+            .regions
+            .get(&slot.region_sequence)
+            .expect("region was attached above");
+        if region.payload_size() != payload_size {
+            return Err(ArenaWriterError::InvalidSlot("cached region size"));
+        }
+        let start = usize::try_from(slot.offset)
+            .map_err(|_| ArenaWriterError::InvalidSlot("slot offset"))?;
+        let end = start
+            .checked_add(length)
+            .ok_or(ArenaWriterError::InvalidSlot("slot range"))?;
+        // SAFETY: validation bounds the read within the immutable region, and the owner
+        // finishes writing command metadata before publishing the dispatch frame.
+        Ok(unsafe { region.payload()[start..end].to_vec() })
+    }
+
     /// Write one row at a byte offset inside an exclusively assigned batch slot.
     pub fn write_at(
         &mut self,
