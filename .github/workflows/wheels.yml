@@ -11,6 +11,7 @@ jobs:
   native:
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-2025]
         python:
