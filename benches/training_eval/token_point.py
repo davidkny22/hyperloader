@@ -64,7 +64,7 @@ def collect_token_point(
         model,
         device=device,
         precision=config.precision,
-        learning_rate=3e-4,
+        learning_rate=config.learning_rate,
         non_blocking=pin_memory,
     )
     process_token = uuid.uuid4().hex

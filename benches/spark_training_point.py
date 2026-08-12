@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from benches.training_eval.dial import default_dial
+from benches.training_eval.dial import TransformerDialPoint, default_dial
 from benches.training_eval.gpt import GPT2_124M, GPT2_355M, GptLanguageModel
 from benches.training_eval.models import (
     DecisionRule,
@@ -45,7 +45,15 @@ def main() -> None:
         attention_heads=point["heads"],
         precision=arguments.precision,
         optimizer="AdamW(lr=0.0003)",
+        learning_rate=0.0003,
         delivery="pinned" if arguments.pin_memory else "pageable",
+        device=arguments.device,
+        model_name=str(point["model_name"]),
+        model_parameters=int(point["model_parameters"]),
+        dataset_rows=arguments.bank_batches * int(point["batch_size"]),
+        seed=arguments.seed,
+        resident_batches=arguments.bank_batches,
+        warmup_steps=arguments.warmup_steps,
         subject_workers=0 if arguments.kind == "null" else arguments.subject_workers,
         reference_workers=0,
         subject_prefetch=arguments.subject_prefetch,
@@ -113,6 +121,8 @@ def _point(
             "width": point.width,
             "depth": point.depth,
             "heads": point.attention_heads,
+            "model_name": "synthetic transformer dial",
+            "model_parameters": _dial_parameter_count(point),
         }
         return values, lambda: DialTransformer(point)
     gpt = GPT2_124M if arguments.kind == "gpt2-124m" else GPT2_355M
@@ -125,8 +135,17 @@ def _point(
         "width": gpt.width,
         "depth": gpt.depth,
         "heads": gpt.attention_heads,
+        "model_name": gpt.name,
+        "model_parameters": gpt.parameter_count(),
     }
     return values, lambda: GptLanguageModel(gpt)
+
+
+def _dial_parameter_count(point: TransformerDialPoint) -> int:
+    width = point.width
+    vocabulary = point.vocabulary_size
+    per_layer = 12 * width * width + 13 * width
+    return 2 * vocabulary * width + vocabulary + point.depth * per_layer + 2 * width
 
 
 def _parser() -> argparse.ArgumentParser:

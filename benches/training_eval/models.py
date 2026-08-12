@@ -38,7 +38,15 @@ class TrainingCellConfig:
     attention_heads: int
     precision: str
     optimizer: str
+    learning_rate: float
     delivery: str
+    device: str
+    model_name: str
+    model_parameters: int
+    dataset_rows: int
+    seed: int
+    resident_batches: int
+    warmup_steps: int
     subject_workers: int
     reference_workers: int
     subject_prefetch: int

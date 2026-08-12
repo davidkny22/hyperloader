@@ -57,7 +57,15 @@ def _config(*, mode: str = "upper") -> TrainingCellConfig:
         attention_heads=4,
         precision="bf16",
         optimizer="adamw",
+        learning_rate=0.0003,
         delivery="host-sync-h2d",
+        device="cuda",
+        model_name="test transformer",
+        model_parameters=1000,
+        dataset_rows=64,
+        seed=0,
+        resident_batches=8,
+        warmup_steps=3,
         subject_workers=4,
         reference_workers=0,
         subject_prefetch=4,
@@ -197,6 +205,14 @@ def test_order_configuration_and_local_power_drift_are_rejected() -> None:
         second=replace(observations[0].second, environment=local),
     )
     with pytest.raises(TrainingProtocolError, match="plugged-in power"):
+        validate_observations(observations)
+
+    observations = _observations(10)
+    observations = [
+        replace(item, config=replace(item.config, model_parameters=0))
+        for item in observations
+    ]
+    with pytest.raises(TrainingProtocolError, match="dimensions must be positive"):
         validate_observations(observations)
 
 

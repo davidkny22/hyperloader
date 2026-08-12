@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .models import DecisionRule, TrainingHalf, TrainingObservation
+from .models import DecisionRule, TrainingCellConfig, TrainingHalf, TrainingObservation
 
 
 class TrainingProtocolError(ValueError):
@@ -19,6 +19,7 @@ def validate_observations(observations: Sequence[TrainingObservation]) -> None:
         raise TrainingProtocolError("observation ordinals must be contiguous from zero")
     first = observations[0]
     config = first.config
+    _validate_config(config)
     environment_key = first.first.environment.stability_key()
     process_token = first.first.process_token
     for observation in observations:
@@ -27,42 +28,81 @@ def validate_observations(observations: Sequence[TrainingObservation]) -> None:
         _validate_pair(observation)
         for half in (observation.first, observation.second):
             if half.environment.stability_key() != environment_key:
-                raise TrainingProtocolError("point environment controls changed between cells")
+                raise TrainingProtocolError(
+                    "point environment controls changed between cells"
+                )
             if half.process_token != process_token:
-                raise TrainingProtocolError("the live training process changed between halves")
+                raise TrainingProtocolError(
+                    "the live training process changed between halves"
+                )
     _validate_rule(config.decision)
+
+
+def _validate_config(config: TrainingCellConfig) -> None:
+    positive = (
+        config.batch_size,
+        config.sequence_length,
+        config.model_width,
+        config.model_depth,
+        config.attention_heads,
+        config.model_parameters,
+        config.dataset_rows,
+        config.resident_batches,
+        config.warmup_steps,
+    )
+    if any(value <= 0 for value in positive) or config.learning_rate <= 0:
+        raise TrainingProtocolError(
+            "training configuration dimensions must be positive"
+        )
+    required = (config.device, config.model_name, config.optimizer, config.delivery)
+    if not all(required):
+        raise TrainingProtocolError("training configuration identity is incomplete")
 
 
 def _validate_pair(observation: TrainingObservation) -> None:
     config = observation.config
-    expected_first = config.reference if observation.ordinal % 2 == 0 else config.subject
+    expected_first = (
+        config.reference if observation.ordinal % 2 == 0 else config.subject
+    )
     if observation.first.system != expected_first:
         raise TrainingProtocolError("pair order must alternate by observation ordinal")
     if {observation.first.system, observation.second.system} != {
         config.reference,
         config.subject,
     }:
-        raise TrainingProtocolError("each cell needs the declared subject and reference")
+        raise TrainingProtocolError(
+            "each cell needs the declared subject and reference"
+        )
     if not observation.uninterrupted_model_process:
         raise TrainingProtocolError("the model process must remain uninterrupted")
     if observation.second.optimizer_step_start != observation.first.optimizer_step_stop:
-        raise TrainingProtocolError("optimizer steps must be contiguous across the swap")
+        raise TrainingProtocolError(
+            "optimizer steps must be contiguous across the swap"
+        )
     if observation.first.environment != observation.second.environment:
-        raise TrainingProtocolError("both halves require identical environment metadata")
+        raise TrainingProtocolError(
+            "both halves require identical environment metadata"
+        )
     for half in (observation.first, observation.second):
         _validate_half(half, config.half_seconds)
 
 
 def _validate_half(half: TrainingHalf, half_seconds: float) -> None:
     if half.duration_seconds < half_seconds or half_seconds <= 0:
-        raise TrainingProtocolError("half duration is shorter than the preregistered cell")
+        raise TrainingProtocolError(
+            "half duration is shorter than the preregistered cell"
+        )
     steps = half.optimizer_step_stop - half.optimizer_step_start
     if steps <= 0 or half.samples <= 0:
-        raise TrainingProtocolError("each half must complete positive steps and samples")
+        raise TrainingProtocolError(
+            "each half must complete positive steps and samples"
+        )
     if half.rate_steps_per_second <= 0 or half.rate_samples_per_second <= 0:
         raise TrainingProtocolError("training rates must be positive")
     if not half.warmed or not half.batch_hash_chain:
-        raise TrainingProtocolError("each half must be warm and carry a batch hash chain")
+        raise TrainingProtocolError(
+            "each half must be warm and carry a batch hash chain"
+        )
     environment = half.environment
     if not environment.lease_token or environment.lease_kind not in {
         "SPARK-LOCK",
@@ -70,7 +110,9 @@ def _validate_half(half: TrainingHalf, half_seconds: float) -> None:
     }:
         raise TrainingProtocolError("a named machine lease is required")
     if environment.interactive_load or not environment.thermal_steady:
-        raise TrainingProtocolError("cells require no interactive load and thermal steady state")
+        raise TrainingProtocolError(
+            "cells require no interactive load and thermal steady state"
+        )
     required_pins = (
         environment.accelerator_clock,
         environment.memory_clock,
@@ -79,7 +121,9 @@ def _validate_half(half: TrainingHalf, half_seconds: float) -> None:
         environment.ambient_probe_id,
     )
     if not all(required_pins):
-        raise TrainingProtocolError("clock, power, governor, and ambient records are required")
+        raise TrainingProtocolError(
+            "clock, power, governor, and ambient records are required"
+        )
     if environment.lease_kind == "LOCAL-LOCK" and environment.plugged_in is not True:
         raise TrainingProtocolError("local laptop cells require plugged-in power")
 
