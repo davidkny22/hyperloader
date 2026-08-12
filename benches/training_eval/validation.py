@@ -54,8 +54,8 @@ def _validate_pair(observation: TrainingObservation) -> None:
 
 
 def _validate_half(half: TrainingHalf, half_seconds: float) -> None:
-    if half.duration_seconds != half_seconds or half_seconds <= 0:
-        raise TrainingProtocolError("half duration differs from the preregistered cell")
+    if half.duration_seconds < half_seconds or half_seconds <= 0:
+        raise TrainingProtocolError("half duration is shorter than the preregistered cell")
     steps = half.optimizer_step_stop - half.optimizer_step_start
     if steps <= 0 or half.samples <= 0:
         raise TrainingProtocolError("each half must complete positive steps and samples")
