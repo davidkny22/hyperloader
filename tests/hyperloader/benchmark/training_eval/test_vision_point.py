@@ -20,16 +20,19 @@ from benches.training_eval.vision_point import collect_vision_point
 
 def test_image_identity_tracks_source_bytes(tmp_path: Path) -> None:
     root = _image_root(tmp_path)
-    first = TrainingImageFolder(root, resolution=16)
+    first = TrainingImageFolder(root, resolution=16, seed=7)
     identity = first.identity_for_rows(2)
+    assert torch.equal(first[0][0], first[0][0])
+    changed_seed = TrainingImageFolder(root, resolution=16, seed=8)
+    assert changed_seed.identity_for_rows(2) != identity
     Image.new("RGB", (20, 20), (99, 1, 2)).save(root / "class-a" / "0.png")
-    changed = TrainingImageFolder(root, resolution=16)
+    changed = TrainingImageFolder(root, resolution=16, seed=7)
     assert first.class_count == 2
     assert changed.identity_for_rows(2) != identity
 
 
 def test_vision_point_uses_the_shared_live_protocol(tmp_path: Path) -> None:
-    dataset = TrainingImageFolder(_image_root(tmp_path), resolution=16)
+    dataset = TrainingImageFolder(_image_root(tmp_path), resolution=16, seed=0)
     model = nn.Sequential(nn.Flatten(), nn.Linear(3 * 16 * 16, 2))
     parameters = sum(value.numel() for value in model.parameters())
     observations = tmp_path / "observations.jsonl"
@@ -95,8 +98,8 @@ def _config(dataset: TrainingImageFolder, parameters: int) -> TrainingCellConfig
         subject_prefetch=1,
         reference_prefetch=1,
         half_seconds=0.001,
-        tuning_trials=0,
-        tuning_seconds=0.0,
+        tuning_trials=1,
+        tuning_seconds=1.0,
         tuning_knobs=("workers", "prefetch"),
         decision=DecisionRule(
             threshold_percent=100.0,

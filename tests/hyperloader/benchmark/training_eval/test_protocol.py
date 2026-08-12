@@ -217,6 +217,14 @@ def test_order_configuration_and_local_power_drift_are_rejected() -> None:
     with pytest.raises(TrainingProtocolError, match="dimensions must be positive"):
         validate_observations(observations)
 
+    observations = _observations(10)
+    observations = [
+        replace(item, config=replace(item.config, tuning_trials=0))
+        for item in observations
+    ]
+    with pytest.raises(TrainingProtocolError, match="counted feeder tuning"):
+        validate_observations(observations)
+
 
 def test_null_mode_uses_absolute_interval_bound() -> None:
     observations = _observations(10, tax=-0.2)

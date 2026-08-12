@@ -17,7 +17,7 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 class TrainingImageFolder(Dataset[tuple[torch.Tensor, int, str]]):
     """Apply standard augmentation and retain a stable source identity per sample."""
 
-    def __init__(self, root: Path, *, resolution: int) -> None:
+    def __init__(self, root: Path, *, resolution: int, seed: int) -> None:
         if resolution <= 0:
             raise ValueError("image resolution must be positive")
         from torchvision.datasets import ImageFolder
@@ -38,7 +38,9 @@ class TrainingImageFolder(Dataset[tuple[torch.Tensor, int, str]]):
             )
         )
         self._root = root.resolve()
-        self._dataset = ImageFolder(self._root, transform=transform)
+        self._seed = seed
+        self._transform = transform
+        self._dataset = ImageFolder(self._root)
         digests = []
         for path, label in self._dataset.samples:
             resolved = Path(path).resolve()
@@ -54,8 +56,12 @@ class TrainingImageFolder(Dataset[tuple[torch.Tensor, int, str]]):
         return len(self._dataset)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int, str]:
-        image, label = self._dataset[index]
-        return image, int(label), self._digests[index]
+        path, label = self._dataset.samples[index]
+        image = self._dataset.loader(path)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(self._sample_seed(index))
+            transformed = self._transform(image)
+        return transformed, int(label), self._digests[index]
 
     @property
     def class_count(self) -> int:
@@ -67,9 +73,14 @@ class TrainingImageFolder(Dataset[tuple[torch.Tensor, int, str]]):
         if not 0 < rows <= len(self._digests):
             raise ValueError("image source row count is outside the dataset")
         digest = hashlib.sha256()
+        digest.update(str(self._seed).encode())
         for source_digest in self._digests[:rows]:
             digest.update(bytes.fromhex(source_digest))
         return digest.hexdigest()
+
+    def _sample_seed(self, index: int) -> int:
+        encoded = hashlib.sha256(f"{self._seed}\0{index}".encode()).digest()
+        return int.from_bytes(encoded[:8], "little") & ((1 << 63) - 1)
 
 
 def collate_image_batch(rows: list[tuple[torch.Tensor, int, str]]) -> ImageBatch:

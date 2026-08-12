@@ -18,15 +18,48 @@ from benches.training_eval.models import (
 )
 from benches.training_eval.vision_model import build_resnet18
 from benches.training_eval.vision_point import collect_vision_point
+from benches.training_eval.vision_tuning import tune_vision_system
+from benches.training_eval.tuning import parse_tuning_candidates
 
 
 def main() -> None:
     """Parse runtime facts and collect one ResNet-18 loader comparison."""
     arguments = _parser().parse_args()
     torch.manual_seed(arguments.seed)
-    dataset = TrainingImageFolder(arguments.image_root, resolution=arguments.resolution)
+    dataset = TrainingImageFolder(
+        arguments.image_root, resolution=arguments.resolution, seed=arguments.seed
+    )
     rows = arguments.bank_batches * arguments.batch_size
-    model = build_resnet18(classes=dataset.class_count)
+    if rows > len(dataset):
+        raise ValueError("image-folder source is smaller than the resident bank")
+    if arguments.output.exists() and any(arguments.output.iterdir()):
+        raise FileExistsError("training point output directory is not empty")
+    arguments.output.mkdir(parents=True, exist_ok=True)
+    candidates = parse_tuning_candidates(arguments.tuning_candidate)
+    if not candidates:
+        raise ValueError("claim-bearing points require tuning candidates")
+
+    def model_factory():
+        return build_resnet18(classes=dataset.class_count)
+
+    selected = tune_vision_system(
+        arguments.subject,
+        dataset=dataset,
+        rows=rows,
+        batch_size=arguments.batch_size,
+        model_factory=model_factory,
+        candidates=candidates,
+        device=torch.device(arguments.device),
+        precision=arguments.precision,
+        learning_rate=0.0003,
+        pin_memory=arguments.pin_memory,
+        seed=arguments.seed,
+        seconds_per_trial=arguments.tuning_seconds,
+        warmup_steps=arguments.tuning_warmup_steps,
+        output=arguments.output / "tuning.json",
+    )
+    torch.manual_seed(arguments.seed)
+    model = model_factory()
     config = TrainingCellConfig(
         evaluation_id=arguments.evaluation_id,
         point_id="resnet18-image-folder-finetuning",
@@ -55,13 +88,13 @@ def main() -> None:
         seed=arguments.seed,
         resident_batches=arguments.bank_batches,
         warmup_steps=arguments.warmup_steps,
-        subject_workers=arguments.subject_workers,
+        subject_workers=selected.workers,
         reference_workers=0,
-        subject_prefetch=arguments.subject_prefetch,
+        subject_prefetch=selected.prefetch,
         reference_prefetch=1,
         half_seconds=arguments.half_seconds,
-        tuning_trials=arguments.tuning_trials,
-        tuning_seconds=arguments.tuning_seconds,
+        tuning_trials=len(candidates),
+        tuning_seconds=len(candidates) * arguments.tuning_seconds,
         tuning_knobs=("workers", "prefetch"),
         decision=DecisionRule(
             threshold_percent=arguments.threshold_percent,
@@ -92,7 +125,6 @@ def main() -> None:
         lease_token=arguments.lease_token,
         ambient_probe_id=arguments.ambient_probe_id,
     )
-    arguments.output.mkdir(parents=True, exist_ok=True)
     result = collect_vision_point(
         config,
         environment,
@@ -128,8 +160,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--resolution", type=int, default=224)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--subject-workers", type=int, default=2)
-    parser.add_argument("--subject-prefetch", type=int, default=2)
     parser.add_argument("--half-seconds", type=float, default=45.0)
     parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--bank-batches", type=int, default=64)
@@ -139,8 +169,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--threshold-percent", type=float, default=2.0)
     parser.add_argument("--bootstrap-draws", type=int, default=10_000)
     parser.add_argument("--bootstrap-seed", type=int, default=0)
-    parser.add_argument("--tuning-trials", type=int, default=0)
-    parser.add_argument("--tuning-seconds", type=float, default=0.0)
+    parser.add_argument("--tuning-candidate", action="append", default=[])
+    parser.add_argument("--tuning-seconds", type=float, default=2.0)
+    parser.add_argument("--tuning-warmup-steps", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--pin-memory", action=argparse.BooleanOptionalAction, default=True

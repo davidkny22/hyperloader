@@ -73,6 +73,14 @@ def _validate_config(config: TrainingCellConfig) -> None:
     elif config.data_class == "image-folder-standard-augmentation":
         if config.sequence_length is not None or not config.input_resolution:
             raise TrainingProtocolError("image configuration dimensions are invalid")
+    if config.comparison_kind != "null" and (
+        config.tuning_trials <= 0
+        or config.tuning_seconds <= 0
+        or not config.tuning_knobs
+    ):
+        raise TrainingProtocolError(
+            "claim-bearing points require counted feeder tuning"
+        )
 
 
 def _validate_pair(observation: TrainingObservation) -> None:
