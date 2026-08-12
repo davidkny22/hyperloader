@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -34,6 +35,20 @@ class TokenBatch:
     def samples(self) -> int:
         """Return the number of training samples in the batch."""
         return int(self.tokens.shape[0])
+
+
+def collate_token_batch(rows: list[torch.Tensor]) -> TokenBatch:
+    """Stack pre-tokenized samples and hash the delivered tensor exactly."""
+    if not rows:
+        raise ValueError("token collation requires at least one sample")
+    tokens = torch.stack(rows)
+    digest = hashlib.sha256()
+    digest.update(str(tokens.dtype).encode())
+    digest.update(str(tuple(tokens.shape)).encode())
+    digest.update(tokens.detach().cpu().contiguous().numpy().tobytes())
+    batch = TokenBatch(tokens, digest.hexdigest())
+    batch.validate()
+    return batch
 
 
 class ResidentTokenFeeder:

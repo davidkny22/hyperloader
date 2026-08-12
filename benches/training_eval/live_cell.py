@@ -6,7 +6,6 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
-from .feeders import TokenBatch
 from .hash_chain import EMPTY_HASH_CHAIN, advance_hash_chain
 from .models import (
     TrainingCellConfig,
@@ -14,6 +13,7 @@ from .models import (
     TrainingHalf,
     TrainingObservation,
 )
+from .public_feeders import TrainingBatch
 
 
 class BatchFeeder(Protocol):
@@ -21,14 +21,14 @@ class BatchFeeder(Protocol):
 
     system: str
 
-    def next_batch(self) -> TokenBatch:
+    def next_batch(self) -> TrainingBatch:
         """Return one batch without restarting the model process."""
 
 
 class StepRunner(Protocol):
     """Execute and settle one real training step."""
 
-    def step(self, batch: TokenBatch) -> Any:
+    def step(self, batch: TrainingBatch) -> Any:
         """Launch forward, backward, and optimizer work."""
 
     def finish(self, loss: Any) -> float:
