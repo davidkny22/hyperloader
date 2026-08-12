@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,18 +27,21 @@ def test_ambient_probe_accepts_inside_band_and_rejects_outside() -> None:
     assert compare_ambient(prior, outside, null_band_percent=0.5).status == "fail"
 
 
-def test_file_lease_excludes_live_claim_and_releases_owned_token(tmp_path: Path) -> None:
+def test_file_lease_excludes_live_claim_and_releases_owned_token(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "LOCAL-LOCK"
+    claimant = f"claimant-{tmp_path.name}"
     lease = FileLease.claim(
         path,
-        task_row="T087",
+        claimant=claimant,
         purpose="local training cell",
         verify_delay_seconds=0,
     )
     with pytest.raises(LeaseUnavailable, match="belongs"):
         FileLease.claim(
             path,
-            task_row="T087",
+            claimant=claimant,
             purpose="contender",
             verify_delay_seconds=0,
         )
@@ -48,12 +52,17 @@ def test_file_lease_excludes_live_claim_and_releases_owned_token(tmp_path: Path)
 def test_stale_lease_requires_negative_process_probe(tmp_path: Path) -> None:
     path = tmp_path / "LOCAL-LOCK"
     now = datetime(2026, 8, 12, 20, tzinfo=timezone.utc)
-    stale = LeaseRecord(now - timedelta(minutes=61), "T087", "1234abcd", "old")
+    stale = LeaseRecord(
+        now - timedelta(minutes=61),
+        f"claimant-{tmp_path.name}",
+        secrets.token_hex(4),
+        "old",
+    )
     path.write_text(stale.render(), encoding="utf-8")
     with pytest.raises(LeaseUnavailable):
         FileLease.claim(
             path,
-            task_row="T087",
+            claimant=stale.claimant,
             purpose="new",
             now=now,
             active_process=lambda: True,
@@ -61,7 +70,7 @@ def test_stale_lease_requires_negative_process_probe(tmp_path: Path) -> None:
         )
     lease = FileLease.claim(
         path,
-        task_row="T087",
+        claimant=stale.claimant,
         purpose="new",
         now=now,
         active_process=lambda: False,
@@ -71,7 +80,9 @@ def test_stale_lease_requires_negative_process_probe(tmp_path: Path) -> None:
     lease.release()
 
 
-def test_output_is_canonical_json_and_visual_targets_are_rejected(tmp_path: Path) -> None:
+def test_output_is_canonical_json_and_visual_targets_are_rejected(
+    tmp_path: Path,
+) -> None:
     output = tmp_path / "point.json"
     write_result(output, {"kind": "training-throughput-decision", "value": 1})
     assert json.loads(output.read_text(encoding="utf-8"))["schema_version"] == 1

@@ -20,21 +20,21 @@ from benches.training_eval import (
 
 def _environment() -> TrainingEnvironment:
     return TrainingEnvironment(
-        captured_at="2026-08-12T20:00:00+00:00",
-        machine="spark",
-        operating_system="Linux",
-        architecture="aarch64",
-        python="3.12.3",
-        torch="2.13.0",
-        accelerator="GB10",
-        accelerator_clock="2400 MHz",
-        memory_clock="reported",
-        cpu_governor="performance",
-        power_profile="MAXN",
+        captured_at="captured-at-from-record",
+        machine="machine-under-test",
+        operating_system="operating-system-under-test",
+        architecture="architecture-under-test",
+        python="runtime-version-from-record",
+        torch="provider-version-from-record",
+        accelerator="accelerator-under-test",
+        accelerator_clock="accelerator-clock-from-record",
+        memory_clock="memory-clock-from-record",
+        cpu_governor="governor-from-record",
+        power_profile="power-profile-from-record",
         plugged_in=None,
         thermal_steady=True,
         interactive_load=False,
-        commit="0123456",
+        commit="source-revision-from-record",
         lease_kind="SPARK-LOCK",
         lease_token="deadbeef",
         ambient_probe_id="ambient-1",
@@ -100,10 +100,18 @@ def _observations(count: int, tax: float = 0.5) -> list[TrainingObservation]:
             rate_samples_per_second=subject_rate,
             batch_hash_chain=f"subject-{ordinal}",
         )
-        first, second = (reference, subject) if ordinal % 2 == 0 else (subject, reference)
+        first, second = (
+            (reference, subject) if ordinal % 2 == 0 else (subject, reference)
+        )
         if ordinal % 2:
-            first = replace(first, optimizer_step_start=start, optimizer_step_stop=start + 100)
-            second = replace(second, optimizer_step_start=start + 100, optimizer_step_stop=start + 200)
+            first = replace(
+                first, optimizer_step_start=start, optimizer_step_stop=start + 100
+            )
+            second = replace(
+                second,
+                optimizer_step_start=start + 100,
+                optimizer_step_stop=start + 200,
+            )
         observations.append(TrainingObservation(ordinal, config, first, second, True))
     return observations
 
@@ -157,7 +165,9 @@ def test_null_mode_uses_absolute_interval_bound() -> None:
     converted = []
     for observation in observations:
         halves = {
-            "counterfactual": replace(observation.half("counterfactual"), system="null-a"),
+            "counterfactual": replace(
+                observation.half("counterfactual"), system="null-a"
+            ),
             "hyperloader": replace(observation.half("hyperloader"), system="null-b"),
         }
         first_system = "null-a" if observation.ordinal % 2 == 0 else "null-b"
@@ -167,7 +177,9 @@ def test_null_mode_uses_absolute_interval_bound() -> None:
                 observation.ordinal,
                 config,
                 halves["counterfactual" if first_system == "null-a" else "hyperloader"],
-                halves["counterfactual" if second_system == "null-a" else "hyperloader"],
+                halves[
+                    "counterfactual" if second_system == "null-a" else "hyperloader"
+                ],
                 True,
             )
         )

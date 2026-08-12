@@ -69,7 +69,7 @@ def test_three_leg_resume_matches_uninterrupted_loader_oracle(tmp_path: Path) ->
         first_source,
         first_runner,
         ordinal=0,
-        machine="spark",
+        machine="origin-machine",
         steps=2,
         optimizer_step_start=0,
     )
@@ -95,7 +95,7 @@ def test_three_leg_resume_matches_uninterrupted_loader_oracle(tmp_path: Path) ->
         second_source,
         second_runner,
         ordinal=1,
-        machine="rtx-4070",
+        machine="destination-machine",
         steps=2,
         optimizer_step_start=second_cursor.optimizer_step,
         initial_hash_chain=second_cursor.batch_hash_chain,
@@ -123,7 +123,7 @@ def test_three_leg_resume_matches_uninterrupted_loader_oracle(tmp_path: Path) ->
         third_source,
         third_runner,
         ordinal=2,
-        machine="spark",
+        machine="origin-machine",
         steps=2,
         optimizer_step_start=third_cursor.optimizer_step,
         initial_hash_chain=third_cursor.batch_hash_chain,
@@ -140,7 +140,10 @@ def test_three_leg_resume_matches_uninterrupted_loader_oracle(tmp_path: Path) ->
     validate_resume_bundle(bundle)
     output = tmp_path / "resume.json"
     write_resume_bundle(output, bundle)
-    assert json.loads(output.read_text(encoding="utf-8"))["resume"]["oracle_hash_chain"] == oracle
+    assert (
+        json.loads(output.read_text(encoding="utf-8"))["resume"]["oracle_hash_chain"]
+        == oracle
+    )
     assert all(math.isfinite(leg.terminal_loss) for leg in bundle.legs)
 
 
@@ -157,7 +160,7 @@ def test_checkpoint_digest_detects_transfer_corruption(tmp_path: Path) -> None:
         source,
         runner,
         ordinal=0,
-        machine="spark",
+        machine="origin-machine",
         steps=1,
         optimizer_step_start=0,
     )
@@ -183,11 +186,18 @@ def test_checkpoint_digest_detects_transfer_corruption(tmp_path: Path) -> None:
 
 
 def _valid_bundle(tmp_path: Path) -> ResumeBundle:
-    first = run_resume_leg(_Source(2), _Runner(), ordinal=0, machine="spark", steps=1, optimizer_step_start=0)
+    first = run_resume_leg(
+        _Source(2),
+        _Runner(),
+        ordinal=0,
+        machine="origin-machine",
+        steps=1,
+        optimizer_step_start=0,
+    )
     second = dataclasses.replace(
         first,
         ordinal=1,
-        machine="rtx-4070",
+        machine="destination-machine",
         worker_count=4,
         optimizer_step_start=1,
         optimizer_step_stop=2,
@@ -198,7 +208,7 @@ def _valid_bundle(tmp_path: Path) -> ResumeBundle:
     third = dataclasses.replace(
         second,
         ordinal=2,
-        machine="spark",
+        machine="origin-machine",
         worker_count=1,
         optimizer_step_start=2,
         optimizer_step_stop=3,
@@ -213,4 +223,6 @@ def _valid_bundle(tmp_path: Path) -> ResumeBundle:
         CheckpointRecord(0, "first.pt", digest, digest),
         CheckpointRecord(1, "second.pt", digest, digest),
     )
-    return ResumeBundle("eval", "run", (first, second, third), records, third.final_hash_chain)
+    return ResumeBundle(
+        "eval", "run", (first, second, third), records, third.final_hash_chain
+    )

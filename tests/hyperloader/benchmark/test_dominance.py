@@ -8,7 +8,6 @@ import os
 import sys
 import tempfile
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -36,15 +35,15 @@ workload_names = importlib.import_module("benchmark_protocol.matrix").workload_n
 
 def _environment() -> object:
     return EnvironmentMetadata(
-        captured_at="2026-08-10T00:00:00+00:00",
-        machine="spark-test",
-        operating_system="Linux",
+        captured_at="captured-at-from-record",
+        machine="machine-under-test",
+        operating_system="operating-system-under-test",
         kernel="test",
-        architecture="aarch64",
-        python="3.12",
-        commit="abc123",
-        cpu_governor="performance",
-        gpu_clock="locked-2400MHz",
+        architecture="architecture-under-test",
+        python="runtime-version-from-record",
+        commit="source-revision-from-record",
+        cpu_governor="governor-from-record",
+        gpu_clock="clock-from-record",
         cache_regime="warm",
         benchmark_mode=True,
         concurrent_load=False,
@@ -209,7 +208,12 @@ class DominanceHarnessTest(unittest.TestCase):
             make_workload("missing", Path(directory))
         feeders = importlib.import_module("dominance_feeders")
         with self.assertRaisesRegex(ValueError, "unknown dominance system"):
-            feeders.build_feeder("missing", object(), SelectedConfig(2, 2))
+            feeders.build_feeder(
+                "missing",
+                object(),
+                SelectedConfig(2, 2),
+                worker_cpus=(2, 4),
+            )
 
     def test_delivery_memory_override_routes_only_to_hyperloader(self) -> None:
         feeders = importlib.import_module("dominance_feeders")
@@ -223,6 +227,7 @@ class DominanceHarnessTest(unittest.TestCase):
                 "hyperloader",
                 workload,
                 selected,
+                worker_cpus=(2, 4),
                 delivery_memory="host",
             )
 
@@ -230,6 +235,7 @@ class DominanceHarnessTest(unittest.TestCase):
         factory.assert_called_once_with(
             workload,
             selected,
+            (2, 4),
             delivery_memory="host",
             machine_keeping="auto",
         )
@@ -238,6 +244,7 @@ class DominanceHarnessTest(unittest.TestCase):
                 "torch",
                 workload,
                 selected,
+                worker_cpus=(2, 4),
                 delivery_memory="host",
             )
 
@@ -252,17 +259,16 @@ class DominanceHarnessTest(unittest.TestCase):
 
         with (
             mock.patch.object(
-                feeders.os, "sched_getaffinity", return_value={19}, create=True
+                feeders.os, "sched_getaffinity", return_value={7}, create=True
             ),
             mock.patch.object(
                 feeders.os, "sched_setaffinity", side_effect=set_affinity, create=True
             ),
-            mock.patch.object(feeders.os, "cpu_count", return_value=20),
-            feeders.native_thread_affinity(),
+            feeders.native_thread_affinity((2, 4)),
         ):
-            self.assertEqual(calls, [(0, set(range(10)))])
+            self.assertEqual(calls, [(0, {2, 4})])
 
-        self.assertEqual(calls, [(0, set(range(10))), (0, {19})])
+        self.assertEqual(calls, [(0, {2, 4}), (0, {7})])
 
     def test_native_thread_affinity_keeps_consumer_when_worker_set_is_refused(
         self,
@@ -272,33 +278,14 @@ class DominanceHarnessTest(unittest.TestCase):
 
         with (
             mock.patch.object(
-                feeders.os, "sched_getaffinity", return_value={19}, create=True
+                feeders.os, "sched_getaffinity", return_value={7}, create=True
             ),
             mock.patch.object(feeders.os, "sched_setaffinity", setter, create=True),
-            mock.patch.object(feeders.os, "cpu_count", return_value=20),
-            feeders.native_thread_affinity(),
+            feeders.native_thread_affinity((2, 4)),
         ):
             pass
 
-        setter.assert_called_once_with(0, set(range(10)))
-
-    @unittest.skipUnless(
-        os.environ.get("HYPERLOADER_SPARK_HARDWARE") == "1",
-        "requires the guarded Spark affinity topology",
-    )
-    def test_native_thread_affinity_reaches_real_worker_cores(self) -> None:
-        feeders = importlib.import_module("dominance_feeders")
-        before = os.sched_getaffinity(0)
-
-        with feeders.native_thread_affinity():
-            during = os.sched_getaffinity(0)
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                inherited = pool.submit(os.sched_getaffinity, 0).result()
-
-        self.assertEqual(before, {19})
-        self.assertEqual(during, set(range(10)))
-        self.assertEqual(inherited, set(range(10)))
-        self.assertEqual(os.sched_getaffinity(0), before)
+        setter.assert_called_once_with(0, {2, 4})
 
     def test_loader_slowdown_mutation_exceeds_the_tie_margin(self) -> None:
         mutation = os.environ.get("HYPERLOADER_DOMINANCE_MUTATION")

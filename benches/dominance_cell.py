@@ -29,6 +29,7 @@ def run_dominance_cell(
     selected: dict[str, SelectedConfig],
     tuning: TuningBudget,
     environment: EnvironmentMetadata,
+    worker_cpus: tuple[int, ...],
     half_seconds: float = 45.0,
     capture_cpuidle: bool = False,
 ) -> dict[str, Any]:
@@ -47,7 +48,12 @@ def run_dominance_cell(
     original_affinity = os.sched_getaffinity(0)
     try:
         for system in order:
-            feeders[system] = build_feeder(system, workload, selected[system])
+            feeders[system] = build_feeder(
+                system,
+                workload,
+                selected[system],
+                worker_cpus=worker_cpus,
+            )
         first_batches = {
             system: feeder.next_batch() for system, feeder in feeders.items()
         }

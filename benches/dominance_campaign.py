@@ -20,7 +20,6 @@ from dominance_protocol import (
 )
 from dominance_tuning import tune, tuning_budget
 from dominance_workloads import make_workload
-from overhead_campaign import REQUESTED_GPU_CLOCK_MHZ
 from overhead_environment import cpu_governor, platform_facts
 from overhead_results import clock_samples_valid
 
@@ -37,7 +36,7 @@ def _environment(arguments: argparse.Namespace) -> EnvironmentMetadata:
         machine=arguments.machine,
         commit=arguments.commit,
         cpu_governor=cpu_governor(),
-        gpu_clock=f"locked-{REQUESTED_GPU_CLOCK_MHZ}MHz",
+        gpu_clock=f"locked-{arguments.gpu_clock_mhz}MHz",
         cache_regime="warm",
         benchmark_mode=True,
         concurrent_load=False,
@@ -81,6 +80,7 @@ def _compare(
     workload: Any,
     selected: dict[str, SelectedConfig],
     environment: EnvironmentMetadata,
+    worker_cpus: tuple[int, ...],
     output: Path,
     smoke: bool,
     capture_cpuidle: bool,
@@ -99,6 +99,7 @@ def _compare(
             selected=selected,
             tuning=budget,
             environment=environment,
+            worker_cpus=worker_cpus,
             half_seconds=half_seconds,
             capture_cpuidle=capture_cpuidle,
         )
@@ -147,48 +148,42 @@ def summarize_results(
     }
 
 
-def main() -> None:
-    """Tune equally, compare all cells, and preserve each raw observation."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--commit", required=True)
-    parser.add_argument("--machine", required=True)
-    parser.add_argument("--torchvision-version", required=True)
-    parser.add_argument("--workload", action="append", choices=workload_names())
-    parser.add_argument("--reference", action="append", choices=("torch", "spdl"))
-    parser.add_argument("--capture-cpuidle", action="store_true")
-    parser.add_argument("--smoke", action="store_true")
-    parser.add_argument("--smoke-ordinal", type=int, choices=(0, 1), default=0)
-    arguments = parser.parse_args()
-    if not arguments.smoke and arguments.smoke_ordinal != 0:
-        parser.error("--smoke-ordinal requires --smoke")
-    arguments.output.mkdir(parents=True, exist_ok=False)
-    workspace = arguments.output / "workloads"
+def run_campaign(
+    *,
+    output: Path,
+    environment: EnvironmentMetadata,
+    worker_cpus: tuple[int, ...],
+    torchvision_version: str,
+    workloads: tuple[str, ...],
+    references: tuple[str, ...],
+    smoke: bool,
+    capture_cpuidle: bool,
+    smoke_ordinal: int,
+) -> dict[str, Any]:
+    """Run a selected matrix under caller-supplied machine controls."""
+    output.mkdir(parents=True, exist_ok=False)
+    workspace = output / "workloads"
     workspace.mkdir()
-    environment = _environment(arguments)
-    _write_json(arguments.output / "environment.json", asdict(environment))
-
-    workloads = tuple(arguments.workload or workload_names())
-    references = tuple(arguments.reference or ("torch", "spdl"))
+    _write_json(output / "environment.json", asdict(environment))
     systems = ("hyperloader", *references)
     results = {}
     for name in workloads:
         workload = make_workload(
             name,
             workspace,
-            torchvision_version=arguments.torchvision_version,
+            torchvision_version=torchvision_version,
         )
         try:
             selected = {}
             tuning_records = {}
             for system in systems:
                 selected[system], tuning_records[system] = tune(
-                    system, workload, smoke=arguments.smoke
+                    system,
+                    workload,
+                    worker_cpus=worker_cpus,
+                    smoke=smoke,
                 )
-            _write_json(
-                arguments.output / f"{name}-tuning.json",
-                tuning_records,
-            )
+            _write_json(output / f"{name}-tuning.json", tuning_records)
             results[name] = {
                 reference: _compare(
                     reference=reference,
@@ -198,23 +193,57 @@ def main() -> None:
                         reference: selected[reference],
                     },
                     environment=environment,
-                    output=arguments.output,
-                    smoke=arguments.smoke,
-                    capture_cpuidle=arguments.capture_cpuidle,
-                    smoke_ordinal=arguments.smoke_ordinal,
+                    worker_cpus=worker_cpus,
+                    output=output,
+                    smoke=smoke,
+                    capture_cpuidle=capture_cpuidle,
+                    smoke_ordinal=smoke_ordinal,
                 )
                 for reference in references
             }
         finally:
             workload.close()
-
     summary = summarize_results(
         results,
         workloads=workloads,
         references=references,
-        smoke=arguments.smoke,
+        smoke=smoke,
     )
-    _write_json(arguments.output / "summary.json", summary)
+    _write_json(output / "summary.json", summary)
+    return summary
+
+
+def main() -> None:
+    """Tune equally, compare all cells, and preserve each raw observation."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--machine", required=True)
+    parser.add_argument("--gpu-clock-mhz", type=int, required=True)
+    parser.add_argument("--worker-cpus", type=int, nargs="+", required=True)
+    parser.add_argument("--torchvision-version", required=True)
+    parser.add_argument("--workload", action="append", choices=workload_names())
+    parser.add_argument("--reference", action="append", choices=("torch", "spdl"))
+    parser.add_argument("--capture-cpuidle", action="store_true")
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke-ordinal", type=int, choices=(0, 1), default=0)
+    arguments = parser.parse_args()
+    if not arguments.smoke and arguments.smoke_ordinal != 0:
+        parser.error("--smoke-ordinal requires --smoke")
+    environment = _environment(arguments)
+    workloads = tuple(arguments.workload or workload_names())
+    references = tuple(arguments.reference or ("torch", "spdl"))
+    summary = run_campaign(
+        output=arguments.output,
+        environment=environment,
+        worker_cpus=tuple(arguments.worker_cpus),
+        torchvision_version=arguments.torchvision_version,
+        workloads=workloads,
+        references=references,
+        smoke=arguments.smoke,
+        capture_cpuidle=arguments.capture_cpuidle,
+        smoke_ordinal=arguments.smoke_ordinal,
+    )
     print(json.dumps(summary, sort_keys=True))
 
 

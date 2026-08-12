@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Self
 
 _RECORD = re.compile(
-    r"^claimed (?P<timestamp>\S+) \| (?P<task>[^|]+) \| token "
+    r"^claimed (?P<timestamp>\S+) \| (?P<claimant>[^|]+) \| token "
     r"(?P<token>[0-9a-f]{8}) \| (?P<purpose>.+)$"
 )
 
@@ -26,7 +26,7 @@ class LeaseRecord:
     """One parsed lease line."""
 
     timestamp: datetime
-    task_row: str
+    claimant: str
     token: str
     purpose: str
 
@@ -41,7 +41,7 @@ class LeaseRecord:
             raise ValueError("machine lease timestamp must include a timezone")
         return cls(
             timestamp=timestamp,
-            task_row=match.group("task").strip(),
+            claimant=match.group("claimant").strip(),
             token=match.group("token"),
             purpose=match.group("purpose").strip(),
         )
@@ -49,7 +49,7 @@ class LeaseRecord:
     def render(self) -> str:
         """Render the shared one-line lease grammar."""
         return (
-            f"claimed {self.timestamp.isoformat()} | {self.task_row} | "
+            f"claimed {self.timestamp.isoformat()} | {self.claimant} | "
             f"token {self.token} | {self.purpose}\n"
         )
 
@@ -66,7 +66,7 @@ class FileLease:
         cls,
         path: Path,
         *,
-        task_row: str,
+        claimant: str,
         purpose: str,
         active_process: Callable[[], bool] = lambda: True,
         now: datetime | None = None,
@@ -75,7 +75,7 @@ class FileLease:
         """Claim an absent lock or supersede a proven stale inactive claim."""
         instant = now or datetime.now(timezone.utc)
         token = secrets.token_hex(4)
-        record = LeaseRecord(instant, task_row, token, purpose)
+        record = LeaseRecord(instant, claimant, token, purpose)
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with path.open("x", encoding="utf-8") as handle:
@@ -105,7 +105,7 @@ class FileLease:
         self.verify()
         self.record = LeaseRecord(
             now or datetime.now(timezone.utc),
-            self.record.task_row,
+            self.record.claimant,
             self.record.token,
             self.record.purpose,
         )

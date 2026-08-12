@@ -35,14 +35,23 @@ def tuning_budget(*, smoke: bool = False) -> TuningBudget:
 
 
 def tune(
-    system: str, workload: WorkloadBundle, *, smoke: bool = False
+    system: str,
+    workload: WorkloadBundle,
+    *,
+    worker_cpus: tuple[int, ...],
+    smoke: bool = False,
 ) -> tuple[SelectedConfig, dict[str, Any]]:
     """Select the highest standalone batch rate under the fixed search grid."""
     candidates = TUNING_CANDIDATES[:1] if smoke else TUNING_CANDIDATES
     seconds = 0.25 if smoke else TUNING_SECONDS
     trials = []
     for selected in candidates:
-        feeder = build_feeder(system, workload, selected)
+        feeder = build_feeder(
+            system,
+            workload,
+            selected,
+            worker_cpus=worker_cpus,
+        )
         try:
             for _ in range(WARM_BATCHES):
                 feeder.next_batch()

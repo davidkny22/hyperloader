@@ -5,29 +5,40 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
+from functools import partial
 from typing import Any, Literal
 
 from dominance_protocol import SelectedConfig
 from dominance_workloads import WorkloadBundle
 
-EFFICIENCY_CORES = tuple(range(10))
+
+def available_worker_cpus() -> tuple[int, ...]:
+    """Return a host-derived worker set that leaves one consumer CPU when possible."""
+    if hasattr(os, "sched_getaffinity"):
+        available = tuple(sorted(os.sched_getaffinity(0)))
+    else:
+        available = tuple(range(os.cpu_count() or 1))
+    return available[:-1] or available
 
 
-def pin_efficiency_worker(worker: int) -> None:
-    """Pin process workers to the measured efficiency-core cluster."""
+def pin_worker(worker_cpus: tuple[int, ...], worker: int) -> None:
+    """Pin one process worker to a caller-selected CPU set."""
+    if not worker_cpus:
+        raise ValueError("worker CPU selection cannot be empty")
     if hasattr(os, "sched_setaffinity"):
-        os.sched_setaffinity(0, {EFFICIENCY_CORES[worker % len(EFFICIENCY_CORES)]})
+        os.sched_setaffinity(0, {worker_cpus[worker % len(worker_cpus)]})
 
 
 @contextmanager
-def native_thread_affinity() -> Any:
-    """Make newly created native threads inherit the efficiency-core mask."""
+def native_thread_affinity(worker_cpus: tuple[int, ...]) -> Any:
+    """Make newly created native threads inherit the caller-selected CPU mask."""
+    if not worker_cpus:
+        raise ValueError("worker CPU selection cannot be empty")
     if not hasattr(os, "sched_getaffinity"):
         yield
         return
     original = os.sched_getaffinity(0)
-    cpu_count = os.cpu_count() or 0
-    target = {cpu for cpu in EFFICIENCY_CORES if cpu < cpu_count}
+    target = set(worker_cpus)
     changed = False
     if target and target != set(original):
         try:
@@ -47,7 +58,12 @@ class TorchFeeder:
 
     system = "torch"
 
-    def __init__(self, workload: WorkloadBundle, selected: SelectedConfig) -> None:
+    def __init__(
+        self,
+        workload: WorkloadBundle,
+        selected: SelectedConfig,
+        worker_cpus: tuple[int, ...],
+    ) -> None:
         import torch
 
         started = time.perf_counter()
@@ -58,7 +74,7 @@ class TorchFeeder:
             num_workers=selected.workers,
             prefetch_factor=selected.prefetch_factor,
             persistent_workers=True,
-            worker_init_fn=pin_efficiency_worker,
+            worker_init_fn=partial(pin_worker, worker_cpus),
             multiprocessing_context="forkserver",
             collate_fn=workload.collate_fn,
             in_order=True,
@@ -97,6 +113,7 @@ class HyperloaderFeeder:
         self,
         workload: WorkloadBundle,
         selected: SelectedConfig,
+        worker_cpus: tuple[int, ...],
         *,
         delivery_memory: Literal["auto", "host", "pinned"] = "auto",
         machine_keeping: Literal["auto", "off"] = "auto",
@@ -117,14 +134,14 @@ class HyperloaderFeeder:
             if workload.decoder_pins is not None
             else DeterminismConfig()
         )
-        with native_thread_affinity():
+        with native_thread_affinity(worker_cpus):
             self._loader = DataLoader(
                 workload.hyperloader_dataset,
                 batch_size=workload.batch_size,
                 num_workers=selected.workers,
                 prefetch_factor=selected.prefetch_factor,
                 persistent_workers=True,
-                worker_init_fn=pin_efficiency_worker,
+                worker_init_fn=partial(pin_worker, worker_cpus),
                 multiprocessing_context="forkserver",
                 config=HyperConfig(
                     control=ControlConfig(machine_keeping=machine_keeping),
@@ -169,12 +186,18 @@ class SpdlFeeder:
 
     system = "spdl"
 
-    def __init__(self, workload: WorkloadBundle, selected: SelectedConfig) -> None:
+    def __init__(
+        self,
+        workload: WorkloadBundle,
+        selected: SelectedConfig,
+        worker_cpus: tuple[int, ...],
+    ) -> None:
         from spdl.dataloader import DataLoader
 
         started = time.perf_counter()
         self._workload = workload
         self._selected = selected
+        self._worker_cpus = worker_cpus
         self._loader = DataLoader(
             range(len(workload.reference_dataset)),
             preprocessor=workload.reference_dataset.__getitem__,
@@ -191,7 +214,7 @@ class SpdlFeeder:
         self.batches = 0
 
     def _start_iterator(self) -> None:
-        with native_thread_affinity():
+        with native_thread_affinity(self._worker_cpus):
             self._iterator = iter(self._loader)
             self._pending = next(self._iterator)
 
@@ -226,14 +249,17 @@ def build_feeder(
     workload: WorkloadBundle,
     selected: SelectedConfig,
     *,
+    worker_cpus: tuple[int, ...] | None = None,
     delivery_memory: Literal["auto", "host", "pinned"] = "auto",
     machine_keeping: Literal["auto", "off"] = "auto",
 ) -> TorchFeeder | HyperloaderFeeder | SpdlFeeder:
     """Construct one named system through its public entry point."""
+    selected_cpus = worker_cpus or available_worker_cpus()
     if system == "hyperloader":
         return HyperloaderFeeder(
             workload,
             selected,
+            selected_cpus,
             delivery_memory=delivery_memory,
             machine_keeping=machine_keeping,
         )
@@ -247,4 +273,4 @@ def build_feeder(
         factory = factories[system]
     except KeyError as error:
         raise ValueError(f"unknown dominance system {system!r}") from error
-    return factory(workload, selected)
+    return factory(workload, selected, selected_cpus)
