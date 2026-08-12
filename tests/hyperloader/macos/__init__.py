@@ -1,0 +1,1 @@
+"""macOS installed-artifact assurance."""

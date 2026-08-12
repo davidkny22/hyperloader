@@ -112,3 +112,10 @@ fn iocp_is_rejected_off_windows() {
         .expect("IOCP must be unavailable");
     assert!(error.to_string().contains("unavailable"));
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_auto_selects_the_pread_refuge() {
+    let backend = PlatformBackend::select(BackendPreference::Auto).expect("automatic backend");
+    assert_eq!(backend.kind(), BackendKind::Pread);
+}
