@@ -1,4 +1,4 @@
-"""Six equal-input workloads for provisional loader comparisons."""
+"""Six equal-input workloads for loader comparisons."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 from benchmark_protocol.matrix import workload_names
 
 SAMPLE_WIDTH = 512
@@ -127,9 +126,8 @@ def _image_workload(
     torchvision_version: str | None,
 ) -> WorkloadBundle:
     import torch
-    from torchvision.io import encode_png
-
     from hyperloader import Collate, Decode, Source, pipeline
+    from torchvision.io import encode_png
 
     seeds = []
     base = torch.arange(3 * edge * edge, dtype=torch.int64).reshape(3, edge, edge)
@@ -185,9 +183,8 @@ def _fixed_text(_root: Path, batches: int) -> WorkloadBundle:
 
 def _variable_text(_root: Path, batches: int) -> WorkloadBundle:
     import torch
-    from torch.nn.utils.rnn import pad_sequence
-
     from hyperloader import Collate, Source, pipeline
+    from torch.nn.utils.rnn import pad_sequence
 
     batch_size = 64
     lengths = [256 + index % 257 for index in range(batch_size * batches)]

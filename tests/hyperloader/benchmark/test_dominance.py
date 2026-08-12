@@ -1,4 +1,4 @@
-"""Provisional dominance protocol and six-workload checks."""
+"""Dominance protocol and six-workload checks."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _environment() -> object:
         python="3.12",
         commit="abc123",
         cpu_governor="performance",
-        gpu_clock="locked-3003MHz",
+        gpu_clock="locked-2400MHz",
         cache_regime="warm",
         benchmark_mode=True,
         concurrent_load=False,

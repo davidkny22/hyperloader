@@ -1,4 +1,4 @@
-"""Paired comparison records and provisional dominance decisions."""
+"""Paired comparison records and terminal dominance decisions."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from dataclasses import dataclass
 
 from benchmark_protocol import EnvironmentMetadata, TuningBudget
 
-PROVISIONAL_PAIRS = 5
+REQUIRED_PAIRS = 5
 PLATFORM_NOISE_PERCENT = 0.93
 BOOTSTRAP_DRAWS = 10_000
 
 
 class DominanceProtocolError(ValueError):
-    """A provisional comparison record violates its fixed protocol."""
+    """A comparison record violates its fixed protocol."""
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class DominanceObservation:
 
 @dataclass(frozen=True)
 class DominanceDecision:
-    """Bootstrap interval and provisional win, tie, or loss."""
+    """Bootstrap interval and terminal win, tie, or loss."""
 
     status: str
     pairs: int
@@ -125,12 +125,10 @@ def decide(
     seed: int = 0,
     draws: int = BOOTSTRAP_DRAWS,
 ) -> DominanceDecision:
-    """Classify a provisional win or noise-bounded tie after five pairs."""
+    """Classify a win or noise-bounded tie after five pairs."""
     validate_observations(observations)
-    if len(observations) < PROVISIONAL_PAIRS:
-        raise DominanceProtocolError(
-            "a provisional decision requires five paired cells"
-        )
+    if len(observations) < REQUIRED_PAIRS:
+        raise DominanceProtocolError("a decision requires five paired cells")
     if draws <= 0:
         raise ValueError("bootstrap draws must be positive")
     values = [observation.advantage_percent() for observation in observations]

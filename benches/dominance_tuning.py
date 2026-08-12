@@ -1,4 +1,4 @@
-"""Counted equal-budget tuning for provisional dominance references."""
+"""Counted equal-budget tuning for dominance references."""
 
 from __future__ import annotations
 

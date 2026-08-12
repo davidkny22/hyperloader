@@ -1,4 +1,4 @@
-"""Run the six-cell provisional dominance matrix on Spark."""
+"""Run the six-cell dominance matrix on Spark."""
 
 from __future__ import annotations
 
