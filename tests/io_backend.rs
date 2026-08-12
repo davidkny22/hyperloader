@@ -1,6 +1,7 @@
 use _hyperloader::io::{BackendKind, BackendPreference, PlatformBackend};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
@@ -76,6 +77,31 @@ fn windows_auto_selects_iocp_and_receives_matching_completions() {
             .expect("IOCP final range"),
         b"f"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_iocp_dispatches_concurrent_completions_to_their_callers() {
+    let fixture = Fixture::new();
+    let backend =
+        Arc::new(PlatformBackend::select(BackendPreference::Iocp).expect("shared IOCP backend"));
+    let expected = b"0123456789abcdef";
+    let mut threads = Vec::new();
+    for offset in 0..expected.len() {
+        let backend = Arc::clone(&backend);
+        let path = fixture.path.clone();
+        threads.push(std::thread::spawn(move || {
+            backend
+                .read_range(&path, offset as u64, 1)
+                .expect("concurrent range")
+        }));
+    }
+    for (offset, thread) in threads.into_iter().enumerate() {
+        assert_eq!(
+            thread.join().expect("reader thread"),
+            expected[offset..=offset]
+        );
+    }
 }
 
 #[cfg(not(windows))]

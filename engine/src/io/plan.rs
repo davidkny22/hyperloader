@@ -59,7 +59,7 @@ impl PlatformBackend {
 fn select_platform(preference: BackendPreference) -> Result<PlatformBackend, IoError> {
     match preference {
         BackendPreference::Auto | BackendPreference::Iocp => Ok(PlatformBackend {
-            inner: Backend::Iocp(IocpBackend),
+            inner: Backend::Iocp(IocpBackend::new()?),
         }),
         BackendPreference::Pread => Ok(PlatformBackend {
             inner: Backend::Pread,
