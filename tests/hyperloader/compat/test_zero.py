@@ -100,6 +100,13 @@ class CompatZeroTest(unittest.TestCase):
         finally:
             candidate.close()
 
+    def test_global_state_capture_is_storage_identity_free(self) -> None:
+        _reset_globals(47)
+        first = capture_globals()
+        second = capture_globals()
+
+        self.assertEqual(first, second)
+
     def test_resume_restores_globals_and_exact_remaining_stream(self) -> None:
         _reset_globals(59)
         reference = torch.utils.data.DataLoader(

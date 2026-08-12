@@ -16,7 +16,7 @@ def capture_globals() -> dict[str, bytes]:
     return {
         "random": pickle.dumps(random.getstate(), protocol=pickle.HIGHEST_PROTOCOL),
         "numpy": pickle.dumps(np.random.get_state(), protocol=pickle.HIGHEST_PROTOCOL),
-        "torch": pickle.dumps(torch.get_rng_state(), protocol=pickle.HIGHEST_PROTOCOL),
+        "torch": _torch_state_bytes(torch.get_rng_state()),
     }
 
 
@@ -25,7 +25,7 @@ def restore_globals(payload: object) -> None:
     states = validate_globals(payload)
     random.setstate(pickle.loads(states["random"]))
     np.random.set_state(pickle.loads(states["numpy"]))
-    torch.set_rng_state(pickle.loads(states["torch"]))
+    torch.set_rng_state(_torch_state_tensor(states["torch"]))
 
 
 def validate_globals(payload: object) -> dict[str, bytes]:
@@ -45,7 +45,7 @@ def capture_generator(generator: object) -> bytes | None:
     """Serialize an explicit torch generator state when one exists."""
     if generator is None:
         return None
-    return pickle.dumps(generator.get_state(), protocol=pickle.HIGHEST_PROTOCOL)
+    return _torch_state_bytes(generator.get_state())
 
 
 def restore_generator(generator: object, payload: bytes | None) -> None:
@@ -56,4 +56,14 @@ def restore_generator(generator: object, payload: bytes | None) -> None:
         return
     if generator is None:
         raise ValueError("compat checkpoint requires its torch generator")
-    generator.set_state(pickle.loads(payload))
+    generator.set_state(_torch_state_tensor(payload))
+
+
+def _torch_state_bytes(state: torch.Tensor) -> bytes:
+    """Return a storage-identity-free byte representation of one torch RNG state."""
+    return state.detach().cpu().contiguous().numpy().tobytes()
+
+
+def _torch_state_tensor(payload: bytes) -> torch.Tensor:
+    """Reconstruct a writable CPU uint8 tensor from canonical RNG bytes."""
+    return torch.frombuffer(bytearray(payload), dtype=torch.uint8).clone()
