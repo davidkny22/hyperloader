@@ -11,7 +11,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data._utils.fetch import _MapDatasetFetcher
 from torch.utils.data._utils.worker import _generate_state
 
 from hyperloader import _hyperloader
@@ -19,8 +18,8 @@ from hyperloader.process.parent_watchdog import start_parent_watchdog
 from hyperloader.process.serialization import ResultEncoder
 from hyperloader.process.worker import encode_exception
 
-from .protocol import TaggedBatch
-from .worker import capture_worker_state, restore_worker_state
+from .lane_fetch import build_fetcher, fetch_batch
+from .worker import restore_worker_state
 
 COMPAT_STAGE = 1
 
@@ -36,7 +35,14 @@ def lane_worker_main(
 ) -> None:
     """Run one Torch-seeded dataset copy behind a native worker endpoint."""
     start_parent_watchdog()
-    dataset, collate_fn, worker_init_fn, auto_collation = pickle.loads(payload)
+    (
+        dataset,
+        collate_fn,
+        worker_init_fn,
+        auto_collation,
+        drop_last,
+        iterable,
+    ) = pickle.loads(payload)
     seed = base_seed + worker
     startup_error = _initialize_lane(
         dataset,
@@ -47,7 +53,8 @@ def lane_worker_main(
         seed,
         restored_state,
     )
-    fetcher = _MapDatasetFetcher(dataset, auto_collation, collate_fn, False)
+    fetcher_spec = (dataset, auto_collation, collate_fn, drop_last, iterable)
+    fetcher = build_fetcher(*fetcher_spec)
     encoder = ResultEncoder()
     try:
         command = control.recv()
@@ -60,10 +67,12 @@ def lane_worker_main(
             control,
             endpoint,
             fetcher,
+            fetcher_spec,
             encoder,
             worker,
             seed,
             capture_state,
+            iterable,
             startup_error,
         )
     finally:
@@ -98,10 +107,12 @@ def _run_lane(
     control: Connection,
     endpoint: Any,
     fetcher: Any,
+    fetcher_spec: tuple[Any, bool, Any, bool, bool],
     encoder: ResultEncoder,
     worker: int,
     seed: int,
     capture_state: bool,
+    iterable: bool,
     startup_error: tuple[int, bytes] | None,
 ) -> None:
     while True:
@@ -109,6 +120,10 @@ def _run_lane(
             message = control.recv()
             if message[0] == "stop":
                 return
+            if message[0] == "reset":
+                fetcher = build_fetcher(*fetcher_spec)
+                control.send(("reset_ready",))
+                continue
             raise RuntimeError("compat worker received an invalid control command")
         dispatch = endpoint.try_recv()
         if dispatch is None:
@@ -123,35 +138,18 @@ def _run_lane(
             status, result = startup_error
         else:
             indices = pickle.loads(endpoint.read_command(dispatch))
-            status, result = _fetch_batch(
+            status, result = fetch_batch(
                 fetcher,
                 indices,
                 dispatch.position,
                 worker,
                 seed,
                 capture_state,
+                iterable,
             )
         cost_ns = max(1, time.perf_counter_ns() - started)
         _publish(endpoint, dispatch, encoder, status, result, cost_ns)
         control.send(("ready",))
-
-
-def _fetch_batch(
-    fetcher: Any,
-    indices: Any,
-    batch: int,
-    worker: int,
-    seed: int,
-    capture_state: bool,
-) -> tuple[int, Any]:
-    try:
-        state = capture_worker_state() if capture_state else b""
-        value = fetcher.fetch(indices)
-        if capture_state:
-            value = TaggedBatch(batch, worker, seed, value, state)
-        return 0, value
-    except BaseException as error:
-        return encode_exception(error)
 
 
 def _publish(

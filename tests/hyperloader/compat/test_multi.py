@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import types
 import unittest
 from unittest import mock
 
@@ -12,7 +13,10 @@ from hyperloader import DataLoader
 from .support import (
     FatalLaneDataset,
     InitializedLaneDataset,
+    IterableLaneDataset,
+    IterableRngLaneDataset,
     LaneDataset,
+    UnevenIterableLaneDataset,
     compat_config,
     generator,
     initialize_lane,
@@ -85,6 +89,114 @@ class CompatMultiTest(unittest.TestCase):
                 side_effect=AssertionError("torch worker transport was entered"),
             ):
                 self.assertEqual(records(candidate), expected)
+        finally:
+            candidate.close()
+
+    def test_pin_memory_delivery_is_owned_by_the_native_pool(self) -> None:
+        candidate = DataLoader(
+            LaneDataset(4),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(449),
+            pin_memory=True,
+            mode="torch-compat",
+        )
+        try:
+            with (
+                mock.patch.object(
+                    torch.accelerator,
+                    "is_available",
+                    return_value=True,
+                ),
+                mock.patch.object(
+                    torch.accelerator,
+                    "current_accelerator",
+                    return_value=types.SimpleNamespace(type="cuda"),
+                ),
+                mock.patch(
+                    "hyperloader.compat.pinning.pin_memory",
+                    side_effect=lambda value, _device: value,
+                ) as pin,
+                mock.patch.object(
+                    torch.utils.data.DataLoader,
+                    "__iter__",
+                    side_effect=AssertionError("torch pin-memory path was entered"),
+                ),
+            ):
+                self.assertEqual(len(records(candidate)), 4)
+                self.assertGreater(pin.call_count, 0)
+        finally:
+            candidate.close()
+
+    def test_iterable_lane_exhaustion_matches_torch_without_torch_iteration(
+        self,
+    ) -> None:
+        reference = torch.utils.data.DataLoader(
+            UnevenIterableLaneDataset(),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(461),
+        )
+        expected = [batch.tolist() for batch in reference]
+        candidate = DataLoader(
+            UnevenIterableLaneDataset(),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(461),
+            mode="torch-compat",
+        )
+        try:
+            with mock.patch.object(
+                torch.utils.data.DataLoader,
+                "__iter__",
+                side_effect=AssertionError("torch worker transport was entered"),
+            ):
+                self.assertEqual([batch.tolist() for batch in candidate], expected)
+        finally:
+            candidate.close()
+
+    def test_persistent_iterable_fetchers_reset_without_reseeding(self) -> None:
+        reference = torch.utils.data.DataLoader(
+            IterableRngLaneDataset(),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(487),
+            persistent_workers=True,
+        )
+        try:
+            expected = (records(reference), records(reference))
+        finally:
+            del reference
+        candidate = DataLoader(
+            IterableRngLaneDataset(),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(487),
+            persistent_workers=True,
+            mode="torch-compat",
+        )
+        try:
+            self.assertEqual((records(candidate), records(candidate)), expected)
+        finally:
+            candidate.close()
+
+    def test_worker_sharded_iterable_matches_torch(self) -> None:
+        reference = torch.utils.data.DataLoader(
+            IterableLaneDataset(),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(479),
+        )
+        expected = [batch.tolist() for batch in reference]
+        candidate = DataLoader(
+            IterableLaneDataset(),
+            batch_size=2,
+            num_workers=2,
+            generator=generator(479),
+            mode="torch-compat",
+        )
+        try:
+            self.assertEqual([batch.tolist() for batch in candidate], expected)
         finally:
             candidate.close()
 

@@ -7,11 +7,6 @@ from typing import Any
 
 import torch
 
-from .collation import CollateAdapter
-from .dataset import IterableDatasetAdapter, MapDatasetAdapter
-from .sampling import BatchSamplerAdapter, SamplerAdapter
-from .worker import WorkerInitializer
-
 
 def reference_loader(loader: Any) -> Any:
     """Build the exact uninstrumented torch worker path."""
@@ -29,76 +24,13 @@ def reference_loader(loader: Any) -> Any:
     return torch.utils.data.DataLoader(**options)
 
 
-def worker_loader(
-    loader: Any,
-    skip: int,
-    phase: int,
-    lane_states: dict[int, bytes],
-    lane_seeds: dict[int, int],
-    *,
-    base_generator: Any = None,
-) -> Any:
-    """Build the tagged worker path used by opt-in continuation."""
-    reference = loader._compat_reference
-    iterable = isinstance(loader.dataset, torch.utils.data.IterableDataset)
-    adapter = (
-        IterableDatasetAdapter(loader.dataset, loader.batch_size, loader.num_workers)
-        if iterable
-        else MapDatasetAdapter(loader.dataset)
-    )
-    auto_collation = reference.batch_sampler is not None
-    options = _common_options(loader, generator=base_generator)
-    options.update(
-        dataset=adapter,
-        collate_fn=CollateAdapter(
-            loader.collate_fn,
-            auto_collation=auto_collation,
-            pin_memory_device=loader.pin_memory_device,
-        ),
-        worker_init_fn=WorkerInitializer(
-            loader.worker_init_fn,
-            lane_states,
-            lane_seeds,
-        ),
-    )
-    if iterable:
-        options.update(
-            batch_size=loader.batch_size,
-            shuffle=False,
-            sampler=None,
-            batch_sampler=None,
-            drop_last=loader.drop_last,
-        )
-    elif auto_collation:
-        options.update(
-            batch_size=1,
-            shuffle=False,
-            sampler=None,
-            batch_sampler=BatchSamplerAdapter(
-                reference.batch_sampler,
-                skip=skip,
-                phase=phase,
-            ),
-            drop_last=False,
-        )
-    else:
-        options.update(
-            batch_size=None,
-            shuffle=False,
-            sampler=SamplerAdapter(reference.sampler, skip=skip, phase=phase),
-            batch_sampler=None,
-            drop_last=False,
-        )
-    return torch.utils.data.DataLoader(**options)
-
-
-def _common_options(loader: Any, *, generator: Any = None) -> dict[str, Any]:
+def _common_options(loader: Any) -> dict[str, Any]:
     options = {
         "num_workers": loader.num_workers,
         "pin_memory": loader.pin_memory,
         "timeout": loader.timeout,
         "multiprocessing_context": loader.multiprocessing_context,
-        "generator": loader._compat_generator if generator is None else generator,
+        "generator": loader._compat_generator,
         "prefetch_factor": loader.prefetch_factor,
         "persistent_workers": loader.persistent_workers,
         "pin_memory_device": loader.pin_memory_device,

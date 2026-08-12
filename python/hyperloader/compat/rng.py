@@ -81,6 +81,11 @@ def clone_torch_source(payload: bytes) -> torch.Generator:
     return generator
 
 
+def draw_base_seed(generator: object) -> int:
+    """Draw Torch's eager signed-64 worker base seed from its source."""
+    return int(torch.empty((), dtype=torch.int64).random_(generator=generator).item())
+
+
 def _torch_state_bytes(state: torch.Tensor) -> bytes:
     """Return a storage-identity-free byte representation of one torch RNG state."""
     return state.detach().cpu().contiguous().numpy().tobytes()

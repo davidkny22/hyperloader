@@ -71,6 +71,35 @@ class IterableLaneDataset(torch.utils.data.IterableDataset):
         yield from range(worker, 8, workers)
 
 
+class IterableRngLaneDataset(torch.utils.data.IterableDataset):
+    """Expose free-running worker RNG state from a sharded iterable."""
+
+    def __iter__(self):
+        info = get_worker_info()
+        if info is None:
+            raise RuntimeError("iterable RNG dataset requires a worker process")
+        for index in range(info.id, 12, info.num_workers):
+            yield (
+                index,
+                info.id,
+                random.getrandbits(32),
+                int(np.random.randint(0, 1 << 31)),
+                int(torch.randint(0, 1 << 31, ()).item()),
+            )
+
+
+class UnevenIterableLaneDataset(torch.utils.data.IterableDataset):
+    """Exhaust worker lanes at distinct batch boundaries."""
+
+    def __iter__(self):
+        info = get_worker_info()
+        if info is None:
+            raise RuntimeError("uneven iterable requires a worker process")
+        count = 5 if info.id == 0 else 2
+        for offset in range(count):
+            yield info.id * 100 + offset
+
+
 def initialize_lane(worker: int) -> None:
     """Mutate the worker-owned dataset through torch's public identity view."""
     info = get_worker_info()

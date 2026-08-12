@@ -20,7 +20,6 @@ class CompatMultiIterator(Iterator[Any]):
         iterator_generator: bytes,
         *,
         delivered: int = 0,
-        dummy_batches: int = 0,
         tagged: bool = True,
         reused_base_seed: bool = False,
         base_seed: int | None = None,
@@ -29,11 +28,9 @@ class CompatMultiIterator(Iterator[Any]):
         self._iterator = iterator
         self._iterator_generator = iterator_generator
         self._delivered = delivered
-        self._dummy_batches = dummy_batches
         self._tagged = tagged
         self._reused_base_seed = reused_base_seed
         self._base_seed = base_seed
-        self._lookahead: list[TaggedBatch] = []
         self._complete = False
         self._valid = True
 
@@ -56,35 +53,18 @@ class CompatMultiIterator(Iterator[Any]):
         return batch.value
 
     def _next_tagged(self) -> TaggedBatch:
-        if self._lookahead:
-            return self._lookahead.pop(0)
         return self._next_from_iterator()
 
     def _next_from_iterator(self) -> TaggedBatch:
         """Read one real batch without consulting owner-side lookahead."""
-        while True:
-            try:
-                batch = next(self._iterator)
-            except StopIteration:
-                self._complete = True
-                raise
-            if not isinstance(batch, TaggedBatch):
-                raise TypeError("compat worker returned an untagged batch")
-            if batch.dummy:
-                if self._dummy_batches == 0:
-                    raise RuntimeError(
-                        "compat worker returned an unexpected dummy batch"
-                    )
-                self._dummy_batches -= 1
-                continue
-            return batch
-
-    def prime_resume(self) -> None:
-        """Force lazy sampler replay before restoring the owner's generator."""
         try:
-            self._lookahead.append(self._next_tagged())
+            batch = next(self._iterator)
         except StopIteration:
-            pass
+            self._complete = True
+            raise
+        if not isinstance(batch, TaggedBatch):
+            raise TypeError("compat worker returned an untagged batch")
+        return batch
 
     def capture_checkpoint(self) -> CompatMultiCheckpoint:
         """Capture the first undelivered restore point for every active lane."""
@@ -92,9 +72,8 @@ class CompatMultiIterator(Iterator[Any]):
             raise RuntimeError("compat snapshot capture requires tagged worker lanes")
         capture_points = getattr(self._iterator, "capture_points", None)
         if capture_points is None:
-            batches = self._capture_lookahead()
-        else:
-            batches = capture_points()
+            raise RuntimeError("compat worker transport cannot expose lane snapshots")
+        batches = capture_points()
         lane_states = {batch.worker: batch.state for batch in batches}
         lane_seeds = {batch.worker: batch.seed for batch in batches}
         return CompatMultiCheckpoint(
@@ -112,17 +91,6 @@ class CompatMultiIterator(Iterator[Any]):
             lane_seeds=lane_seeds,
             fingerprint=self._loader._fingerprint,
         )
-
-    def _capture_lookahead(self) -> tuple[TaggedBatch, ...]:
-        lane_states = {batch.worker for batch in self._lookahead}
-        while len(lane_states) < self._loader.num_workers and not self._complete:
-            try:
-                batch = self._next_from_iterator()
-            except StopIteration:
-                break
-            self._lookahead.append(batch)
-            lane_states.add(batch.worker)
-        return tuple(self._lookahead)
 
     @property
     def complete(self) -> bool:

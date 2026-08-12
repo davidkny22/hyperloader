@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from .lane_pool import CompatLanePool
-from .protocol import TaggedBatch
+from .protocol import LaneExhausted, TaggedBatch
 
 
 class CompatLaneRuntime(Iterator[Any]):
@@ -33,6 +33,9 @@ class CompatLaneRuntime(Iterator[Any]):
         self._next_task = skip
         self._next_delivery = skip
         self._phase = phase
+        self._iterable = loader._plan is None
+        self._active_workers = set(range(loader.num_workers))
+        self._worker_cursor = phase
         prefetch = loader._compat_reference.prefetch_factor or 2
         self._limit = loader.num_workers * prefetch
         self._ready: dict[int, Any] = {}
@@ -54,14 +57,22 @@ class CompatLaneRuntime(Iterator[Any]):
                     value = self._ready.pop(self._next_delivery)
                     self._next_delivery += 1
                     self._fill()
+                    if isinstance(value, LaneExhausted):
+                        continue
                     return value
             elif self._ready:
                 task = next(iter(self._ready))
                 value = self._ready.pop(task)
                 self._next_delivery += 1
                 self._fill()
+                if isinstance(value, LaneExhausted):
+                    continue
                 return value
-            if self._sampler_exhausted and not self._pool.has_pending:
+            if (
+                self._sampler_exhausted
+                and not self._pool.has_pending
+                and not self._ready
+            ):
                 self._closed = True
                 if not self._loader.persistent_workers:
                     self._pool.close()
@@ -72,7 +83,7 @@ class CompatLaneRuntime(Iterator[Any]):
                 self._pool.wait_for_completion(deadline)
                 continue
             task, value = completion
-            self._ready[task] = value
+            self._accept(task, value)
 
     def _fill(self, target: int | None = None) -> None:
         limit = self._limit if target is None else target
@@ -85,9 +96,10 @@ class CompatLaneRuntime(Iterator[Any]):
             except StopIteration:
                 self._sampler_exhausted = True
                 return
-            worker = (
-                self._phase + self._next_task - self._start_task
-            ) % self._loader.num_workers
+            worker = self._next_worker()
+            if worker is None:
+                self._sampler_exhausted = True
+                return
             if not self._pool.try_submit(self._next_task, indices, worker):
                 return
             self._next_task += 1
@@ -103,7 +115,7 @@ class CompatLaneRuntime(Iterator[Any]):
                 self._pool.wait_for_completion(deadline)
                 continue
             task, value = completion
-            self._ready[task] = value
+            self._accept(task, value)
             if isinstance(value, TaggedBatch):
                 points.setdefault(value.worker, value)
         return tuple(points[worker] for worker in sorted(points))
@@ -115,6 +127,26 @@ class CompatLaneRuntime(Iterator[Any]):
             if isinstance(value, TaggedBatch):
                 points.setdefault(value.worker, value)
         return points
+
+    def _accept(self, task: int, value: Any) -> None:
+        self._ready[task] = value
+        if not isinstance(value, LaneExhausted):
+            return
+        self._active_workers.discard(value.worker)
+        if not self._active_workers:
+            self._sampler_exhausted = True
+
+    def _next_worker(self) -> int | None:
+        if not self._iterable:
+            return (
+                self._phase + self._next_task - self._start_task
+            ) % self._loader.num_workers
+        for _ in range(self._loader.num_workers):
+            worker = self._worker_cursor % self._loader.num_workers
+            self._worker_cursor += 1
+            if worker in self._active_workers:
+                return worker
+        return None
 
     @property
     def sampler_position(self) -> int:

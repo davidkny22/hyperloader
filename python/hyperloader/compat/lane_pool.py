@@ -9,11 +9,14 @@ import time
 from multiprocessing.connection import Connection, wait
 from typing import Any
 
+import torch
+
 from hyperloader import _hyperloader
 from hyperloader.process.exceptions import reraise_worker_exception
 from hyperloader.process.serialization import ResultDecoder, encode_multiprocessing
 
 from .lane_worker import COMPAT_STAGE, lane_worker_main
+from .pinning import CompatPinning
 
 POLL_SECONDS = 0.005
 PAYLOAD_CAPACITY = 1_048_576
@@ -37,6 +40,8 @@ class CompatLanePool:
         self._controls: list[Connection] = []
         self._processes: list[mp.Process] = []
         self._pending: dict[int, int] = {}
+        self._iterable = isinstance(loader.dataset, torch.utils.data.IterableDataset)
+        self._pinning = CompatPinning(loader)
         prefetch = loader._compat_reference.prefetch_factor or 2
         capacity = max(2, 1 << max(1, prefetch).bit_length())
         self._resources = _hyperloader._ProcessResources(
@@ -53,6 +58,8 @@ class CompatLanePool:
                 reference.collate_fn,
                 loader.worker_init_fn,
                 reference._auto_collation,
+                reference.drop_last,
+                self._iterable,
             )
         )
         context = _resolve_context(loader.multiprocessing_context)
@@ -134,7 +141,8 @@ class CompatLanePool:
                 raise RuntimeError("compat completion lane does not match dispatch")
             if status != 0:
                 reraise_worker_exception(payload, worker)
-            return task, self._decoder.decode(payload, worker)
+            value = self._decoder.decode(payload, worker)
+            return task, self._pinning.pin(value)
         return None
 
     def wait_for_completion(self, deadline: float | None) -> None:
@@ -161,6 +169,34 @@ class CompatLanePool:
         while self._pending:
             if self.try_receive() is None:
                 self.wait_for_completion(deadline)
+
+    def reset_iterable(self) -> None:
+        """Recreate each persistent iterable fetcher without reseeding its lane."""
+        if not self._iterable:
+            raise RuntimeError("only iterable compat lanes can be reset")
+        if self._pending:
+            raise RuntimeError("compat lanes must drain before iterable reset")
+        remaining = set(range(len(self._controls)))
+        for control in self._controls:
+            control.send(("reset",))
+        deadline = self.deadline()
+        while remaining:
+            timeout = POLL_SECONDS
+            if deadline is not None:
+                timeout = max(0.0, min(timeout, deadline - time.monotonic()))
+            for control in wait(self._controls, timeout):
+                worker = self._controls.index(control)
+                while control.poll():
+                    message = control.recv()
+                    if message == ("ready",):
+                        continue
+                    if message != ("reset_ready",):
+                        raise RuntimeError(
+                            "compat worker returned an invalid reset signal"
+                        )
+                    remaining.discard(worker)
+            if remaining:
+                self._check_liveness(deadline)
 
     def close(self) -> None:
         """Stop every lane and release native arena ownership."""
