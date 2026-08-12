@@ -1,5 +1,6 @@
 //! POSIX named shared-memory mapping implementation.
 
+use super::region::backing_length_covers;
 use super::{RegionError, RegionName};
 use std::ffi::CString;
 use std::io;
@@ -83,7 +84,10 @@ impl Mapping {
                 "fstat shared region",
                 io::Error::last_os_error(),
             ))
-        } else if usize::try_from(metadata.st_size).ok() != Some(length) {
+        } else if u64::try_from(metadata.st_size)
+            .ok()
+            .is_none_or(|actual| !backing_length_covers(actual, length))
+        {
             Err(RegionError::HeaderMismatch("size"))
         } else {
             map_descriptor(descriptor, length)

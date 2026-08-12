@@ -56,6 +56,13 @@ fn attach_rejects_expected_size_mismatch() {
 }
 
 #[test]
+fn backing_object_may_cover_more_than_the_logical_mapping() {
+    assert!(super::region::backing_length_covers(4096, 2111));
+    assert!(super::region::backing_length_covers(2111, 2111));
+    assert!(!super::region::backing_length_covers(2110, 2111));
+}
+
+#[test]
 fn attach_validates_token_bits_not_present_in_name() {
     let token = unique_token();
     let mut hostile_bytes = *token.as_bytes();

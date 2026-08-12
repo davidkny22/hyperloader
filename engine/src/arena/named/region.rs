@@ -180,6 +180,11 @@ fn total_size(payload_size: usize) -> Result<usize, RegionError> {
         .ok_or(RegionError::InvalidSize(payload_size))
 }
 
+#[cfg(any(unix, test))]
+pub(super) fn backing_length_covers(actual: u64, required: usize) -> bool {
+    u64::try_from(required).is_ok_and(|required| actual >= required)
+}
+
 fn payload_range(payload_size: usize) -> Range<usize> {
     HEADER_LEN..HEADER_LEN + payload_size
 }
