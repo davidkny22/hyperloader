@@ -95,6 +95,11 @@ def _collate_identity(loader: Any) -> Any:
         return callable_identity(loader.collate_fn)
     if isinstance(loader.dataset, Pipeline):
         return callable_identity(loader.dataset.collate_stage.fn)
+    if loader.mode == "torch-compat":
+        import torch
+
+        minor = ".".join(torch.__version__.split("+", 1)[0].split(".")[:2])
+        return {"anchor": "torch-default", "torch_minor": minor}
     return {"anchor": "engine-default", "contract_version": CONTRACT_VERSION}
 
 

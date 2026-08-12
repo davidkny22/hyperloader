@@ -107,7 +107,9 @@ class DataLoader:
         self.device = device
         self.config = resolved_config
         self.delivery_memory = resolved.delivery_memory
-        self.root_seed = resolve_root_seed(resolved_seed, generator)
+        self.root_seed = (
+            0 if mode == "torch-compat" else resolve_root_seed(resolved_seed, generator)
+        )
         self._epoch_state = EpochState()
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
@@ -122,6 +124,12 @@ class DataLoader:
         self._native_batch_probe: Any = None
         self._native_batch_shape: Any = None
         self._active_iterator_ref: Any = None
+        self._telemetry = telemetry
+        if mode == "torch-compat":
+            from .compat import prepare
+
+            prepare(self)
+            return
         self._plan = build_plan(dataset, shuffle)
         self._distributed_topology: Any = None
         if self._plan is None:
@@ -223,6 +231,10 @@ class DataLoader:
 
     def __iter__(self) -> Iterator[Any]:
         """Create an iterator over the selected native execution plan."""
+        if self.mode == "torch-compat":
+            from .compat import iterate
+
+            return iterate(self)
         from .process.iterator import ProcessIterator
         from .structured import StructuredIterator, is_native_batch_path
         from .tensor import TensorIterator
@@ -306,12 +318,21 @@ class DataLoader:
     def set_epoch(self, epoch: int) -> None:
         """Select an epoch and reset the next iterator to its first batch."""
         self._epoch_state.set_epoch(epoch)
+        if self.mode == "torch-compat":
+            setter = getattr(self._compat_loader.sampler, "set_epoch", None)
+            if setter is not None:
+                setter(epoch)
+            self._resume_compat_state = None
         self._resume_cursor_batches = 0
         self._resume_sampler_checksum = 0
         self._resume_delivered_bitmap = b""
 
     def state_dict(self) -> dict[str, object]:
         """Capture the delivered coordinate for exact continuation."""
+        if self.mode == "torch-compat":
+            from .compat import capture_state
+
+            return capture_state(self)
         if self._plan is None:
             from .iterable.state import capture_iterable_state
 
@@ -322,6 +343,11 @@ class DataLoader:
 
     def load_state_dict(self, state: dict[str, object]) -> None:
         """Restore a validated coordinate for the next iterator."""
+        if self.mode == "torch-compat":
+            from .compat import restore_state
+
+            restore_state(self, state)
+            return
         if self._plan is None:
             from .iterable.state import restore_iterable_state
 
