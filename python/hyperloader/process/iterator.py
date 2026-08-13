@@ -17,7 +17,7 @@ from .exceptions import WorkerDied
 from .factory import prepare_process_pool
 from .frontier import FrontierRuntime, binding_cause
 from .sizing import delivery_length, frontier_ceiling, frontier_depth
-from .user_collation import next_process_batch
+from .user_collation import collated_command
 
 
 class ProcessIterator(Iterator[Any]):
@@ -56,39 +56,42 @@ class ProcessIterator(Iterator[Any]):
         self._schedule: FrontierRuntime | None = None
         self._worker_batches = False
         self._user_collation = loader.collate_fn is not None
+        self._transport_batch_size: int | None = None
         self._last_delivery_ns = time.perf_counter_ns()
         self._delivery_telemetry = build_delivery_telemetry(loader)
         if self._length:
             prepare_process_pool(loader)
-            if self._user_collation:
-                return
             depth = frontier_depth(loader)
             batch_size = loader._process_pool.batch_size
             self._worker_batches = batch_size is not None
+            self._transport_batch_size = (
+                loader.batch_size if self._user_collation else batch_size
+            )
+            transport_batch_size = self._transport_batch_size
             schedule_start = (
-                resume_position // batch_size
-                if batch_size is not None
+                resume_position // transport_batch_size
+                if transport_batch_size is not None
                 else resume_position
             )
             schedule_length = (
-                (self._length + batch_size - 1) // batch_size
-                if batch_size is not None
+                (self._length + transport_batch_size - 1) // transport_batch_size
+                if transport_batch_size is not None
                 else self._length
             )
             schedule_depth = (
-                max(1, (depth + batch_size - 1) // batch_size)
-                if batch_size is not None
+                max(1, (depth + transport_batch_size - 1) // transport_batch_size)
+                if transport_batch_size is not None
                 else depth
             )
             ceiling = frontier_ceiling(loader)
             schedule_ceiling = (
-                max(1, (ceiling + batch_size - 1) // batch_size)
-                if batch_size is not None
+                max(1, (ceiling + transport_batch_size - 1) // transport_batch_size)
+                if transport_batch_size is not None
                 else ceiling
             )
             restored_positions = (
                 set(restored_batches)
-                if batch_size is not None
+                if transport_batch_size is not None
                 else {
                     position
                     for ordinal in restored_batches
@@ -183,7 +186,15 @@ class ProcessIterator(Iterator[Any]):
 
     def _next_user_batch(self) -> Any:
         """Execute one process-owned user collation command."""
-        return next_process_batch(self)
+        width = self._loader.batch_size or 1
+        ordinal = self._position // width
+        status, payload, worker = self._next_completion(ordinal)
+        value = self._loader._process_pool.decode(status, payload, worker)
+        self._position = min(self._length, self._position + width)
+        self._delivered.mark(ordinal)
+        self._loader._epoch_state.mark_delivered(self._epoch)
+        self._adapt_controller(min(width, self._length - ordinal * width))
+        return value
 
     def _next_sample(self, expected_position: int) -> Any:
         status, payload, worker = self._next_completion(expected_position)
@@ -226,7 +237,7 @@ class ProcessIterator(Iterator[Any]):
         pool = self._loader._process_pool
         order = self._schedule.dispatch_order()
         retained_probe = pool.retained_probe_command
-        if retained_probe in order:
+        if not self._user_collation and retained_probe in order:
             order.remove(retained_probe)
             order.insert(0, retained_probe)
         for selected_position in order:
@@ -234,10 +245,24 @@ class ProcessIterator(Iterator[Any]):
             if dispatch is None:
                 continue
             position, worker = dispatch
-            batch_size = pool.batch_size
+            batch_size = self._transport_batch_size
             sample_position = (
                 position * batch_size if batch_size is not None else position
             )
+            if self._user_collation:
+                entries, auto_collation = collated_command(
+                    self._loader, self._epoch, position, self._length
+                )
+                if not pool.try_submit_collated(
+                    self._epoch,
+                    position,
+                    entries,
+                    worker,
+                    auto_collation=auto_collation,
+                ):
+                    return
+                self._schedule.mark_dispatched(position, worker)
+                continue
             sampler_runtime = self._loader._sampler_runtime
             coordinate = (
                 self._loader._map_coordinate(sample_position)
@@ -270,7 +295,7 @@ class ProcessIterator(Iterator[Any]):
         profile = self._loader._cost_profile
         if profile is None:
             return None
-        batch_size = self._loader._process_pool.batch_size
+        batch_size = self._transport_batch_size
         if batch_size is None:
             return profile.estimate(position)
         start = position * batch_size
@@ -288,7 +313,11 @@ class ProcessIterator(Iterator[Any]):
         if self._position >= self._length:
             self._schedule.consume_stall_flag()
             return
-        batch_size = 1 if self._worker_batches else (self._loader.batch_size or 1)
+        batch_size = (
+            self._loader.batch_size or 1
+            if self._worker_batches or self._user_collation
+            else 1
+        )
         bytes_per_second = (
             self._loader._process_pool.bytes_sample
             * delivered_samples
@@ -332,7 +361,7 @@ class ProcessIterator(Iterator[Any]):
         profile = getattr(self._loader, "_cost_profile", None)
         if profile is None:
             return
-        batch_size = self._loader._process_pool.batch_size
+        batch_size = self._transport_batch_size
         if batch_size is None:
             profile.observe(position, cost_ns)
             return

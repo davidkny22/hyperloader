@@ -38,6 +38,34 @@ def next_process_batch(iterator: Any) -> Any:
     return value
 
 
+def collated_command(
+    loader: Any, epoch: int, batch_ordinal: int, length: int
+) -> tuple[tuple[tuple[int, Any], ...], bool]:
+    """Build one exact user-collation command for frontier dispatch."""
+    width = loader.batch_size or 1
+    start = batch_ordinal * width
+    stop = min(length, start + width)
+    entries = tuple(
+        (
+            loader._map_coordinate(position),
+            loader._map_index(epoch, position),
+        )
+        for position in range(start, stop)
+    )
+    return entries, loader.batch_size is not None
+
+
+def encode_collated_command(
+    epoch: int,
+    batch_ordinal: int,
+    entries: tuple[tuple[int, Any], ...],
+    *,
+    auto_collation: bool,
+) -> bytes:
+    """Encode one user-collation command for native transport."""
+    return pickle.dumps((epoch, batch_ordinal, entries, auto_collation), protocol=5)
+
+
 def execute_collated(
     pool: Any,
     epoch: int,
@@ -51,7 +79,12 @@ def execute_collated(
         raise RuntimeError("process pool is closed")
     worker = pool._next_worker
     pool._next_worker = (pool._next_worker + 1) % pool.worker_count
-    payload = pickle.dumps((epoch, batch_ordinal, entries, auto_collation), protocol=5)
+    payload = encode_collated_command(
+        epoch,
+        batch_ordinal,
+        entries,
+        auto_collation=auto_collation,
+    )
     deadline = pool.deadline()
     while not pool._resources.try_submit_command(
         batch_ordinal, USER_COLLATE_STAGE, worker, payload
@@ -114,6 +147,6 @@ def evaluate_user_collate(
         with _user_code_context(rng_context.current_sample):
             result = collate_fn(values if auto_collation else values[0])
         return 0, encoder.encode_uncached(result), None, 0
-    except BaseException as error:
+    except BaseException as error:  # noqa: BLE001
         status, payload = encode_exception(error)
         return status, payload, None, 0

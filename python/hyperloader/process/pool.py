@@ -14,7 +14,11 @@ from .batching import BatchLayout, decode_batch
 from .exceptions import reraise_worker_exception
 from .recovery import check_worker, restart_worker
 from .serialization import ResultDecoder
-from .user_collation import execute_collated
+from .user_collation import (
+    USER_COLLATE_STAGE,
+    encode_collated_command,
+    execute_collated,
+)
 from .worker import BLACK_BOX_STAGE
 from .worker_set import WorkerSet, resolve_context
 
@@ -237,6 +241,36 @@ class ProcessPool:
                 index,
                 batch_len,
                 position,
+            )
+        return accepted
+
+    def try_submit_collated(
+        self,
+        epoch: int,
+        batch_ordinal: int,
+        entries: tuple[tuple[int, Any], ...],
+        worker: int,
+        *,
+        auto_collation: bool,
+    ) -> bool:
+        """Attempt one targeted user-collation dispatch without blocking."""
+        if self._closed:
+            raise RuntimeError("process pool is closed")
+        payload = encode_collated_command(
+            epoch,
+            batch_ordinal,
+            entries,
+            auto_collation=auto_collation,
+        )
+        accepted = self._resources.try_submit_command(
+            batch_ordinal, USER_COLLATE_STAGE, worker, payload
+        )
+        if accepted:
+            self._pending[(worker, batch_ordinal)] = (
+                epoch,
+                0,
+                len(entries),
+                batch_ordinal,
             )
         return accepted
 
