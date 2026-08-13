@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .codec import decode_observation
+from .controls.capture import validate_control_document
 from .decision import decide
 from .models import TrainingObservation
 from .output import write_result
@@ -65,6 +66,13 @@ def reconcile_point(point: Path, *, expected_commit: str) -> dict[str, Any]:
         raise CampaignEvidenceError(f"point commit does not match campaign: {point}")
     machine_state = _read_json(point / "machine-state.json")
     clock = _read_json(point.with_name(point.name + "-clock.json"))
+    controls = _read_json(point / "controlled-variables.json")
+    try:
+        validate_control_document(controls)
+    except (TypeError, ValueError) as error:
+        raise CampaignEvidenceError(
+            f"controlled-variable evidence is invalid: {point}"
+        ) from error
     _validate_guards(point, environment, machine_state, clock)
     return {
         "point": str(point),
@@ -75,6 +83,7 @@ def reconcile_point(point: Path, *, expected_commit: str) -> dict[str, Any]:
         "observations": len(observations),
         "machine_state": machine_state,
         "clock": clock,
+        "controlled_variables": controls,
     }
 
 

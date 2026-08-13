@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
+from .controls import ControlledVariableRecorder
 from .decision import TrainingDecision, decide
 from .live_cell import (
     BatchFeeder,
@@ -35,6 +36,9 @@ def collect_point(
         raise ValueError("warmup size must be positive")
     if observations_path.exists() or decision_path.exists():
         raise FileExistsError("training point output already exists")
+    controls_path = decision_path.parent / "controlled-variables.json"
+    if controls_path.exists():
+        raise FileExistsError("controlled-variable output already exists")
     observations_path.parent.mkdir(parents=True, exist_ok=True)
     process_token = uuid.uuid4().hex
     optimizer_step = warm_training_process(
@@ -43,6 +47,10 @@ def collect_point(
         feeder_order=(config.reference, config.subject),
         steps_per_feeder=warmup_steps,
     )
+    controls = ControlledVariableRecorder(
+        config, environment, feeders, controls_path
+    )
+    controls.capture_before_collection()
     observations: list[TrainingObservation] = []
     hash_chain = "0" * 64
     try:
@@ -64,6 +72,7 @@ def collect_point(
             _append_observation(observations_path, observation)
             result = decide(observations)
             if result.status != "collect":
+                controls.capture_after_collection()
                 write_result(
                     decision_path,
                     {

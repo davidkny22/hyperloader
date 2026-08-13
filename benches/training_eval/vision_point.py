@@ -64,7 +64,13 @@ def collect_vision_point(
         batch_size=config.batch_size,
         pin_memory=pin_memory,
     )
-    feeders = _build_feeders(config, subset, resident, pin_memory=pin_memory)
+    feeders = _build_feeders(
+        config,
+        subset,
+        resident,
+        pin_memory=pin_memory,
+        worker_environment_dir=observations_path.parent / "worker-environment",
+    )
     runner = VisionStepRunner(
         model,
         device=device,
@@ -108,6 +114,7 @@ def _build_feeders(
     resident: tuple[ImageBatch, ...],
     *,
     pin_memory: bool,
+    worker_environment_dir: Path | None = None,
 ) -> dict[str, BatchFeeder]:
     feeders: dict[str, BatchFeeder] = {
         config.reference: ResidentImageFeeder(config.reference, resident)
@@ -120,5 +127,6 @@ def _build_feeders(
         prefetch=config.subject_prefetch,
         collate=collate_image_batch,
         pin_memory=pin_memory,
+        worker_environment_dir=worker_environment_dir,
     )
     return feeders

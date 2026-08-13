@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from benches.training_eval.controls.registry import CONTROLLED_VARIABLE_REGISTRY
 from benches.training_eval.decision import decide
 from benches.training_eval.models import TrainingObservation
 from benches.training_eval.result_bundle import CampaignEvidenceError, build_bundle
@@ -65,6 +66,20 @@ def _campaign(
         json.dumps({"command_returncode": 0, "reset_stdout": "reset"}),
         encoding="utf-8",
     )
+    values = {entry.name: {} for entry in CONTROLLED_VARIABLE_REGISTRY}
+    (point / "controlled-variables.json").write_text(
+        json.dumps(
+            {
+                "kind": "training-controlled-variables",
+                "schema_version": 1,
+                "status": "complete",
+                "registry": [asdict(entry) for entry in CONTROLLED_VARIABLE_REGISTRY],
+                "before_collection": {"captured_at": "before", "values": values},
+                "after_collection": {"captured_at": "after", "values": values},
+            }
+        ),
+        encoding="utf-8",
+    )
     (root / "campaign.json").write_text(
         json.dumps(
             {
@@ -89,6 +104,7 @@ def test_bundle_recomputes_terminal_decision_and_traces_both_guards(
     assert len(bundle["points"]) == 1
     point = bundle["points"][0]
     assert point["observations"] == 10
+    assert point["controlled_variables"]["status"] == "complete"
     assert point["decision"]["status"] == "pass"
     assert point["environment"]["machine_state_cpus"] == (2, 3)
     assert point["throughput"]["aggregation"].startswith("duration-weighted")
@@ -159,4 +175,16 @@ def test_bundle_rejects_missing_guard_cleanup(tmp_path: Path) -> None:
     )
 
     with pytest.raises(CampaignEvidenceError, match="clock guard"):
+        build_bundle([root], expected_commit="commit-from-run")
+
+
+def test_bundle_rejects_incomplete_controlled_variables(tmp_path: Path) -> None:
+    root = tmp_path / "campaign"
+    point = _campaign(root)
+    path = point / "controlled-variables.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    del document["after_collection"]
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(CampaignEvidenceError, match="controlled-variable"):
         build_bundle([root], expected_commit="commit-from-run")

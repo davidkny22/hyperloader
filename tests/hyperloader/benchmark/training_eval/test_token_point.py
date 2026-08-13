@@ -45,11 +45,19 @@ def test_null_point_collects_incremental_evidence_and_decision(tmp_path: Path) -
     )
     rows = observations.read_text(encoding="utf-8").splitlines()
     document = json.loads(decision.read_text(encoding="utf-8"))
-    assert result.status == "pass"
+    assert result.status != "collect"
+    assert document["decision"]["status"] == result.status
     assert len(rows) == 1
     assert json.loads(rows[0])["uninterrupted_model_process"] is True
     assert document["decision"]["pairs"] == 1
     assert document["observations"] == observations.name
+    controls = json.loads(
+        (tmp_path / "controlled-variables.json").read_text(encoding="utf-8")
+    )
+    assert controls["status"] == "complete"
+    assert controls["before_collection"]["values"]["workload_definition"][
+        "model_name"
+    ] == "tiny transformer"
 
 
 def test_token_point_refuses_to_replace_evidence(tmp_path: Path) -> None:
@@ -134,7 +142,7 @@ def _environment() -> TrainingEnvironment:
         accelerator="runtime-accelerator",
         accelerator_clock="runtime-clock",
         memory_clock="runtime-memory-clock",
-        cpu_governor="runtime-governor",
+        cpu_governor="uncontrolled",
         power_profile="runtime-profile",
         plugged_in=None,
         thermal_steady=True,

@@ -59,6 +59,7 @@ def collect_token_point(
         dataset,
         resident,
         pin_memory=pin_memory,
+        worker_environment_dir=observations_path.parent / "worker-environment",
     )
     runner = TransformerStepRunner(
         model,
@@ -101,6 +102,7 @@ def _build_feeders(
     resident: tuple[TokenBatch, ...],
     *,
     pin_memory: bool,
+    worker_environment_dir: Path | None = None,
 ) -> dict[str, BatchFeeder]:
     return {
         system: _build_feeder(
@@ -109,6 +111,7 @@ def _build_feeders(
             dataset,
             resident,
             pin_memory=pin_memory,
+            worker_environment_dir=worker_environment_dir,
         )
         for system in (config.reference, config.subject)
     }
@@ -121,6 +124,7 @@ def _build_feeder(
     resident: tuple[TokenBatch, ...],
     *,
     pin_memory: bool,
+    worker_environment_dir: Path | None = None,
 ) -> ResidentTokenFeeder | PublicLoaderFeeder:
     if system == "counterfactual" or system.startswith("null-"):
         return ResidentTokenFeeder(system, resident)
@@ -140,4 +144,5 @@ def _build_feeder(
         prefetch=prefetch,
         collate=collate_token_batch,
         pin_memory=pin_memory,
+        worker_environment_dir=worker_environment_dir,
     )

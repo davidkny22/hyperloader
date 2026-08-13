@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 import torch
 from torch.utils.data import Dataset
 
@@ -75,6 +78,31 @@ def test_hyperloader_public_feeder_restores_with_a_changed_worker_count() -> Non
         resumed.close()
     assert (first.tokens.tolist(), first.digest) == expected[0]
     assert (second.tokens.tolist(), second.digest) == expected[1]
+
+
+@pytest.mark.parametrize("system", ["torch", "hyperloader"])
+def test_process_feeder_records_worker_boot_controls(
+    system: str, tmp_path: Path
+) -> None:
+    feeder = build_public_feeder(
+        system,
+        _TokenRows(),
+        batch_size=2,
+        workers=2,
+        prefetch=2,
+        collate=collate_token_batch,
+        worker_environment_dir=tmp_path,
+    )
+    try:
+        feeder.next_batch()
+        snapshot = feeder.control_snapshot()
+    finally:
+        feeder.close()
+    assert len(snapshot["processes"]) == 2
+    assert {record["worker_id"] for record in snapshot["worker_boot"]} == {0, 1}
+    assert {
+        record["torch_intra_op_threads"] for record in snapshot["worker_boot"]
+    } == {1}
 
 
 def _collect(system: str, *, workers: int) -> list[tuple[list[list[int]], str]]:

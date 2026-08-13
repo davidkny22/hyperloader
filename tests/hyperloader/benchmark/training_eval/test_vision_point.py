@@ -52,6 +52,13 @@ def test_vision_point_uses_the_shared_live_protocol(tmp_path: Path) -> None:
     assert len(observations.read_text(encoding="utf-8").splitlines()) == 1
     assert document["config"]["input_resolution"] == 16
     assert document["config"]["dataset_identity"] == dataset.identity_for_rows(2)
+    controls = json.loads(
+        (tmp_path / "controlled-variables.json").read_text(encoding="utf-8")
+    )
+    assert controls["status"] == "complete"
+    assert set(controls["before_collection"]["values"]) == {
+        entry["name"] for entry in controls["registry"]
+    }
 
 
 def _image_root(tmp_path: Path) -> Path:
@@ -122,7 +129,7 @@ def _environment() -> TrainingEnvironment:
         accelerator="runtime-accelerator",
         accelerator_clock="runtime-clock",
         memory_clock="runtime-memory-clock",
-        cpu_governor="runtime-governor",
+        cpu_governor="uncontrolled",
         power_profile="runtime-profile",
         plugged_in=None,
         thermal_steady=True,

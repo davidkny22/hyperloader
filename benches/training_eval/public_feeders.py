@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sized
+from pathlib import Path
 from typing import Any, Protocol
+
+from .controls.processes import (
+    process_record,
+    validate_worker_probes,
+    worker_probe_records,
+)
+from .controls.worker_probe import WorkerEnvironmentProbe
 
 
 class TrainingBatch(Protocol):
@@ -22,9 +30,18 @@ class TrainingBatch(Protocol):
 class PublicLoaderFeeder:
     """Cycle one already-constructed public loader over complete epochs."""
 
-    def __init__(self, system: str, loader: Any, worker_count: int) -> None:
+    def __init__(
+        self,
+        system: str,
+        loader: Any,
+        worker_count: int,
+        prefetch: int,
+        worker_environment_dir: Path | None,
+    ) -> None:
         self.system = system
         self.worker_count = worker_count
+        self.prefetch = prefetch
+        self._worker_environment_dir = worker_environment_dir
         self._loader = loader
         self._iterator = iter(loader)
 
@@ -66,6 +83,38 @@ class PublicLoaderFeeder:
         restore(state)
         self._iterator = iter(self._loader)
 
+    def control_snapshot(self) -> dict[str, Any]:
+        """Return live process and worker-boot evidence for this feeder."""
+        expected_workers = (
+            self.worker_count if self.system in {"torch", "hyperloader"} else 0
+        )
+        records = worker_probe_records(
+            self._worker_environment_dir, expected_workers=expected_workers
+        )
+        if self.system in {"torch", "hyperloader"}:
+            validate_worker_probes(records, expected_workers=self.worker_count)
+        pids = self._worker_pids()
+        return {
+            "configured_prefetch": self.prefetch,
+            "configured_workers": self.worker_count,
+            "processes": [process_record(pid) for pid in pids],
+            "system": self.system,
+            "worker_boot": records,
+        }
+
+    def _worker_pids(self) -> tuple[int, ...]:
+        if self.system == "hyperloader":
+            pool = getattr(self._loader, "_process_pool", None)
+            if pool is not None:
+                return tuple(pool.worker_pids)
+        workers = getattr(self._iterator, "_workers", ())
+        pids = tuple(
+            int(worker.pid)
+            for worker in workers
+            if getattr(worker, "pid", None) is not None
+        )
+        return pids
+
 
 def build_public_feeder(
     system: str,
@@ -76,6 +125,7 @@ def build_public_feeder(
     prefetch: int,
     collate: Callable[[list[Any]], TrainingBatch],
     pin_memory: bool = False,
+    worker_environment_dir: Path | None = None,
 ) -> PublicLoaderFeeder:
     """Construct Torch, hyperloader, or SPDL through its public import path."""
     _validate_controls(batch_size, workers, prefetch)
@@ -88,6 +138,7 @@ def build_public_feeder(
             num_workers=workers,
             collate_fn=collate,
             pin_memory=pin_memory,
+            worker_init_fn=_worker_probe(system, workers, worker_environment_dir),
             **_process_controls(workers, prefetch),
         )
     elif system == "hyperloader":
@@ -99,6 +150,7 @@ def build_public_feeder(
             num_workers=workers,
             collate_fn=collate,
             pin_memory=pin_memory,
+            worker_init_fn=_worker_probe(system, workers, worker_environment_dir),
             **_process_controls(workers, prefetch),
         )
     elif system == "spdl":
@@ -118,7 +170,18 @@ def build_public_feeder(
         )
     else:
         raise ValueError(f"unknown training feeder {system!r}")
-    return PublicLoaderFeeder(system, loader, workers)
+    evidence_dir = (
+        worker_environment_dir / system if worker_environment_dir is not None else None
+    )
+    return PublicLoaderFeeder(system, loader, workers, prefetch, evidence_dir)
+
+
+def _worker_probe(
+    system: str, workers: int, directory: Path | None
+) -> WorkerEnvironmentProbe | None:
+    if workers == 0 or directory is None:
+        return None
+    return WorkerEnvironmentProbe(str(directory / system))
 
 
 def _pinning_collate(
