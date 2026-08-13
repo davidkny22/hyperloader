@@ -17,6 +17,7 @@ from .rng import WorkerRngContext
 from .serialization import ResultEncoder
 from .shape import batch_shape
 from .user_collation import USER_COLLATE_STAGE, evaluate_user_collate
+from .worker_environment import configure_worker_environment
 
 BLACK_BOX_STAGE = 0
 NO_PROBE_VALUE = object()
@@ -34,6 +35,7 @@ def worker_main(
 ) -> None:
     """Run one persistent dataset copy until the owner sends stop."""
     start_parent_watchdog()
+    configure_worker_environment()
     rng_context = WorkerRngContext(worker_id, worker_count)
     dataset, worker_init_fn, collate_fn = pickle.loads(dataset_payload)
     rng_context.attach_dataset(getattr(dataset, "worker_dataset", dataset))
