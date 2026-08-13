@@ -24,7 +24,9 @@ def decode_config(document: dict[str, Any]) -> TrainingCellConfig:
 def decode_half(document: dict[str, Any]) -> TrainingHalf:
     """Decode one timed half and its environment."""
     values = dict(document)
-    values["environment"] = TrainingEnvironment(**values["environment"])
+    environment = dict(values["environment"])
+    environment["machine_state_cpus"] = tuple(environment.get("machine_state_cpus", ()))
+    values["environment"] = TrainingEnvironment(**environment)
     return TrainingHalf(**values)
 
 
