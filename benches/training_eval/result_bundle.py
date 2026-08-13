@@ -10,6 +10,7 @@ from typing import Any
 
 from .codec import decode_observation
 from .decision import decide
+from .models import TrainingObservation
 from .output import write_result
 
 
@@ -70,9 +71,56 @@ def reconcile_point(point: Path, *, expected_commit: str) -> dict[str, Any]:
         "config": config,
         "environment": environment,
         "decision": computed,
+        "throughput": _summarize_throughput(observations),
         "observations": len(observations),
         "machine_state": machine_state,
         "clock": clock,
+    }
+
+
+def _summarize_throughput(
+    observations: list[TrainingObservation],
+) -> dict[str, Any]:
+    config = observations[0].config
+    return {
+        "aggregation": "duration-weighted mean of measured half rates",
+        "epoch_duration_derivation": ("dataset_rows / measured_samples_per_second"),
+        "subject": _summarize_system(observations, config.subject, config.dataset_rows),
+        "reference": _summarize_system(
+            observations, config.reference, config.dataset_rows
+        ),
+    }
+
+
+def _summarize_system(
+    observations: list[TrainingObservation], system: str, dataset_rows: int
+) -> dict[str, Any]:
+    halves = [observation.half(system) for observation in observations]
+    duration = sum(half.duration_seconds for half in halves)
+    if duration <= 0 or dataset_rows <= 0:
+        raise CampaignEvidenceError(
+            "throughput derivation requires positive duration and rows"
+        )
+    steps_per_second = (
+        sum(half.rate_steps_per_second * half.duration_seconds for half in halves)
+        / duration
+    )
+    samples_per_second = (
+        sum(half.rate_samples_per_second * half.duration_seconds for half in halves)
+        / duration
+    )
+    if steps_per_second <= 0 or samples_per_second <= 0:
+        raise CampaignEvidenceError(
+            "throughput derivation requires positive measured rates"
+        )
+    epoch_seconds = dataset_rows / samples_per_second
+    return {
+        "system": system,
+        "timed_seconds": duration,
+        "measured_steps_per_second": steps_per_second,
+        "measured_samples_per_second": samples_per_second,
+        "derived_epoch_seconds": epoch_seconds,
+        "derived_epoch_minutes": epoch_seconds / 60.0,
     }
 
 

@@ -32,6 +32,7 @@ def _project_point(
     config = point["config"]
     environment = point["environment"]
     decision = point["decision"]
+    throughput = point["throughput"]
     if environment["commit"] != commit or decision["status"] not in {"pass", "fail"}:
         raise ValueError("registry projection requires terminal commit-matched points")
     point_id = _slug(str(config["point_id"]))
@@ -50,7 +51,10 @@ def _project_point(
             f"{environment['machine']} {config['subject']} loader tax at "
             f"{config['point_id']}"
         ),
-        "value": {"mean_tax_percent": decision["mean_tax_percent"]},
+        "value": {
+            "mean_tax_percent": decision["mean_tax_percent"],
+            "throughput": throughput,
+        },
         "interval": {
             "confidence": 0.95,
             "lower_percent": decision["lower_percent"],

@@ -9,15 +9,21 @@ from pathlib import Path
 import pytest
 
 from benches.training_eval.decision import decide
+from benches.training_eval.models import TrainingObservation
 from benches.training_eval.result_bundle import CampaignEvidenceError, build_bundle
 
 from .test_protocol import _observations
 
 
-def _campaign(root: Path, *, commit: str = "commit-from-run") -> Path:
+def _campaign(
+    root: Path,
+    *,
+    commit: str = "commit-from-run",
+    observations: list[TrainingObservation] | None = None,
+) -> Path:
     point = root / "dial-01-hyperloader"
     point.mkdir(parents=True)
-    observations = _observations(10)
+    observations = _observations(10) if observations is None else observations
     environment = replace(
         observations[0].first.environment,
         commit=commit,
@@ -85,6 +91,50 @@ def test_bundle_recomputes_terminal_decision_and_traces_both_guards(
     assert point["observations"] == 10
     assert point["decision"]["status"] == "pass"
     assert point["environment"]["machine_state_cpus"] == (2, 3)
+    assert point["throughput"]["aggregation"].startswith("duration-weighted")
+    assert point["throughput"]["reference"][
+        "measured_samples_per_second"
+    ] == pytest.approx(1000.0)
+    assert point["throughput"]["subject"][
+        "measured_samples_per_second"
+    ] == pytest.approx(995.0)
+    assert point["throughput"]["reference"]["derived_epoch_seconds"] == pytest.approx(
+        0.064
+    )
+    assert point["throughput"]["subject"]["derived_epoch_minutes"] == pytest.approx(
+        (64 / 995.0) / 60.0
+    )
+
+
+def test_bundle_weights_measured_rates_by_each_timed_half(tmp_path: Path) -> None:
+    observations = [
+        replace(
+            observation,
+            config=replace(
+                observation.config,
+                decision=replace(observation.config.decision, max_pairs=10),
+            ),
+        )
+        for observation in _observations(10)
+    ]
+    observations[0] = replace(
+        observations[0],
+        second=replace(
+            observations[0].second,
+            duration_seconds=90.0,
+            rate_samples_per_second=500.0,
+        ),
+    )
+    root = tmp_path / "campaign"
+    _campaign(root, observations=observations)
+
+    bundle = build_bundle([root], expected_commit="commit-from-run")
+
+    subject = bundle["points"][0]["throughput"]["subject"]
+    expected = (500.0 * 90.0 + 995.0 * 45.0 * 9) / (90.0 + 45.0 * 9)
+    assert subject["timed_seconds"] == 495.0
+    assert subject["measured_samples_per_second"] == pytest.approx(expected)
+    assert subject["derived_epoch_seconds"] == pytest.approx(64 / expected)
 
 
 def test_bundle_rejects_commit_drift_and_stale_decision(tmp_path: Path) -> None:

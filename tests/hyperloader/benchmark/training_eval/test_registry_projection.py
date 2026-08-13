@@ -39,6 +39,26 @@ def _bundle() -> dict[str, object]:
         "upper_percent": 2.0,
         "half_width_percent": 0.5,
     }
+    throughput = {
+        "aggregation": "duration-weighted mean of measured half rates",
+        "epoch_duration_derivation": ("dataset_rows / measured_samples_per_second"),
+        "subject": {
+            "system": "hyperloader",
+            "timed_seconds": 1800.0,
+            "measured_steps_per_second": 100.0,
+            "measured_samples_per_second": 1600.0,
+            "derived_epoch_seconds": 0.01,
+            "derived_epoch_minutes": 1 / 6000,
+        },
+        "reference": {
+            "system": "counterfactual",
+            "timed_seconds": 1800.0,
+            "measured_steps_per_second": 101.0,
+            "measured_samples_per_second": 1616.0,
+            "derived_epoch_seconds": 0.009900990099009901,
+            "derived_epoch_minutes": 0.000165016501650165,
+        },
+    }
     return {
         "commit": "abcdef0123456789",
         "points": [
@@ -47,6 +67,7 @@ def _bundle() -> dict[str, object]:
                 "config": config,
                 "environment": environment,
                 "decision": decision,
+                "throughput": throughput,
             }
         ],
     }
@@ -61,6 +82,11 @@ def test_projection_carries_measured_interval_controls_and_evidence() -> None:
     assert record["interval"]["terminal_reason"] == "max-pair cap"
     assert record["config"]["machine_state_cpus"] == [2, 3]
     assert record["config"]["evidence"] == "results/campaign/dial-01-hyperloader"
+    assert (
+        record["value"]["throughput"]["subject"]["measured_samples_per_second"]
+        == 1600.0
+    )
+    assert record["value"]["throughput"]["subject"]["derived_epoch_seconds"] == 0.01
     assert record["status"] == "verified"
 
 
