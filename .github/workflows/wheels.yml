@@ -4,6 +4,7 @@ on:
   pull_request:
     paths-ignore:
       - "benches/local_training_dominance.py"
+      - "benches/spark_machine_state_guard.py"
       - "benches/spark_*_point.py"
       - "benches/training_evaluation.py"
       - "benches/training_eval/**"
@@ -11,6 +12,7 @@ on:
   push:
     paths-ignore:
       - "benches/local_training_dominance.py"
+      - "benches/spark_machine_state_guard.py"
       - "benches/spark_*_point.py"
       - "benches/training_evaluation.py"
       - "benches/training_eval/**"
