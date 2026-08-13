@@ -179,6 +179,35 @@ def test_interactive_or_unleased_cell_is_rejected() -> None:
         validate_observations(observations)
 
 
+def test_machine_state_actuator_is_stable_and_coherent() -> None:
+    observations = _observations(10)
+    controlled = replace(
+        observations[0].first.environment,
+        machine_state_control="native-alu-pulse",
+        machine_state_cpus=(2, 3),
+        machine_state_active_microseconds=4,
+        machine_state_period_microseconds=400,
+    )
+    observations = [
+        replace(
+            item,
+            first=replace(item.first, environment=controlled),
+            second=replace(item.second, environment=controlled),
+        )
+        for item in observations
+    ]
+    validate_observations(observations)
+
+    broken = replace(controlled, machine_state_period_microseconds=0)
+    observations[0] = replace(
+        observations[0],
+        first=replace(observations[0].first, environment=broken),
+        second=replace(observations[0].second, environment=broken),
+    )
+    with pytest.raises(TrainingProtocolError, match="valid unique CPUs and duty"):
+        validate_observations(observations)
+
+
 def test_order_configuration_and_local_power_drift_are_rejected() -> None:
     observations = _observations(10)
     observations[0] = replace(

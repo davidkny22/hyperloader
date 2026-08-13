@@ -82,6 +82,10 @@ class TrainingEnvironment:
     lease_kind: str
     lease_token: str
     ambient_probe_id: str
+    machine_state_control: str = "none"
+    machine_state_cpus: tuple[int, ...] = ()
+    machine_state_active_microseconds: int = 0
+    machine_state_period_microseconds: int = 0
 
     def stability_key(self) -> tuple[Any, ...]:
         """Return controls that must remain fixed throughout one point decision."""
@@ -103,6 +107,10 @@ class TrainingEnvironment:
             self.lease_kind,
             self.lease_token,
             self.ambient_probe_id,
+            self.machine_state_control,
+            self.machine_state_cpus,
+            self.machine_state_active_microseconds,
+            self.machine_state_period_microseconds,
         )
 
 

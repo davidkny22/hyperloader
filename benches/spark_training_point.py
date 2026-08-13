@@ -14,6 +14,10 @@ from torch import nn
 
 from benches.training_eval.dial import TransformerDialPoint, default_dial
 from benches.training_eval.gpt import GPT2_124M, GPT2_355M, GptLanguageModel
+from benches.training_eval.machine_state import (
+    add_machine_state_arguments,
+    machine_state_environment_fields,
+)
 from benches.training_eval.models import (
     DecisionRule,
     TrainingCellConfig,
@@ -132,6 +136,7 @@ def main() -> None:
         lease_kind="SPARK-LOCK",
         lease_token=arguments.lease_token,
         ambient_probe_id=arguments.ambient_probe_id,
+        **machine_state_environment_fields(arguments),
     )
     result = collect_token_point(
         config,
@@ -232,6 +237,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--thermal-steady", action=argparse.BooleanOptionalAction, default=True
     )
+    add_machine_state_arguments(parser)
     return parser
 
 

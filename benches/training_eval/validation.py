@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .models import DecisionRule, TrainingCellConfig, TrainingHalf, TrainingObservation
+from .models import (
+    DecisionRule,
+    TrainingCellConfig,
+    TrainingEnvironment,
+    TrainingHalf,
+    TrainingObservation,
+)
 
 
 class TrainingProtocolError(ValueError):
@@ -150,6 +156,32 @@ def _validate_half(half: TrainingHalf, half_seconds: float) -> None:
         )
     if environment.lease_kind == "LOCAL-LOCK" and environment.plugged_in is not True:
         raise TrainingProtocolError("local laptop cells require plugged-in power")
+    _validate_machine_state(environment)
+
+
+def _validate_machine_state(environment: TrainingEnvironment) -> None:
+    control = environment.machine_state_control
+    cpus = environment.machine_state_cpus
+    active = environment.machine_state_active_microseconds
+    period = environment.machine_state_period_microseconds
+    if control == "none":
+        if cpus or active != 0 or period != 0:
+            raise TrainingProtocolError(
+                "disabled machine-state control cannot carry pulse settings"
+            )
+        return
+    if control != "native-alu-pulse":
+        raise TrainingProtocolError("machine-state control is not recognized")
+    if (
+        not cpus
+        or len(set(cpus)) != len(cpus)
+        or any(cpu < 0 for cpu in cpus)
+        or active <= 0
+        or active > period
+    ):
+        raise TrainingProtocolError(
+            "native machine-state control requires valid unique CPUs and duty"
+        )
 
 
 def _validate_rule(rule: DecisionRule) -> None:
