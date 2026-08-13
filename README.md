@@ -2,8 +2,13 @@
 
 hyperloader is a PyTorch data loader with exact deterministic streams, exact coordinate
 resume, persistent execution, and adaptive scheduling. Existing map-style datasets work
-through a `DataLoader` surface shaped like `torch.utils.data.DataLoader`. Stateful iterable
-sources can opt into exact replay and resume.
+unchanged through a `DataLoader` carrying the `torch.utils.data.DataLoader` surface.
+Stateful iterable sources can opt into exact replay and resume.
+
+On its measured configuration, hyperloader delivers batches faster than equally tuned
+stock PyTorch and SPDL on all six benchmarked workload classes. Its own cost against a
+zero-cost feeder stays under one percent in both measured regimes. The numbers, the
+protocol, and their limits live in [Measured results](#measured-results).
 
 The default path isolates arbitrary dataset code in persistent worker processes. Faster
 thread and native paths are entered only through an explicit declaration or a recognized
@@ -95,9 +100,16 @@ cost separately.
 
 ## Measured results
 
-The following DGX Spark results are verified registry claims. Each cell used the installed
-public import, equal tuning, alternating paired order, warmup outside timing, and a
-deterministic bootstrap 95 percent interval.
+The release campaign compared the installed public import against equally tuned stock
+PyTorch and SPDL on six workload classes: light images, heavy images, fixed-length text,
+variable-length text, NumPy arrays, and Arrow tables. hyperloader won all twelve
+comparisons. The narrowest win is variable-length text against Torch, +10.354% with a 95%
+interval of [8.494%, 12.214%]. The matrix used five paired 90-second cells per comparison
+after equal six-trial tuning budgets.
+
+Each cell used equal tuning, alternating paired order, warmup outside timing, and a
+deterministic bootstrap 95 percent interval. The identity and overhead results below come
+from the same discipline.
 
 | Comparison | Mean result | 95% interval |
 |---|---:|---:|
@@ -106,20 +118,17 @@ deterministic bootstrap 95 percent interval.
 | Arrow identity throughput over Torch | 18.601% faster | [18.472%, 18.728%] |
 | Fixed-text compute penalty against a free resident feeder | 0.222% | [0.115%, 0.405%] |
 | Fixed-text bandwidth penalty against a free resident feeder | 0.714% | [0.578%, 0.822%] |
-| Final matrix against Torch and SPDL | 6/6 workloads won both comparisons | Narrowest: +10.354% [8.494%, 12.214%] |
 
 Identity comparisons use four workers and batch shape `int64[64,512]`. The resident feeder
-uses at least eight times the 24 MiB last-level cache. The overhead cells run one uninterrupted
-GPU workload for 90 seconds and swap feeders at midpoint. The compute result contains 18
-pairs; the bandwidth result contains 10 pairs.
+uses at least eight times the 24 MiB last-level cache. The overhead cells run one
+uninterrupted GPU workload for 90 seconds and swap feeders at midpoint. The compute result
+contains 18 pairs; the bandwidth result contains 10 pairs.
 
-The final matrix used five paired 90-second cells for each workload-reference comparison
-after equal six-trial tuning budgets. Its narrowest interval is variable-length text against
-Torch.
-
-These figures describe the named Spark configuration. They do not claim the same magnitude
-on another machine or workload. Per-machine calibration selects execution using locally
-measured costs.
+All results come from one DGX Spark at pinned clocks through the installed wheel. Absolute
+figures are hardware dependent: the harness in `benches/` reproduces the comparison, not
+the figures. Per-machine calibration selects execution using locally measured costs.
+Measurements on additional machine classes and on end-to-end training throughput follow
+under the same protocol.
 
 ## Platform status
 
@@ -130,11 +139,11 @@ available. No macOS result is used by a published performance claim.
 
 ## Prior art and credits
 
-hyperloader builds on published and shipped ideas including Philox counter RNGs, format-
-preserving permutation, Torch process transport and loader semantics, SPDL staged threading,
+hyperloader builds on prior work: Philox counter RNGs, format-preserving permutation,
+Torch process transport and loader semantics, SPDL staged threading,
 FFCV arenas, LPT scheduling, StatefulDataLoader resume, MosaicML canonical partitioning,
 MinatoLoader head-of-line analysis, and analytical pipeline controllers such as Plumber.
-The precise adopted mechanisms and differences are recorded in [NOTICE](NOTICE).
+The adopted mechanisms and their differences are recorded in [NOTICE](NOTICE).
 
 ## License
 
