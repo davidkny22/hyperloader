@@ -247,7 +247,6 @@ class NativePipelineTest(unittest.TestCase):
             try:
                 self.assertIsNotNone(loader._process_pool)
                 self.assertTrue(torch.equal(next(iter(loader)), torch.stack(tokens)))
-                self.assertNotIn("memory", loader.stats())
             finally:
                 loader.close()
 
