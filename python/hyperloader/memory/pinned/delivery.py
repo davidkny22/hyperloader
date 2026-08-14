@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from threading import get_ident
 from typing import Any
+from weakref import WeakSet
 
 from .iterator import PinnedDeliveryIterator
 from .pool import PinnedTensorPool
@@ -14,9 +16,16 @@ class PinnedDelivery:
     """Own either in-place source registration or a reusable staging pool."""
 
     def __init__(self, loader: Any) -> None:
+        calibration = loader._calibration
+        self._pricing = None if calibration is None else calibration.staged_copy_tax
+        self._requested_memory = loader.delivery_memory
         self.effective_memory = _effective_memory(loader)
         self._registration: HostRegistration | None = None
         self._pool: PinnedTensorPool | None = None
+        self._iterators: WeakSet[PinnedDeliveryIterator] = WeakSet()
+        self._consumer_thread_ids: set[int] = set()
+        self._staging_thread_ids: set[int] = set()
+        self._staging_on_consumer_thread = False
         if self.effective_memory != "pinned":
             return
         sources = view_sources(loader)
@@ -28,6 +37,9 @@ class PinnedDelivery:
         direct = getattr(loader._execution_dataset, "enable_pinned_delivery", None)
         if direct is not None and bool(direct()):
             return
+        if self._requested_memory == "auto" and not self._staging_is_profitable():
+            self.effective_memory = "host"
+            return
         self._pool = PinnedTensorPool()
 
     @property
@@ -35,9 +47,32 @@ class PinnedDelivery:
         """Return whether registration refusal selected the pinned pool."""
         return self._pool is not None
 
+    @property
+    def reports_selection(self) -> bool:
+        """Return whether delivery made a calibrated or pinned-memory choice."""
+        return self.effective_memory == "pinned" or self._pricing is not None
+
     def stage(self, value: Any) -> Any:
         """Return registered views unchanged or copy once into the pinned pool."""
+        thread_id = get_ident()
+        self._staging_thread_ids.add(thread_id)
+        if thread_id in self._consumer_thread_ids:
+            self._staging_on_consumer_thread = True
         return value if self._pool is None else self._pool.stage(value)
+
+    def bind_consumer_thread(self, thread_id: int) -> None:
+        """Record a thread that consumes staged batches."""
+        self._consumer_thread_ids.add(thread_id)
+        if thread_id in self._staging_thread_ids:
+            self._staging_on_consumer_thread = True
+
+    def attach(self, iterator: Iterator[Any]) -> Iterator[Any]:
+        """Own one one-ahead staging wrapper when a copy is selected."""
+        if not self.stages:
+            return iterator
+        wrapped = PinnedDeliveryIterator(self, iterator)
+        self._iterators.add(wrapped)
+        return wrapped
 
     def report(self) -> dict[str, object]:
         """Return delivery-memory selection and exact registration or copy bytes."""
@@ -47,6 +82,20 @@ class PinnedDelivery:
                 0 if self._registration is None else self._registration.registered_bytes
             ),
             "pinned_staged_bytes": 0 if self._pool is None else self._pool.copied_bytes,
+            "staging_copy_nanoseconds": (
+                None
+                if self._pricing is None
+                else self._pricing.staging_copy_nanoseconds
+            ),
+            "staging_transfer_benefit_nanoseconds": (
+                None
+                if self._pricing is None
+                else self._pricing.transfer_benefit_nanoseconds
+            ),
+            "staging_profitable": self._staging_is_profitable(),
+            "staging_prefetch_depth": 1 if self.stages else 0,
+            "staging_thread_count": len(self._staging_thread_ids),
+            "staging_on_consumer_thread": self._staging_on_consumer_thread,
         }
 
     def compose_memory_report(self, memory: dict[str, object]) -> None:
@@ -68,12 +117,18 @@ class PinnedDelivery:
 
     def close(self) -> None:
         """Release registration and pool ownership."""
+        for iterator in tuple(self._iterators):
+            iterator.close()
+        self._iterators.clear()
         if self._registration is not None:
             self._registration.close()
             self._registration = None
         if self._pool is not None:
             self._pool.close()
             self._pool = None
+
+    def _staging_is_profitable(self) -> bool:
+        return bool(self._pricing is not None and self._pricing.staging_is_profitable)
 
 
 def configure_pinned_delivery(loader: Any) -> PinnedDelivery:
@@ -88,7 +143,7 @@ def attach_pinned_delivery(
     delivery: PinnedDelivery, iterator: Iterator[Any]
 ) -> Iterator[Any]:
     """Wrap only the staged fallback path."""
-    return PinnedDeliveryIterator(delivery, iterator) if delivery.stages else iterator
+    return delivery.attach(iterator)
 
 
 def _effective_memory(loader: Any) -> str:
@@ -97,7 +152,7 @@ def _effective_memory(loader: Any) -> str:
         return requested
     calibration = loader._calibration
     tax = None if calibration is None else calibration.staged_copy_tax
-    if tax is None:
+    if tax is None or tax.transfer_benefit_nanoseconds <= 0:
         return "host"
     import torch
 

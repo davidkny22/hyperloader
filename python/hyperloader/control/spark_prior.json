@@ -24,12 +24,13 @@
       "bytes": 268435456,
       "nanoseconds": 9000000
     },
-    "schema": 2,
-    "source": "DGX Spark anchor and fixed-text campaigns",
+    "schema": 3,
+    "source": "DGX Spark anchor, fixed-text, and vision delivery campaigns",
     "spawn_nanoseconds": 13800000,
     "staged_copy_tax": {
-      "batch_bytes": 262144,
-      "loss_fraction": 0.1329
+      "batch_bytes": 38535680,
+      "staging_copy_nanoseconds": 9662786,
+      "transfer_benefit_nanoseconds": 1000000
     },
     "steal_curves": [
       {

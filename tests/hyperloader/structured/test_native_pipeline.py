@@ -103,7 +103,11 @@ class NativePipelineTest(unittest.TestCase):
             return empty_strided(shape, stride, dtype=options["dtype"])
 
         calibration = SimpleNamespace(
-            staged_copy_tax=SimpleNamespace(loss_fraction=0.1),
+            staged_copy_tax=SimpleNamespace(
+                staging_copy_nanoseconds=10,
+                transfer_benefit_nanoseconds=20,
+                staging_is_profitable=True,
+            ),
             idle_state_tax=None,
         )
         with (

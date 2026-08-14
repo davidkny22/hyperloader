@@ -90,6 +90,27 @@ class PinnedDeliveryTest(unittest.TestCase):
             delivery.report()["pinned_staged_bytes"], 8 * source.element_size()
         )
 
+    def test_auto_registration_refusal_uses_host_when_staging_costs_more(self) -> None:
+        source = torch.arange(16)
+        runtime = _Runtime(register_result=1)
+        loader = _loader(
+            source,
+            staged_copy_tax=SimpleNamespace(
+                staging_copy_nanoseconds=20,
+                transfer_benefit_nanoseconds=10,
+                staging_is_profitable=False,
+            ),
+        )
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.cudart", return_value=runtime),
+        ):
+            delivery = PinnedDelivery(loader)
+
+        self.assertEqual(delivery.effective_memory, "host")
+        self.assertFalse(delivery.stages)
+        self.assertFalse(delivery.report()["staging_profitable"])
+
     def test_held_staged_outputs_receive_distinct_buffers_then_reuse(self) -> None:
         pool = PinnedTensorPool()
         source = torch.arange(8)
@@ -169,7 +190,15 @@ class PinnedDeliveryTest(unittest.TestCase):
 def _loader(
     source: torch.Tensor, staged_copy_tax: object = object()
 ) -> SimpleNamespace:
-    tax = SimpleNamespace(loss_fraction=0.1) if staged_copy_tax is not None else None
+    tax = (
+        SimpleNamespace(
+            staging_copy_nanoseconds=10,
+            transfer_benefit_nanoseconds=20,
+            staging_is_profitable=True,
+        )
+        if staged_copy_tax is not None and type(staged_copy_tax) is object
+        else staged_copy_tax
+    )
     return SimpleNamespace(
         dataset=source,
         delivery_memory=MemoryConfig().delivery_memory,

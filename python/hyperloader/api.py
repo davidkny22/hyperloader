@@ -421,9 +421,6 @@ class DataLoader:
             self._compat_lane_pool = None
         self._sampler_runtime = None
         self._native_batch_probe = None
-        if getattr(self, "_pinned_delivery", None) is not None:
-            self._pinned_delivery.close()
-            self._pinned_delivery = None
         if getattr(self, "_machine_keeper", None) is not None:
             self._machine_keeper.close()
             self._machine_keeper = None
@@ -439,6 +436,9 @@ class DataLoader:
         if getattr(self, "_thread_pool", None) is not None:
             self._thread_pool.close()
             self._thread_pool = None
+        if getattr(self, "_pinned_delivery", None) is not None:
+            self._pinned_delivery.close()
+            self._pinned_delivery = None
         execution_dataset = getattr(self, "_execution_dataset", None)
         if execution_dataset is not getattr(self, "dataset", None):
             close = getattr(execution_dataset, "close", None)
@@ -459,7 +459,7 @@ class DataLoader:
             snapshot["memory"] = self._memory_ledger.report()
         if (
             self._pinned_delivery is not None
-            and self._pinned_delivery.effective_memory == "pinned"
+            and self._pinned_delivery.reports_selection
         ):
             memory = snapshot.setdefault("memory", {})
             if isinstance(memory, dict):

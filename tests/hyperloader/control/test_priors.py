@@ -34,6 +34,8 @@ class SparkPriorTest(unittest.TestCase):
             prior.bandwidth_provenance,
             profile["calibration"]["bandwidth_provenance"],
         )
+        self.assertIsNotNone(prior.staged_copy_tax)
+        self.assertFalse(prior.staged_copy_tax.staging_is_profitable)
 
     def test_unrelated_machine_receives_no_spark_prior(self) -> None:
         machine = MachineIdentity("unrelated processor", (CpuCluster("all", (0,)),), 1)

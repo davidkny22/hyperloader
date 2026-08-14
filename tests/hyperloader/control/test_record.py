@@ -51,7 +51,7 @@ def _record(machine: MachineIdentity) -> CalibrationRecord:
         spawn_nanoseconds=10,
         pin_cost=PinCost(4096, 20),
         idle_state_tax=IdleStateTax(0.1, 0.5, 0.05, 2_000_000),
-        staged_copy_tax=StagedCopyTax(4096, 0.12),
+        staged_copy_tax=StagedCopyTax(4096, 20, 40),
     )
 
 
@@ -97,7 +97,15 @@ class CalibrationRecordTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "warm duty"):
             IdleStateTax(0.1, 0.5, 0.0, 2_000_000)
         with self.assertRaisesRegex(ValueError, "positive batch size"):
-            StagedCopyTax(0, 0.1)
+            StagedCopyTax(0, 10, 20)
+        with self.assertRaisesRegex(ValueError, "positive copy cost"):
+            StagedCopyTax(4096, 0, 20)
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            StagedCopyTax(4096, 10, -1)
+
+    def test_staging_price_compares_copy_cost_with_transfer_benefit(self) -> None:
+        self.assertTrue(StagedCopyTax(4096, 10, 20).staging_is_profitable)
+        self.assertFalse(StagedCopyTax(4096, 20, 20).staging_is_profitable)
 
     def test_persisted_records_require_explicit_tax_measurements(self) -> None:
         payload = _record(self.machine).to_dict()

@@ -7,7 +7,7 @@ from typing import Any
 
 from .machine import MachineIdentity
 
-CALIBRATION_SCHEMA = 2
+CALIBRATION_SCHEMA = 3
 CALIBRATION_CORE_COUNTS = (1, 2, 4, 8, 16)
 
 
@@ -94,15 +94,24 @@ class IdleStateTax:
 
 @dataclass(frozen=True, slots=True)
 class StagedCopyTax:
-    """Measured pageable-to-pinned delivery loss for one batch shape."""
+    """Measured staging cost and transfer benefit for one batch shape."""
 
     batch_bytes: int
-    loss_fraction: float
+    staging_copy_nanoseconds: int
+    transfer_benefit_nanoseconds: int
 
     def __post_init__(self) -> None:
         if self.batch_bytes <= 0:
             raise ValueError("staged-copy tax requires a positive batch size")
-        _validate_positive_fraction("staged-copy loss", self.loss_fraction)
+        if self.staging_copy_nanoseconds <= 0:
+            raise ValueError("staged-copy tax requires a positive copy cost")
+        if self.transfer_benefit_nanoseconds < 0:
+            raise ValueError("staged-copy transfer benefit must be nonnegative")
+
+    @property
+    def staging_is_profitable(self) -> bool:
+        """Return whether the measured transfer saving exceeds the copy cost."""
+        return self.staging_copy_nanoseconds < self.transfer_benefit_nanoseconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +189,12 @@ class CalibrationRecord:
                 if self.staged_copy_tax is None
                 else {
                     "batch_bytes": self.staged_copy_tax.batch_bytes,
-                    "loss_fraction": self.staged_copy_tax.loss_fraction,
+                    "staging_copy_nanoseconds": (
+                        self.staged_copy_tax.staging_copy_nanoseconds
+                    ),
+                    "transfer_benefit_nanoseconds": (
+                        self.staged_copy_tax.transfer_benefit_nanoseconds
+                    ),
                 }
             ),
             "steal_curves": [
@@ -267,7 +281,8 @@ class CalibrationRecord:
                 if raw_staged is None
                 else StagedCopyTax(
                     int(raw_staged.get("batch_bytes", 0)),
-                    float(raw_staged.get("loss_fraction", -1.0)),
+                    int(raw_staged.get("staging_copy_nanoseconds", 0)),
+                    int(raw_staged.get("transfer_benefit_nanoseconds", -1)),
                 )
             ),
             schema=int(payload.get("schema", 0)),

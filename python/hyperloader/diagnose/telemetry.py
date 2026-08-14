@@ -22,7 +22,7 @@ def passive_telemetry(loader: Any) -> dict[str, object]:
     elif memory_ledger is not None:
         snapshot["memory"] = memory_ledger.report()
     pinned = getattr(loader, "_pinned_delivery", None)
-    if pinned is not None and pinned.effective_memory == "pinned":
+    if pinned is not None and pinned.reports_selection:
         memory = snapshot.setdefault("memory", {})
         if isinstance(memory, dict):
             pinned.compose_memory_report(memory)
