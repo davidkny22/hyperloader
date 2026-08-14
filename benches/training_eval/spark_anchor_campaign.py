@@ -1,4 +1,4 @@
-"""Sequential guarded Spark execution for named training anchors."""
+"""Sequential guarded Spark execution for mixed training cells."""
 
 from __future__ import annotations
 
@@ -14,28 +14,31 @@ from .spark_runtime import add_spark_runtime_arguments, guarded_point_command
 
 @dataclass(frozen=True)
 class AnchorCell:
-    """One named workload and loader pair in a Spark campaign."""
+    """One named workload or dial point and loader pair in a Spark campaign."""
 
     kind: str
     subject: str
 
 
 def parse_cell(value: str) -> AnchorCell:
-    """Parse a named workload and loader pair."""
+    """Parse a named workload or dial point and loader pair."""
     kind, separator, subject = value.partition(":")
+    dial_index = _dial_index(kind)
     if (
         not separator
-        or kind not in {"gpt2-124m", "gpt2-355m", "vision"}
+        or (kind not in {"gpt2-124m", "gpt2-355m", "vision"} and dial_index is None)
         or subject not in {"torch", "hyperloader", "spdl"}
+        or (dial_index is not None and subject == "spdl")
     ):
         raise argparse.ArgumentTypeError(
-            "anchor cells use gpt2-124m|gpt2-355m|vision:torch|hyperloader|spdl"
+            "cells use gpt2-124m|gpt2-355m|vision:torch|hyperloader|spdl "
+            "or dial-N:torch|hyperloader"
         )
     return AnchorCell(kind, subject)
 
 
 def run_campaign(arguments: argparse.Namespace) -> dict[str, object]:
-    """Run requested anchor cells serially and record completed identities."""
+    """Run requested training cells serially and record completed identities."""
     if not arguments.cells or len(set(arguments.cells)) != len(arguments.cells):
         raise ValueError("anchor cells must be a nonempty unique sequence")
     if (
@@ -67,7 +70,7 @@ def run_campaign(arguments: argparse.Namespace) -> dict[str, object]:
 def build_command(
     arguments: argparse.Namespace, cell: AnchorCell, output: Path
 ) -> list[str]:
-    """Build one guarded GPT or vision anchor command."""
+    """Build one guarded named-anchor or dial command."""
     if cell.kind == "vision":
         module = "benches.spark_vision_point"
         point_arguments = (
@@ -79,6 +82,16 @@ def build_command(
             str(arguments.resolution),
             "--batch-size",
             str(arguments.vision_batch_size),
+        )
+    elif (dial_index := _dial_index(cell.kind)) is not None:
+        module = "benches.spark_training_point"
+        point_arguments = (
+            "--kind",
+            "dial",
+            "--dial-index",
+            str(dial_index),
+            "--subject",
+            cell.subject,
         )
     else:
         module = "benches.spark_training_point"
@@ -95,7 +108,11 @@ def _write_summary(
     output_root: Path, completed: list[dict[str, object]], *, status: str
 ) -> dict[str, object]:
     record = {
-        "kind": "spark-training-anchor-campaign",
+        "kind": (
+            "spark-training-scoped-campaign"
+            if any(_dial_index(str(cell["kind"])) is not None for cell in completed)
+            else "spark-training-anchor-campaign"
+        ),
         "status": status,
         "captured_at": datetime.now(UTC).isoformat(),
         "completed": completed,
@@ -110,7 +127,7 @@ def _write_summary(
 
 
 def parser() -> argparse.ArgumentParser:
-    """Return the runtime-defined named-anchor campaign parser."""
+    """Return the runtime-defined mixed training campaign parser."""
     result = argparse.ArgumentParser()
     result.add_argument("--cell", dest="cells", type=parse_cell, action="append")
     result.add_argument("--output-root", type=Path, required=True)
@@ -122,8 +139,19 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run a runtime-defined sequence of guarded Spark named anchors."""
+    """Run a runtime-defined sequence of guarded Spark training cells."""
     print(run_campaign(parser().parse_args()))
+
+
+def _dial_index(kind: str) -> int | None:
+    prefix = "dial-"
+    if not kind.startswith(prefix):
+        return None
+    try:
+        index = int(kind.removeprefix(prefix))
+    except ValueError:
+        return None
+    return index if index in range(1, 9) else None
 
 
 if __name__ == "__main__":
