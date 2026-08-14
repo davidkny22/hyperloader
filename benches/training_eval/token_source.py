@@ -37,6 +37,11 @@ class PretokenizedRows(Dataset[torch.Tensor]):
         return self._tokens[index]
 
     @property
+    def tensor(self) -> torch.Tensor:
+        """Return the retained contiguous token storage for native batch views."""
+        return self._tokens
+
+    @property
     def identity(self) -> str:
         """Return a digest of the exact finite token source."""
         digest = hashlib.sha256()

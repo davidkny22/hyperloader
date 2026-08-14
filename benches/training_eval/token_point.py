@@ -9,7 +9,12 @@ import torch
 from torch import nn
 
 from .decision import TrainingDecision
-from .feeders import ResidentTokenFeeder, TokenBatch, collate_token_batch
+from .feeders import (
+    ResidentTokenFeeder,
+    TokenBatch,
+    TokenViewAdapter,
+    collate_token_batch,
+)
 from .live_cell import BatchFeeder
 from .models import TrainingCellConfig, TrainingEnvironment
 from .point_collection import collect_point
@@ -136,13 +141,25 @@ def _build_feeder(
         if system == config.subject
         else config.reference_prefetch
     )
+    loader_dataset: torch.utils.data.Dataset[object] = dataset
+    collate = collate_token_batch
+    batch_adapter = None
+    if system == "hyperloader":
+        loader_dataset = torch.utils.data.TensorDataset(dataset.tensor)
+        collate = None
+        batch_adapter = TokenViewAdapter(
+            config.batch_size,
+            config.sequence_length or 0,
+            tuple(batch.digest for batch in resident),
+        )
     return build_public_feeder(
         system,
-        dataset,
+        loader_dataset,
         batch_size=config.batch_size,
         workers=workers,
         prefetch=prefetch,
-        collate=collate_token_batch,
+        collate=collate,
         pin_memory=pin_memory,
         worker_environment_dir=worker_environment_dir,
+        batch_adapter=batch_adapter,
     )

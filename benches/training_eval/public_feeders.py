@@ -37,11 +37,13 @@ class PublicLoaderFeeder:
         worker_count: int,
         prefetch: int,
         worker_environment_dir: Path | None,
+        batch_adapter: Callable[[Any], TrainingBatch] | None = None,
     ) -> None:
         self.system = system
         self.worker_count = worker_count
         self.prefetch = prefetch
         self._worker_environment_dir = worker_environment_dir
+        self._batch_adapter = batch_adapter
         self._loader = loader
         self._iterator = iter(loader)
 
@@ -52,6 +54,8 @@ class PublicLoaderFeeder:
         except StopIteration:
             self._iterator = iter(self._loader)
             batch = next(self._iterator)
+        if self._batch_adapter is not None:
+            batch = self._batch_adapter(batch)
         batch.validate()
         return batch
 
@@ -85,15 +89,13 @@ class PublicLoaderFeeder:
 
     def control_snapshot(self) -> dict[str, Any]:
         """Return live process and worker-boot evidence for this feeder."""
-        expected_workers = (
-            self.worker_count if self.system in {"torch", "hyperloader"} else 0
-        )
+        pids = self._worker_pids()
+        expected_workers = len(pids)
         records = worker_probe_records(
             self._worker_environment_dir, expected_workers=expected_workers
         )
         if self.system in {"torch", "hyperloader"}:
-            validate_worker_probes(records, expected_workers=self.worker_count)
-        pids = self._worker_pids()
+            validate_worker_probes(records, expected_workers=expected_workers)
         return {
             "configured_prefetch": self.prefetch,
             "configured_workers": self.worker_count,
@@ -123,9 +125,10 @@ def build_public_feeder(
     batch_size: int,
     workers: int,
     prefetch: int,
-    collate: Callable[[list[Any]], TrainingBatch],
+    collate: Callable[[list[Any]], TrainingBatch] | None,
     pin_memory: bool = False,
     worker_environment_dir: Path | None = None,
+    batch_adapter: Callable[[Any], TrainingBatch] | None = None,
 ) -> PublicLoaderFeeder:
     """Construct Torch, hyperloader, or SPDL through its public import path."""
     _validate_controls(batch_size, workers, prefetch)
@@ -156,6 +159,8 @@ def build_public_feeder(
     elif system == "spdl":
         if workers == 0:
             raise ValueError("SPDL reference execution requires at least one worker")
+        if collate is None:
+            raise ValueError("SPDL reference execution requires an aggregator")
         from spdl.dataloader import DataLoader
 
         aggregator = _pinning_collate(collate) if pin_memory else collate
@@ -173,7 +178,14 @@ def build_public_feeder(
     evidence_dir = (
         worker_environment_dir / system if worker_environment_dir is not None else None
     )
-    return PublicLoaderFeeder(system, loader, workers, prefetch, evidence_dir)
+    return PublicLoaderFeeder(
+        system,
+        loader,
+        workers,
+        prefetch,
+        evidence_dir,
+        batch_adapter,
+    )
 
 
 def _worker_probe(

@@ -41,6 +41,34 @@ class TokenBatch:
         return TokenBatch(self.tokens.pin_memory(), self.digest)
 
 
+@dataclass(frozen=True)
+class TokenViewAdapter:
+    """Attach precomputed digests to contiguous tensor-dataset batch views."""
+
+    batch_size: int
+    sequence_length: int
+    digests: tuple[str, ...]
+
+    def __call__(self, value: object) -> TokenBatch:
+        if not isinstance(value, (list, tuple)) or len(value) != 1:
+            raise TypeError("token views require one tensor-dataset column")
+        tokens = value[0]
+        if not isinstance(tokens, torch.Tensor) or tokens.ndim != 2:
+            raise TypeError("token views require one batch-shaped tensor")
+        if tokens.shape[1] != self.sequence_length:
+            raise ValueError("token view sequence length changed")
+        start_elements = int(tokens.storage_offset())
+        if start_elements % self.sequence_length:
+            raise ValueError("token view does not begin at a row boundary")
+        start_row = start_elements // self.sequence_length
+        if start_row % self.batch_size:
+            raise ValueError("token view does not begin at a batch boundary")
+        ordinal = start_row // self.batch_size
+        if ordinal >= len(self.digests):
+            raise ValueError("token view is outside the recorded batch bank")
+        return TokenBatch(tokens, self.digests[ordinal])
+
+
 def collate_token_batch(rows: list[torch.Tensor]) -> TokenBatch:
     """Stack pre-tokenized samples and hash the delivered tensor exactly."""
     if not rows:

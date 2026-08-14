@@ -13,7 +13,11 @@ from benches.training_eval.models import (
     TrainingCellConfig,
     TrainingEnvironment,
 )
-from benches.training_eval.token_point import collect_token_point
+from benches.training_eval.token_point import (
+    _build_feeder,
+    _resident_batches,
+    collect_token_point,
+)
 from benches.training_eval.token_source import PretokenizedRows
 from benches.training_eval.transformer import DialTransformer
 
@@ -25,6 +29,26 @@ def test_pretokenized_rows_are_seeded_and_finite() -> None:
     assert len(first) == 4
     assert torch.equal(first[2], second[2])
     assert not torch.equal(first[2], changed[2])
+
+
+def test_hyperloader_token_feeder_preserves_batches_on_the_native_view_path() -> None:
+    dataset = PretokenizedRows(rows=4, sequence_length=4, vocabulary_size=17, seed=3)
+    resident = _resident_batches(dataset, batch_size=2, pin_memory=False)
+    config = _config(subject="hyperloader", subject_workers=2)
+    feeder = _build_feeder(
+        "hyperloader",
+        config,
+        dataset,
+        resident,
+        pin_memory=False,
+    )
+    try:
+        actual = (feeder.next_batch(), feeder.next_batch())
+    finally:
+        feeder.close()
+    assert [(batch.tokens.tolist(), batch.digest) for batch in actual] == [
+        (batch.tokens.tolist(), batch.digest) for batch in resident
+    ]
 
 
 def test_null_point_collects_incremental_evidence_and_decision(tmp_path: Path) -> None:
@@ -83,12 +107,14 @@ def test_token_point_refuses_to_replace_evidence(tmp_path: Path) -> None:
         raise AssertionError("existing evidence was not rejected")
 
 
-def _config() -> TrainingCellConfig:
+def _config(
+    *, subject: str = "null-b", subject_workers: int = 0
+) -> TrainingCellConfig:
     return TrainingCellConfig(
         evaluation_id="test-evaluation",
         point_id="null",
         comparison_kind="null",
-        subject="null-b",
+        subject=subject,
         reference="null-a",
         workload_family="transformer-dial",
         data_class="pretokenized-text",
@@ -112,7 +138,7 @@ def _config() -> TrainingCellConfig:
         seed=3,
         resident_batches=2,
         warmup_steps=1,
-        subject_workers=0,
+        subject_workers=subject_workers,
         reference_workers=0,
         subject_prefetch=1,
         reference_prefetch=1,

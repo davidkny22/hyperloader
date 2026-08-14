@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, TensorDataset
 
 from benches.training_eval import build_public_feeder, collate_token_batch
+from benches.training_eval.feeders import TokenViewAdapter
 
 
 class _TokenRows(Dataset[torch.Tensor]):
@@ -103,6 +104,37 @@ def test_process_feeder_records_worker_boot_controls(
     assert {
         record["torch_intra_op_threads"] for record in snapshot["worker_boot"]
     } == {1}
+
+
+def test_hyperloader_public_feeder_delivers_tensor_dataset_views_without_workers() -> None:
+    source = torch.arange(24, dtype=torch.int64).reshape(4, 6)
+    first = collate_token_batch([source[0], source[1]])
+    second = collate_token_batch([source[2], source[3]])
+    feeder = build_public_feeder(
+        "hyperloader",
+        TensorDataset(source),
+        batch_size=2,
+        workers=2,
+        prefetch=2,
+        collate=None,
+        pin_memory=torch.cuda.is_available(),
+        batch_adapter=TokenViewAdapter(2, 6, (first.digest, second.digest)),
+    )
+    try:
+        actual = feeder.next_batch()
+        snapshot = feeder.control_snapshot()
+        stats = feeder._loader.stats()
+    finally:
+        feeder.close()
+    assert actual.digest == first.digest
+    assert torch.equal(actual.tokens, first.tokens)
+    assert actual.tokens.untyped_storage().data_ptr() == source.untyped_storage().data_ptr()
+    if torch.cuda.is_available():
+        assert stats["memory"]["pinned_registered_bytes"] == source.nbytes
+        assert stats["memory"]["pinned_staged_bytes"] == 0
+    assert snapshot["configured_workers"] == 2
+    assert snapshot["processes"] == []
+    assert snapshot["worker_boot"] == []
 
 
 def _collect(system: str, *, workers: int) -> list[tuple[list[list[int]], str]]:
