@@ -31,8 +31,8 @@ python -m pip install hyperloader-0.1.0-py3-none-any.whl
 
 PyTorch is the runtime dependency. Native wheels are defined for CPython 3.10 through 3.15,
 including 3.14t and 3.15t, on Linux, macOS, and Windows. The universal fallback carries the
-same public contracts through a pure-Python process engine on the hardware-verified Windows
-and Linux paths. Every compressed wheel has a 5 MiB size ceiling.
+same public contracts through a pure-Python process engine on the hardware-verified Windows,
+Linux, and macOS paths. Every compressed wheel has a 5 MiB size ceiling.
 
 ## Use
 
@@ -132,10 +132,11 @@ under the same protocol.
 
 ## Platform status
 
-Windows x86_64 and Linux aarch64 native execution have hardware-backed assurance. Linux
-aarch64 also covers CPython 3.14t and 3.15t routing, stress, and gloo execution. The macOS
-implementation and workflow exist, but macOS execution remains unverified until a runner is
-available. No macOS result is used by a published performance claim.
+Windows x86_64, Linux aarch64, and macOS arm64 native execution have hardware-backed
+assurance. Linux aarch64 also covers CPython 3.14t and 3.15t routing, stress, and gloo
+execution. macOS arm64 covers installed wheel lifecycle and shared-memory behavior, exact
+Torch 2.10 through 2.13 compatibility, and all three cross-tier parity claims. No macOS
+result is used by a published performance claim.
 
 ## Prior art and credits
 
