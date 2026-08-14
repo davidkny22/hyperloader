@@ -90,6 +90,19 @@ def test_projection_carries_measured_interval_controls_and_evidence() -> None:
     assert record["status"] == "verified"
 
 
+def test_projection_preserves_nested_campaign_evidence_path() -> None:
+    bundle = _bundle()
+    bundle["points"][0]["point"] = (
+        "remote-root/dial-campaign/dial-01-hyperloader"
+    )
+
+    [record] = project_registry_records(bundle, evidence_root="results/campaign")
+
+    assert record["config"]["evidence"] == (
+        "results/campaign/dial-campaign/dial-01-hyperloader"
+    )
+
+
 def test_projection_rejects_commit_drift_and_duplicate_identities() -> None:
     bundle = _bundle()
     changed = deepcopy(bundle)

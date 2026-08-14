@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -74,7 +74,7 @@ def _project_point(
                 "machine_state_period_microseconds"
             ],
             "accelerator_clock": environment["accelerator_clock"],
-            "evidence": f"{evidence_root}/{Path(point['point']).name}",
+            "evidence": _evidence_path(point["point"], evidence_root),
         },
         "protocol": (
             "live paired mid-cell feeder swap with alternating order, equal live-step "
@@ -104,6 +104,13 @@ def _slug(value: str) -> str:
     if not slug:
         raise ValueError("registry identity fields must contain letters or digits")
     return slug
+
+
+def _evidence_path(point_path: object, evidence_root: str) -> str:
+    path = PurePosixPath(str(point_path))
+    if path.is_absolute() or len(path.parts) < 2 or ".." in path.parts:
+        raise ValueError("training point evidence must be campaign-root relative")
+    return PurePosixPath(evidence_root, *path.parts[1:]).as_posix()
 
 
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
